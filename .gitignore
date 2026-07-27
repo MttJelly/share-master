@@ -1,0 +1,31 @@
+# Dependencies and packaged output
+node_modules/
+dist/
+out/
+release/
+
+# Share Master private runtime data
+share-master-data/
+share-master-profile/
+
+# QA runtime profiles, stores, schemas, and screenshots
+qa/.*/
+qa/*.png
+qa/multi-window-artifacts/
+
+# Local secrets and logs
+.env
+.env.*
+!.env.example
+*.log
+*.pem
+*.key
+credentials.json
+auth.json
+
+# Editor and operating-system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini

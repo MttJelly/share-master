@@ -1,0 +1,34 @@
+{
+  "name": "share-master",
+  "productName": "Share Master",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Share Master: a multi-account, multi-provider desktop client with shared local conversations.",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "check": "node --check src/main.js && node --check src/codex-server.js && node --check src/claude-server.js && node --check src/claude-models.js && node --check src/openai-models.js && node --check src/provider-store.js && node --check src/relay-balance.js && node --check src/scheduled-task-runner.js && node --check src/conversation-mirror.js && node --check src/skill-mirror.js && node --check src/preload.js && node --check src/renderer/app.js && node --check qa/unit.js && node --check qa/niubi-live.js && node --check qa/claude-live.js && node --check qa/claude-model-fallback.js && node --check qa/relay-live.js && node --check qa/official-connect-smoke.js && node --check qa/multi-window.js && node --check qa/model-settings.js && node --check qa/thread-actions.js && node --check qa/project-actions.js && node --check qa/thread-switch-performance.js && node --check qa/app-server-smoke.js",
+    "test:unit": "node qa/unit.js",
+    "test:niubi-live": "electron qa/niubi-live.js",
+    "test:claude-live": "electron qa/claude-live.js",
+    "test:claude-fallback": "node qa/claude-model-fallback.js",
+    "test:relay-live": "electron qa/relay-live.js",
+    "test:relay-form": "node qa/relay-form.js",
+    "test:official": "node qa/official-connect-smoke.js",
+    "test:multi-window": "node qa/multi-window.js",
+    "test:model-settings": "node qa/model-settings.js",
+    "test:thread-actions": "node qa/thread-actions.js",
+    "test:project-actions": "electron qa/project-actions.js",
+    "test:thread-performance": "electron qa/thread-switch-performance.js",
+    "test:smoke": "node qa/app-server-smoke.js"
+  },
+  "dependencies": {
+    "dompurify": "^3.2.6",
+    "lucide": "^0.468.0",
+    "marked": "^15.0.12",
+    "simple-icons": "^14.15.0"
+  },
+  "devDependencies": {
+    "electron": "^35.7.5"
+  }
+}

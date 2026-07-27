@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file: https:;" />
+    <title>Share Master</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div id="app" class="app-shell">
+      <header class="titlebar">
+        <div class="titlebar-brand">
+          <button id="sidebar-toggle" class="icon-button" title="切换侧栏" aria-label="切换侧栏"><span data-lucide="panel-left"></span></button>
+          <span class="wordmark">SHARE MASTER</span>
+        </div>
+        <div id="window-thread-title" class="window-thread-title">未选择会话</div>
+        <div class="titlebar-actions">
+          <button id="workspace-button" class="toolbar-button" title="选择工作目录"><span data-lucide="folder"></span><span id="workspace-label">F:\codepro</span></button>
+          <button id="new-window-button" class="icon-button" title="新建窗口" aria-label="新建窗口"><span data-lucide="panels-top-left"></span></button>
+        </div>
+      </header>
+
+      <aside class="sidebar">
+        <div class="sidebar-top">
+          <button id="new-chat-button" class="new-chat-button"><span data-lucide="square-pen"></span><span>新会话</span></button>
+          <label class="search-box">
+            <span data-lucide="search"></span>
+            <input id="thread-search" type="search" placeholder="搜索聊天记录" autocomplete="off" />
+          </label>
+        </div>
+        <div class="sidebar-section-label project-heading">
+          <span>Projects</span>
+          <button id="add-project-button" class="section-icon-button" title="添加 Project" aria-label="添加 Project"><span data-lucide="folder-plus"></span></button>
+        </div>
+        <nav id="project-list" class="project-list" aria-label="Projects"></nav>
+        <div class="sidebar-section-label chat-heading">
+          <span>聊天记录</span>
+          <span class="sidebar-heading-actions">
+            <span id="thread-count">0</span>
+            <button id="schedule-task-button" class="section-icon-button" title="安排任务" aria-label="安排任务"><span data-lucide="calendar-plus"></span></button>
+          </span>
+        </div>
+        <div class="thread-view-tabs" role="tablist" aria-label="会话状态">
+          <button class="active" data-thread-view="active">活动 <span id="active-thread-count">0</span></button>
+          <button data-thread-view="archived">归档 <span id="archived-thread-count">0</span></button>
+          <button data-thread-view="scheduled">已安排 <span id="scheduled-thread-count">0</span></button>
+          <button data-thread-view="removed">已移除 <span id="removed-thread-count">0</span></button>
+        </div>
+        <nav id="thread-list" class="thread-list" aria-label="聊天记录"></nav>
+        <div class="sidebar-footer">
+          <button id="provider-switch" class="provider-switch" title="切换账号或 API">
+            <span id="provider-mark" class="provider-mark">S</span>
+            <span class="provider-copy"><strong id="provider-name">未连接</strong><small id="provider-state">选择账号或 API</small></span>
+            <span data-lucide="chevrons-up-down"></span>
+          </button>
+        </div>
+      </aside>
+
+      <main class="workspace">
+        <div id="status-toast" class="status-toast hidden" role="status" aria-live="polite"></div>
+        <section id="empty-state" class="empty-state">
+          <div class="empty-symbol"><span data-lucide="terminal-square"></span></div>
+          <h1 id="empty-title">开始一个工作会话</h1>
+          <p id="empty-subtitle">选择左侧记录，或直接描述你要完成的事情。</p>
+        </section>
+        <section id="chat-view" class="chat-view hidden" aria-live="polite"></section>
+
+        <footer class="composer-wrap">
+          <div id="approval-banner" class="approval-banner hidden"></div>
+          <div class="composer">
+            <textarea id="composer-input" rows="1" placeholder="给 Codex 发送消息" disabled></textarea>
+            <div id="skill-menu" class="skill-menu hidden" role="menu" aria-label="Skills">
+              <input id="skill-search" type="search" placeholder="搜索 Skills" autocomplete="off" />
+              <div id="skill-list" class="skill-list"></div>
+            </div>
+            <div id="approval-mode-menu" class="approval-mode-menu hidden" role="menu" aria-label="请求批准设置">
+              <div class="approval-mode-heading">
+                <strong>ChatGPT 应如何批准操作？</strong>
+                <button id="approval-learn-more" type="button">了解更多</button>
+              </div>
+              <button class="approval-mode-option" type="button" data-approval-mode="ask" role="menuitemradio">
+                <span data-lucide="message-square-warning"></span>
+                <span><strong>请求批准</strong><small>编辑外部文件和使用互联网时始终询问</small></span>
+                <span class="approval-mode-check" data-lucide="check"></span>
+              </button>
+              <button class="approval-mode-option" type="button" data-approval-mode="auto" role="menuitemradio">
+                <span data-lucide="shield-check"></span>
+                <span><strong>替我审批</strong><small>仅对检测到的风险操作请求批准</small></span>
+                <span class="approval-mode-check" data-lucide="check"></span>
+              </button>
+              <button class="approval-mode-option" type="button" data-approval-mode="full" role="menuitemradio">
+                <span data-lucide="shield-off"></span>
+                <span><strong>完全访问权限</strong><small>可不受限制地访问互联网和您电脑上的任何文件</small></span>
+                <span class="approval-mode-check" data-lucide="check"></span>
+              </button>
+            </div>
+            <div class="composer-footer">
+              <div class="session-controls">
+                <button id="skill-button" class="skill-button" type="button" title="Skills" aria-label="Skills" aria-haspopup="menu" aria-expanded="false" disabled>
+                  <span data-lucide="wand-sparkles"></span>
+                </button>
+                <label class="session-select" title="会话模型">
+                  <img id="composer-brand-icon" src="../../node_modules/simple-icons/icons/openai.svg" alt="" />
+                  <select id="session-model" aria-label="会话模型" disabled><option>模型</option></select>
+                </label>
+                <label class="session-select" title="推理强度">
+                  <span data-lucide="brain"></span>
+                  <select id="session-effort" aria-label="推理强度" disabled><option value="high">高</option></select>
+                </label>
+                <span id="applied-settings" class="applied-settings" title="服务端实际采用的会话设置">待首轮确认</span>
+              </div>
+              <div class="composer-meta">
+                <button id="mode-badge" class="mode-badge" type="button" aria-haspopup="menu" aria-expanded="false" disabled>
+                  <span data-lucide="shield-check"></span><span id="approval-mode-label">请求批准</span><span data-lucide="chevron-up"></span>
+                </button>
+                <span id="connection-badge"><span class="status-dot"></span>未连接</span>
+              </div>
+              <button id="send-button" class="send-button" title="发送" aria-label="发送" disabled><span data-lucide="arrow-up"></span></button>
+              <button id="stop-button" class="stop-button hidden" title="停止" aria-label="停止"><span data-lucide="square"></span></button>
+            </div>
+          </div>
+        </footer>
+      </main>
+    </div>
+
+    <div id="provider-overlay" class="overlay">
+      <section class="provider-dialog" role="dialog" aria-modal="true" aria-labelledby="provider-title">
+        <div class="dialog-heading">
+          <span class="dialog-logo">S</span>
+          <div><h2 id="provider-title">选择连接方式</h2><p>所有方式共享同一份本地聊天记录。</p></div>
+          <button id="close-provider-button" class="icon-button dialog-close hidden" type="button" title="返回当前会话" aria-label="返回当前会话"><span data-lucide="x"></span></button>
+        </div>
+        <div id="provider-options" class="provider-options"></div>
+        <section id="account-panel" class="account-panel hidden" aria-live="polite"></section>
+        <div class="dialog-actions">
+          <div class="dialog-action-group">
+            <button id="add-connection-button" class="text-button"><span data-lucide="plus"></span>添加连接</button>
+            <button id="official-login-button" class="text-button"><span data-lucide="log-in"></span>登录默认官方账号</button>
+            <button id="record-home-button" class="text-button"><span data-lucide="database"></span>记录位置</button>
+          </div>
+          <span id="provider-error" class="provider-error"></span>
+        </div>
+      </section>
+    </div>
+
+    <div id="connection-overlay" class="overlay hidden">
+      <section class="provider-dialog connection-dialog" role="dialog" aria-modal="true" aria-labelledby="connection-title">
+        <div class="dialog-heading">
+          <span class="dialog-logo"><span data-lucide="plug"></span></span>
+          <div><h2 id="connection-title">添加连接</h2><p>添加中转站，或创建独立的官方账号登录。</p></div>
+          <button id="close-connection-button" class="icon-button dialog-close" title="关闭"><span data-lucide="x"></span></button>
+        </div>
+        <div class="segmented-control" role="tablist">
+          <button class="active" data-connection-tab="relay">中转站</button>
+          <button data-connection-tab="account">GPT 账号</button>
+        </div>
+        <form id="relay-form" class="connection-form">
+          <label><span>显示名称</span><input name="label" required placeholder="例如：实验室中转站" /></label>
+          <label><span>Base URL</span><input name="baseUrl" type="url" required placeholder="https://example.com/v1" /></label>
+          <label><span>模型</span><input name="model" required placeholder="gpt-5.4" /></label>
+          <label><span>API 协议</span><select name="protocol" disabled><option value="responses">OpenAI Responses API（Codex 当前要求）</option></select></label>
+          <label><span>API Key</span><input name="apiKey" type="password" required autocomplete="new-password" placeholder="仅加密保存在本机" /></label>
+          <div class="form-actions"><span id="connection-error" class="provider-error"></span><button class="primary-command" type="submit"><span data-lucide="plus"></span>添加中转站</button></div>
+        </form>
+        <form id="account-form" class="connection-form hidden">
+          <label><span>账号名称</span><input name="label" required placeholder="例如：个人账号 / 实验室账号" /></label>
+          <p class="form-note">创建后会打开官方 Codex 登录窗口。该账号拥有独立认证文件，但聊天记录仍与其他连接共享。</p>
+          <div class="form-actions"><span id="account-error" class="provider-error"></span><button class="primary-command" type="submit"><span data-lucide="log-in"></span>创建并登录</button></div>
+        </form>
+      </section>
+    </div>
+
+    <div id="claude-overlay" class="overlay hidden">
+      <section class="provider-dialog connection-dialog" role="dialog" aria-modal="true" aria-labelledby="claude-title">
+        <div class="dialog-heading">
+          <span class="dialog-logo">C</span>
+          <div><h2 id="claude-title">配置 Claude Code</h2><p>读取厂商模型列表，并显示中转站的真实模型映射。</p></div>
+          <button id="claude-close-button" class="icon-button dialog-close" type="button" title="关闭" aria-label="关闭"><span data-lucide="x"></span></button>
+        </div>
+        <form id="claude-form" class="connection-form">
+          <label><span>中转商名称</span><input id="claude-vendor-label" name="vendorLabel" required placeholder="例如：Hexuan / Anthropic 官方" /></label>
+          <label><span>Base URL</span><input id="claude-base-url" name="baseUrl" type="url" required value="https://api.anthropic.com/v1" /></label>
+          <label><span>API Token</span><input id="claude-api-key" name="apiKey" type="password" autocomplete="new-password" placeholder="已保存时可留空" /></label>
+          <div class="model-load-row">
+            <button id="claude-load-models" class="text-button" type="button"><span data-lucide="list-restart"></span>读取模型列表</button>
+            <span id="claude-model-status" class="provider-error"></span>
+          </div>
+          <label><span>模型</span><select id="claude-model" name="model" required><option value="">请先读取模型列表</option></select></label>
+          <p id="claude-route-note" class="form-note">Hexuan 的 sonnet/opus/haiku 可能映射到其他厂商模型，Share Master 会明确显示实际路由。</p>
+          <div class="form-actions"><span id="claude-error" class="provider-error"></span><button class="primary-command" type="submit"><span data-lucide="plug-zap"></span>保存并连接</button></div>
+        </form>
+      </section>
+    </div>
+
+    <div id="record-home-overlay" class="overlay hidden">
+      <section class="provider-dialog credential-dialog" role="dialog" aria-modal="true" aria-labelledby="record-home-title">
+        <div class="dialog-heading">
+          <span class="dialog-logo"><span data-lucide="database"></span></span>
+          <div><h2 id="record-home-title">聊天记录位置</h2><p>切换后不移动或删除原目录中的任何记录。</p></div>
+          <button id="record-home-close-button" class="icon-button dialog-close" type="button" title="关闭" aria-label="关闭"><span data-lucide="x"></span></button>
+        </div>
+        <form id="record-home-form" class="connection-form">
+          <label><span>记录目录</span><input id="record-home-input" name="recordHome" required readonly /></label>
+          <button id="record-home-choose" class="text-button" type="button"><span data-lucide="folder-open"></span>选择目录</button>
+          <p class="form-note">Codex 会话保存在该目录；Claude 会话保存在其 <code>claude</code> 子目录。切换后需重新连接当前账号。</p>
+          <div class="form-actions"><span id="record-home-error" class="provider-error"></span><button class="primary-command" type="submit"><span data-lucide="check"></span>应用</button></div>
+        </form>
+      </section>
+    </div>
+
+    <div id="project-overlay" class="overlay hidden">
+      <section class="provider-dialog credential-dialog" role="dialog" aria-modal="true" aria-labelledby="project-title">
+        <div class="dialog-heading">
+          <span class="dialog-logo"><span id="project-dialog-icon" data-lucide="folder-plus"></span></span>
+          <div><h2 id="project-title">创建 Project</h2><p id="project-description">Project 可以独立命名，本地目录为可选项。</p></div>
+          <button id="project-close-button" class="icon-button dialog-close" type="button" title="关闭" aria-label="关闭"><span data-lucide="x"></span></button>
+        </div>
+        <form id="project-form" class="connection-form">
+          <label><span>Project 名称</span><input id="project-name-input" name="label" required maxlength="100" autocomplete="off" placeholder="例如：EviSpec 论文" /></label>
+          <label><span>本地目录（可选）</span><input id="project-root-input" name="root" readonly placeholder="不选择目录也可以创建" /></label>
+          <div id="project-path-actions" class="optional-path-actions">
+            <button id="project-root-choose" class="text-button" type="button"><span data-lucide="folder-open"></span>选择目录</button>
+            <button id="project-root-clear" class="text-button hidden" type="button"><span data-lucide="x"></span>清除目录</button>
+          </div>
+          <p class="form-note">无目录 Project 中创建的新会话会自动归入该 Project，并使用当前工作区。</p>
+          <div class="form-actions"><span id="project-error" class="provider-error"></span><button id="project-submit" class="primary-command" type="submit"><span data-lucide="plus"></span><span id="project-submit-label">创建</span></button></div>
+        </form>
+      </section>
+    </div>
+
+    <div id="credential-overlay" class="overlay hidden">
+      <section class="provider-dialog credential-dialog" role="dialog" aria-modal="true" aria-labelledby="credential-title">
+        <div class="dialog-heading">
+          <span class="dialog-logo"><span data-lucide="key-round"></span></span>
+          <div><h2 id="credential-title">配置中转密钥</h2><p id="credential-subtitle">API Key 将使用 Windows 安全存储加密保存。</p></div>
+          <button id="credential-close-button" class="icon-button dialog-close" type="button" title="关闭" aria-label="关闭"><span data-lucide="x"></span></button>
+        </div>
+        <form id="credential-form" class="connection-form">
+          <input id="credential-provider-id" name="providerId" type="hidden" />
+          <label><span>API Key</span><input id="credential-api-key" name="apiKey" type="password" required autocomplete="new-password" placeholder="sk-..." /></label>
+          <div class="form-actions"><span id="credential-error" class="provider-error"></span><button class="primary-command" type="submit"><span data-lucide="plug-zap"></span>保存并连接</button></div>
+        </form>
+      </section>
+    </div>
+
+    <div id="rename-overlay" class="overlay hidden">
+      <section class="provider-dialog rename-dialog" role="dialog" aria-modal="true" aria-labelledby="rename-title">
+        <div class="dialog-heading">
+          <span class="dialog-logo"><span data-lucide="pencil"></span></span>
+          <div><h2 id="rename-title">重命名会话</h2><p>名称只保存在 Share Master，不修改原始会话记录。</p></div>
+          <button id="rename-close-button" class="icon-button dialog-close" type="button" title="关闭" aria-label="关闭"><span data-lucide="x"></span></button>
+        </div>
+        <form id="rename-form" class="connection-form">
+          <label><span>会话名称</span><input id="rename-input" name="name" required maxlength="160" autocomplete="off" /></label>
+          <div class="form-actions"><span id="rename-error" class="provider-error"></span><button class="primary-command" type="submit"><span data-lucide="check"></span>保存</button></div>
+        </form>
+      </section>
+    </div>
+
+    <div id="task-overlay" class="overlay hidden">
+      <section class="provider-dialog credential-dialog task-dialog" role="dialog" aria-modal="true" aria-labelledby="task-title">
+        <div class="dialog-heading">
+          <span class="dialog-logo"><span data-lucide="calendar-clock"></span></span>
+          <div><h2 id="task-title">安排任务</h2><p>到期后由已连接的 Share Master 自动创建并运行新会话。</p></div>
+          <button id="task-close-button" class="icon-button dialog-close" type="button" title="关闭" aria-label="关闭"><span data-lucide="x"></span></button>
+        </div>
+        <form id="task-form" class="connection-form">
+          <div class="task-form-scroll">
+            <input id="task-id" name="id" type="hidden" />
+            <label><span>任务名称</span><input id="task-name-input" name="title" required maxlength="120" autocomplete="off" placeholder="例如：生成每日项目摘要" /></label>
+            <label><span>任务内容</span><textarea id="task-prompt-input" name="prompt" required maxlength="20000" rows="5" placeholder="输入到期后发送给模型的内容"></textarea></label>
+            <div class="task-form-grid">
+              <label><span>执行时间</span><input id="task-time-input" name="scheduledAt" type="datetime-local" required /></label>
+              <label><span>重复</span><select id="task-repeat-select" name="repeat"><option value="once">仅一次</option><option value="daily">每天</option><option value="weekly">每周</option></select></label>
+            </div>
+            <div class="task-form-grid">
+              <label><span>Project</span><select id="task-project-select" name="projectId"><option value="">不指定 Project</option></select></label>
+              <label><span>连接</span><select id="task-provider-select" name="providerId"><option value="">执行时使用任一连接</option></select></label>
+            </div>
+            <label class="toggle-row"><input id="task-enabled-input" name="enabled" type="checkbox" checked /><span>启用此任务</span></label>
+          </div>
+          <div class="form-actions"><span id="task-error" class="provider-error"></span><button class="primary-command" type="submit"><span data-lucide="calendar-check"></span><span id="task-submit-label">安排</span></button></div>
+        </form>
+      </section>
+    </div>
+
+    <div id="thread-menu" class="context-menu hidden">
+      <button data-action="archive"><span data-lucide="archive"></span>归档</button>
+      <button data-action="rename"><span data-lucide="pencil"></span>重命名</button>
+      <button class="danger-action" data-action="remove"><span data-lucide="trash-2"></span>移除会话</button>
+      <button class="danger-action hidden" data-action="delete-now"><span data-lucide="circle-x"></span>立即删除</button>
+    </div>
+
+    <script src="../../node_modules/lucide/dist/umd/lucide.js"></script>
+    <script src="../../node_modules/marked/marked.min.js"></script>
+    <script src="../../node_modules/dompurify/dist/purify.min.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
