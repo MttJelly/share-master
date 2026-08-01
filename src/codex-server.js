@@ -316,9 +316,13 @@ class CodexServer extends EventEmitter {
     const skillInputs = (options.skillInputs || [])
       .filter((skill) => skill && typeof skill.name === "string" && typeof skill.path === "string")
       .map((skill) => ({ type: "skill", name: skill.name, path: skill.path }));
+    const imageInputs = (options.imageInputs || [])
+      .filter((image) => image && typeof image.path === "string" && image.path.trim())
+      .map((image) => ({ type: "localImage", path: image.path, detail: image.detail || "auto" }));
     const prompt = String(text || "").trim();
     const input = [
       ...skillInputs,
+      ...imageInputs,
       ...(prompt ? [{ type: "text", text: prompt }] : []),
     ];
     if (!input.length) return Promise.reject(new Error("消息内容不能为空。"));

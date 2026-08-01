@@ -138,8 +138,20 @@ class ProviderStore {
       metadata.conversationHome = DEFAULT_CONVERSATION_HOME;
       changed = true;
     }
-    if (metadata.pendingDeletions.length) {
-      metadata.pendingDeletions = [];
+    if ((metadata.deletionMigrationVersion || 0) < 2) {
+      const queued = new Set(metadata.pendingDeletions.map((entry) => entry.threadId));
+      const now = Date.now();
+      for (const threadId of metadata.hiddenThreads) {
+        if (metadata.deletedThreads.includes(threadId) || queued.has(threadId)) continue;
+        metadata.pendingDeletions.push({
+          threadId,
+          engine: "codex",
+          providerId: null,
+          scheduledAt: now - 60 * 60 * 1000,
+          expiresAt: now,
+        });
+      }
+      metadata.deletionMigrationVersion = 2;
       changed = true;
     }
     if (changed) {
@@ -167,6 +179,7 @@ class ProviderStore {
       deletedThreads: Array.isArray(value.deletedThreads) ? value.deletedThreads : [],
       localArchivedThreads: Array.isArray(value.localArchivedThreads) ? value.localArchivedThreads : [],
       pendingDeletions: Array.isArray(value.pendingDeletions) ? value.pendingDeletions : [],
+      deletionMigrationVersion: Number(value.deletionMigrationVersion) || 0,
       scheduledTasks: Array.isArray(value.scheduledTasks) ? value.scheduledTasks : [],
       conversationHome: typeof value.conversationHome === "string" && value.conversationHome
         ? value.conversationHome
@@ -240,6 +253,10 @@ class ProviderStore {
 
   hiddenProjectRoots() {
     return [...this.metadata().hiddenProjectRoots];
+  }
+
+  hiddenThreads() {
+    return [...this.metadata().hiddenThreads];
   }
 
   threadSettings() {

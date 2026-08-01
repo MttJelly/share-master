@@ -374,6 +374,12 @@ class ClaudeServer extends EventEmitter {
     const approvalMode = ["ask", "auto", "full"].includes(options.approvalMode)
       ? options.approvalMode
       : "ask";
+    const imagePaths = (options.imageInputs || [])
+      .map((image) => String(image?.path || "").trim())
+      .filter(Boolean);
+    const prompt = imagePaths.length
+      ? `${String(text || "").trim()}\n\n请查看并分析以下本地图片：\n${imagePaths.map((file) => `- ${file}`).join("\n")}`.trim()
+      : text;
     const args = [
       "-p",
       "--output-format", "stream-json",
@@ -383,7 +389,7 @@ class ClaudeServer extends EventEmitter {
       ...claudePermissionArgs(approvalMode),
       ...(this.settingsFile ? ["--settings", this.settingsFile] : []),
       existing ? "--resume" : "--session-id", threadId,
-      text,
+      prompt,
     ];
     const env = {
       ...process.env,

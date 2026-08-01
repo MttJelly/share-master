@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, net, shell } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, net, Notification, shell } = require("electron");
 const { execFile } = require("node:child_process");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
@@ -773,6 +773,17 @@ function broadcastThreadDeleted(threadId) {
   }
 }
 
+function runDueThreadDeletions() {
+  if (!providerStore) return 0;
+  const due = providerStore.dueThreadDeletions();
+  for (const entry of due) {
+    providerStore.completeThreadDeletion(entry.threadId);
+    broadcastThreadDeleted(entry.threadId);
+  }
+  if (due.length) broadcastStoreSnapshot();
+  return due.length;
+}
+
 async function runDueScheduledTasks() {
   if (!providerStore) return;
   for (const task of providerStore.dueScheduledTasks()) {
@@ -906,6 +917,9 @@ app.whenReady().then(async () => {
     runDueScheduledTasks().catch((error) => console.error(`[scheduled-task] ${error.message}`));
   }, 30000);
   scheduledTaskTimer.unref?.();
+  runDueThreadDeletions();
+  const threadDeletionTimer = setInterval(runDueThreadDeletions, 30000);
+  threadDeletionTimer.unref?.();
   if (process.env.CODEX_DECK_QA_CLAUDE_TOKEN && process.env.SHARE_MASTER_STORE_ROOT) {
     providerStore.saveProviderKey("claude", process.env.CODEX_DECK_QA_CLAUDE_TOKEN);
     providerStore.saveClaudeSettings({
@@ -947,6 +961,32 @@ app.whenReady().then(async () => {
       properties: ["openDirectory", "createDirectory"],
     });
     return result.canceled ? null : result.filePaths[0];
+  });
+  ipcMain.handle("dialog:images", async (event) => {
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    const result = await dialog.showOpenDialog(owner, {
+      title: "选择图片",
+      properties: ["openFile", "multiSelections"],
+      filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "gif"] }],
+    });
+    return result.canceled ? [] : result.filePaths;
+  });
+  ipcMain.handle("app:notify", (event, payload = {}) => {
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    const title = String(payload.title || "Share Master").slice(0, 120);
+    const body = String(payload.body || "").slice(0, 300);
+    if (Notification.isSupported()) {
+      const notification = new Notification({ title, body, silent: false });
+      notification.on("click", () => {
+        if (!owner || owner.isDestroyed()) return;
+        if (owner.isMinimized()) owner.restore();
+        owner.show();
+        owner.focus();
+      });
+      notification.show();
+    }
+    owner?.flashFrame(true);
+    return true;
   });
 
   ipcMain.handle("provider:add-relay", (_event, input) => {
@@ -1038,10 +1078,19 @@ app.whenReady().then(async () => {
     broadcastStoreSnapshot();
     return recordHome;
   });
-  ipcMain.handle("thread:hide", (_event, threadId) => {
-    const hiddenThreadIds = providerStore.hideThread(threadId);
+  ipcMain.handle("thread:hide", (_event, input) => {
+    const payload = typeof input === "string" ? { threadId: input } : input || {};
+    const pendingDeletion = providerStore.scheduleThreadDeletion(
+      payload.threadId,
+      payload.engine,
+      payload.providerId,
+    );
     broadcastStoreSnapshot();
-    return hiddenThreadIds;
+    return {
+      hiddenThreadIds: providerStore.hiddenThreads(),
+      pendingDeletion,
+      pendingDeletions: providerStore.pendingDeletions(),
+    };
   });
   ipcMain.handle("thread:restore", (_event, threadId) => {
     const hiddenThreadIds = providerStore.restoreThread(threadId);
@@ -1338,6 +1387,7 @@ app.whenReady().then(async () => {
       effort: payload.effort || null,
       approvalMode: payload.approvalMode || "ask",
       skillInputs: Array.isArray(payload.skillInputs) ? payload.skillInputs : [],
+      imageInputs: Array.isArray(payload.imageInputs) ? payload.imageInputs : [],
     },
   ));
   ipcMain.handle("codex:rename", (event, payload) => serverFor(event).renameThread(payload.threadId, payload.name));

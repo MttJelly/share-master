@@ -38,6 +38,10 @@ const state = {
   activeTurn: null,
   stopRequested: false,
   interruptingTurnId: null,
+  runningThreads: new Map(),
+  messageQueues: new Map(),
+  submitting: false,
+  pendingAttachments: [],
   workspace: "F:\\codepro",
   running: false,
   streamNodes: new Map(),
@@ -101,6 +105,7 @@ const elements = {
   composerBrandIcon: $("#composer-brand-icon"),
   skillButton: $("#skill-button"), skillMenu: $("#skill-menu"), skillSearch: $("#skill-search"),
   skillList: $("#skill-list"),
+  attachButton: $("#attach-button"), attachmentList: $("#attachment-list"),
 };
 
 marked.setOptions({ breaks: true, gfm: true });
@@ -481,7 +486,7 @@ function connect(provider, closeOverlay = true) {
   ++state.loadGeneration;
   ++state.openThreadGeneration;
   elements.providerError.textContent = "正在连接...";
-  setRunning(false);
+  resetAllRuns();
   setConnected(false);
   const task = (async () => {
     try {
@@ -766,22 +771,29 @@ function syncProjects() {
 
 function updateThreadViewControls() {
   const allThreads = [...state.activeThreads, ...state.archivedThreads]
-    .filter((thread) => !state.deletedThreadIds.has(thread.id));
+    .filter((thread) => !state.deletedThreadIds.has(thread.id))
+    .filter((thread) => !state.activeProject || threadBelongsToProject(thread, state.activeProject));
   const removed = allThreads.filter((thread) => state.hiddenThreadIds.has(thread.id));
   elements.activeThreadCount.textContent = state.activeThreads.filter((thread) => (
+    (!state.activeProject || threadBelongsToProject(thread, state.activeProject))
+    &&
     !state.hiddenThreadIds.has(thread.id)
     && !state.deletedThreadIds.has(thread.id)
     && !state.localArchivedThreadIds.has(thread.id)
   )).length;
   const archivedIds = new Set(state.archivedThreads
-    .filter((thread) => !state.hiddenThreadIds.has(thread.id) && !state.deletedThreadIds.has(thread.id))
+    .filter((thread) => (!state.activeProject || threadBelongsToProject(thread, state.activeProject))
+      && !state.hiddenThreadIds.has(thread.id) && !state.deletedThreadIds.has(thread.id))
     .map((thread) => thread.id));
   for (const threadId of state.localArchivedThreadIds) {
-    if (!state.hiddenThreadIds.has(threadId) && !state.deletedThreadIds.has(threadId)) archivedIds.add(threadId);
+    const thread = allThreads.find((item) => item.id === threadId);
+    if (thread && !state.hiddenThreadIds.has(threadId) && !state.deletedThreadIds.has(threadId)) archivedIds.add(threadId);
   }
   elements.archivedThreadCount.textContent = archivedIds.size;
   elements.removedThreadCount.textContent = removed.length;
-  elements.scheduledThreadCount.textContent = state.scheduledTasks.length;
+  elements.scheduledThreadCount.textContent = state.activeProject
+    ? state.scheduledTasks.filter((task) => taskBelongsToProject(task, state.activeProject)).length
+    : state.scheduledTasks.length;
   document.body.classList.toggle("non-composer-view", state.threadView !== "active");
   document.querySelectorAll("[data-thread-view]").forEach((button) => {
     button.classList.toggle("active", button.dataset.threadView === state.threadView);
@@ -971,11 +983,15 @@ function renderThreadList() {
     item.dataset.threadId = thread.id;
     const savedModel = state.threadSettings[threadSettingsKey(thread.id)]?.model;
     const deletion = pendingDeletion(thread.id);
+    const run = state.runningThreads.get(thread.id);
+    const queueLength = (state.messageQueues.get(thread.id) || []).length;
     const deletionMinutes = deletion ? Math.max(1, Math.ceil((deletion.expiresAt - Date.now()) / 60000)) : null;
     const detail = deletion
       ? `${deletionMinutes} 分钟后从 Share Master 清除`
+      : run ? `正在运行${queueLength ? ` · ${queueLength} 条排队` : ""}`
       : `${savedModel || thread.model || thread.modelProvider || "会话"} · ${timeAgo(thread.recencyAt || thread.updatedAt)}`;
     item.classList.toggle("pending-delete", Boolean(deletion));
+    item.classList.toggle("thread-running", Boolean(run));
     item.innerHTML = `<span class="thread-copy"><strong>${escapeHtml(titleOf(thread))}</strong><small>${escapeHtml(detail)}</small></span><span class="thread-more" title="会话操作"><span data-lucide="ellipsis"></span></span>`;
     item.addEventListener("click", (event) => {
       if (event.target.closest(".thread-more")) return openThreadMenu(thread, event);
@@ -1217,12 +1233,14 @@ async function openThread(thread) {
   state.openingThread = true;
   state.workspace = thread.cwd || state.workspace;
   state.activeThread = thread;
+  state.pendingAttachments = [];
+  renderAttachments();
   state.threadResumed = false;
   state.activeArchived = Boolean(thread._archived || thread._removed);
-  state.activeTurn = null;
+  state.threadResumed = state.runningThreads.has(thread.id);
   elements.windowTitle.textContent = titleOf(thread);
   updateWorkspace();
-  setRunning(false);
+  syncActiveRunState();
   applyThreadSessionSettings(thread);
   updateActiveThreadSelection();
   if (!showCachedConversation(thread)) showThreadLoading();
@@ -1238,6 +1256,15 @@ async function openThread(thread) {
       applyThreadSessionSettings(readResult.thread);
       renderConversation(readResult.thread);
       showDiagnostic(`${thread._removed ? "已移除" : "归档"}会话以只读方式打开，官方 Codex 记录未修改。`, false);
+      return;
+    }
+    if (state.runningThreads.has(thread.id)) {
+      const readResult = await api.readThread(thread.id);
+      if (!isCurrent()) return;
+      state.activeThread = readResult.thread;
+      state.threadResumed = true;
+      applyThreadSessionSettings(readResult.thread);
+      renderConversation(readResult.thread);
       return;
     }
     try {
@@ -1528,6 +1555,54 @@ function safeImageSource(value, isLocal = false) {
   return null;
 }
 
+function renderAttachments() {
+  elements.attachmentList.replaceChildren();
+  elements.attachmentList.classList.toggle("hidden", state.pendingAttachments.length === 0);
+  state.pendingAttachments.forEach((filePath, index) => {
+    const item = document.createElement("div");
+    item.className = "attachment-item";
+    const image = document.createElement("img");
+    image.src = localImageUrl(filePath);
+    image.alt = `待发送图片 ${index + 1}`;
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "attachment-remove";
+    remove.title = "移除图片";
+    remove.setAttribute("aria-label", "移除图片");
+    remove.innerHTML = '<span data-lucide="x"></span>';
+    remove.addEventListener("click", () => {
+      state.pendingAttachments.splice(index, 1);
+      renderAttachments();
+      syncComposerState();
+    });
+    item.append(image, remove);
+    elements.attachmentList.appendChild(item);
+  });
+  refreshIcons();
+}
+
+function addAttachments(paths) {
+  const existing = new Set(state.pendingAttachments.map(normalizePath));
+  for (const filePath of paths || []) {
+    if (!filePath || existing.has(normalizePath(filePath))) continue;
+    state.pendingAttachments.push(filePath);
+    existing.add(normalizePath(filePath));
+    if (state.pendingAttachments.length >= 8) break;
+  }
+  renderAttachments();
+  syncComposerState();
+}
+
+function appendPendingUserMessage(text, id, attachments = []) {
+  return appendUserMessage({
+    id,
+    content: [
+      ...(text ? [{ type: "text", text }] : []),
+      ...attachments.map((filePath) => ({ type: "localImage", path: filePath })),
+    ],
+  });
+}
+
 function appendUserMessage(item) {
   const node = appendMessage("user", userText(item), item.id);
   node.querySelector(".message-media")?.remove();
@@ -1653,7 +1728,8 @@ function showDiagnostic(message, isError = false) {
 
 async function sendMessage() {
   const text = elements.input.value.trim();
-  if (!text || !state.connected || state.running) return;
+  const attachments = [...state.pendingAttachments];
+  if ((!text && !attachments.length) || !state.connected || state.submitting) return;
   const { prompt, skillInputs } = parseSkillInvocations(text);
   const generation = state.openThreadGeneration;
   const isCurrent = (threadId = null) => generation === state.openThreadGeneration
@@ -1661,12 +1737,33 @@ async function sendMessage() {
   const workspace = state.workspace;
   const sessionSettings = selectedSessionSettings();
   const initialThread = state.activeThread;
-  const needsResume = Boolean(initialThread && !state.threadResumed);
+  const needsResume = Boolean(initialThread && !state.threadResumed && !state.runningThreads.has(initialThread.id));
   elements.input.value = "";
+  state.pendingAttachments = [];
+  renderAttachments();
   resizeComposer();
-  state.stopRequested = false;
-  state.interruptingTurnId = null;
-  setRunning(true);
+  if (initialThread && state.runningThreads.has(initialThread.id)) {
+    const clientUserMessageId = crypto.randomUUID();
+    const queued = {
+      threadId: initialThread.id,
+      text: prompt,
+      displayText: text,
+      skillInputs,
+      imageInputs: attachments.map((filePath) => ({ path: filePath, detail: "auto" })),
+      cwd: workspace,
+      clientUserMessageId,
+      ...sessionSettings,
+    };
+    const queue = state.messageQueues.get(initialThread.id) || [];
+    queue.push(queued);
+    state.messageQueues.set(initialThread.id, queue);
+    appendPendingUserMessage(text, clientUserMessageId, attachments);
+    showDiagnostic(`消息已排队（${queue.length}）`, false);
+    syncActiveRunState();
+    return;
+  }
+  state.submitting = true;
+  syncComposerState();
   try {
     let targetThread = initialThread;
     if (!targetThread) {
@@ -1720,65 +1817,129 @@ async function sendMessage() {
       }
     }
     const clientUserMessageId = crypto.randomUUID();
-    if (isCurrent(targetThread.id)) appendMessage("user", text, clientUserMessageId);
-    const result = await api.startTurn({
+    if (isCurrent(targetThread.id)) appendPendingUserMessage(text, clientUserMessageId, attachments);
+    await beginTurn({
       threadId: targetThread.id,
       text: prompt,
       skillInputs,
+      imageInputs: attachments.map((filePath) => ({ path: filePath, detail: "auto" })),
       cwd: workspace,
       clientUserMessageId,
       ...sessionSettings,
     });
-    if (isCurrent(targetThread.id)) {
-      state.activeTurn = result.turn?.id || null;
-      flushPendingInterrupt();
-    }
     await loadThreads();
   } catch (error) {
     if (generation === state.openThreadGeneration) {
-      setRunning(false);
       showDiagnostic(error.message, true);
     }
+  } finally {
+    state.submitting = false;
+    syncComposerState();
   }
 }
 
-function setRunning(running) {
-  state.running = running;
-  if (!running) {
-    state.stopRequested = false;
-    state.interruptingTurnId = null;
-    elements.stop.disabled = false;
-    elements.stop.title = "停止";
+async function beginTurn(payload) {
+  const threadId = payload.threadId;
+  setThreadRunning(threadId, true);
+  try {
+    const result = await api.startTurn(payload);
+    const run = state.runningThreads.get(threadId);
+    if (run) run.turnId = result.turn?.id || run.turnId || null;
+    if (threadId === state.activeThread?.id) syncActiveRunState();
+    flushPendingInterrupt(threadId);
+    return result;
+  } catch (error) {
+    setThreadRunning(threadId, false);
+    throw error;
   }
-  elements.send.classList.toggle("hidden", running);
-  elements.stop.classList.toggle("hidden", !running);
-  syncComposerState();
 }
 
-async function flushPendingInterrupt() {
+async function startNextQueuedMessage(threadId) {
+  const queue = state.messageQueues.get(threadId) || [];
+  const next = queue.shift();
+  if (!queue.length) state.messageQueues.delete(threadId);
+  else state.messageQueues.set(threadId, queue);
+  if (!next || !state.connected) {
+    syncActiveRunState();
+    return;
+  }
+  try {
+    await beginTurn(next);
+  } catch (error) {
+    showDiagnostic(`排队消息发送失败：${error.message}`, true);
+    api.notify({ title: "Share Master", body: `排队消息发送失败：${error.message}` }).catch(() => {});
+    if ((state.messageQueues.get(threadId) || []).length) startNextQueuedMessage(threadId);
+  }
+}
+
+function setThreadRunning(threadId, running, turnId = null) {
+  if (!threadId) return;
+  if (running) {
+    const current = state.runningThreads.get(threadId) || {
+      turnId: null,
+      stopRequested: false,
+      interruptingTurnId: null,
+      startedAt: Date.now(),
+    };
+    if (turnId) current.turnId = turnId;
+    state.runningThreads.set(threadId, current);
+  } else {
+    state.runningThreads.delete(threadId);
+  }
+  syncActiveRunState();
+}
+
+function resetAllRuns() {
+  state.runningThreads.clear();
+  state.messageQueues.clear();
+  state.submitting = false;
+  syncActiveRunState();
+}
+
+function syncActiveRunState() {
   const threadId = state.activeThread?.id;
-  const turnId = state.activeTurn;
-  if (!state.stopRequested || !threadId || !turnId || state.interruptingTurnId === turnId) return;
-  state.interruptingTurnId = turnId;
+  const run = threadId ? state.runningThreads.get(threadId) : null;
+  const queueLength = threadId ? (state.messageQueues.get(threadId) || []).length : 0;
+  state.running = Boolean(run);
+  state.activeTurn = run?.turnId || null;
+  state.stopRequested = Boolean(run?.stopRequested);
+  state.interruptingTurnId = run?.interruptingTurnId || null;
+  elements.send.classList.remove("hidden");
+  elements.stop.classList.toggle("hidden", !run);
+  elements.stop.disabled = Boolean(run?.stopRequested);
+  elements.stop.title = run?.stopRequested ? "正在停止" : "停止当前会话";
+  elements.send.title = run ? `排队发送${queueLength ? `（已有 ${queueLength} 条）` : ""}` : "发送";
+  elements.send.setAttribute("aria-label", run ? "排队发送" : "发送");
+  syncComposerState();
+  if (state.threads.length) renderThreadList();
+}
+
+async function flushPendingInterrupt(threadId = state.activeThread?.id) {
+  const run = threadId ? state.runningThreads.get(threadId) : null;
+  const turnId = run?.turnId;
+  if (!run?.stopRequested || !turnId || run.interruptingTurnId === turnId) return;
+  run.interruptingTurnId = turnId;
+  if (threadId === state.activeThread?.id) syncActiveRunState();
   try {
     await api.interruptTurn({ threadId, turnId });
   } catch (error) {
-    if (state.activeTurn === turnId) {
-      state.interruptingTurnId = null;
-      state.stopRequested = false;
-      elements.stop.disabled = false;
-      elements.stop.title = "停止";
+    const current = state.runningThreads.get(threadId);
+    if (current?.turnId === turnId) {
+      current.interruptingTurnId = null;
+      current.stopRequested = false;
+      if (threadId === state.activeThread?.id) syncActiveRunState();
       showActionError(error);
     }
   }
 }
 
 function requestTurnInterrupt() {
-  if (!state.running) return;
-  state.stopRequested = true;
-  elements.stop.disabled = true;
-  elements.stop.title = "正在停止";
-  flushPendingInterrupt();
+  const threadId = state.activeThread?.id;
+  const run = threadId ? state.runningThreads.get(threadId) : null;
+  if (!run) return;
+  run.stopRequested = true;
+  syncActiveRunState();
+  flushPendingInterrupt(threadId);
 }
 
 function scheduleThreadRefresh(delay = 300) {
@@ -1792,15 +1953,18 @@ function scheduleThreadRefresh(delay = 300) {
 function syncComposerState() {
   const disabled = !state.connected || state.activeArchived || state.openingThread;
   elements.input.disabled = disabled;
-  elements.send.disabled = disabled || state.running || !elements.input.value.trim();
-  const controlsDisabled = disabled || state.running || state.modelCatalog.length === 0;
+  const hasContent = Boolean(elements.input.value.trim() || state.pendingAttachments.length);
+  elements.send.disabled = disabled || state.submitting || !hasContent;
+  const controlsDisabled = disabled || state.modelCatalog.length === 0;
   elements.sessionModel.disabled = controlsDisabled;
   elements.sessionEffort.disabled = controlsDisabled;
-  elements.modeBadge.disabled = disabled || state.running;
-  elements.skillButton.disabled = disabled || state.running || state.skillsLoading || state.providerType === "claude";
+  elements.modeBadge.disabled = disabled;
+  elements.skillButton.disabled = disabled || state.skillsLoading || state.providerType === "claude";
+  elements.attachButton.disabled = disabled || state.submitting;
   elements.input.placeholder = state.activeArchived
     ? "当前会话为只读"
     : state.openingThread ? "正在加载会话"
+    : state.running ? "继续输入，消息将在当前回复后发送"
     : state.providerType === "claude" ? "给 Claude 发送消息" : "给 Codex 发送消息";
 }
 
@@ -1818,6 +1982,36 @@ function refreshAccountStatus() {
     });
   state.accountRefreshPromise = task;
   return task;
+}
+
+function threadForId(threadId) {
+  return [...state.activeThreads, ...state.archivedThreads].find((thread) => thread.id === threadId) || null;
+}
+
+function notifyThreadCompletion(threadId, turn) {
+  const thread = threadForId(threadId);
+  const title = titleOf(thread || { id: threadId });
+  const status = turn?.status;
+  const body = status === "failed"
+    ? `${title} 运行失败`
+    : status === "interrupted" ? `${title} 已停止` : `${title} 已完成`;
+  api.notify({ title: "Share Master", body }).catch(() => {});
+}
+
+function completeThreadRun(threadId, turn) {
+  const wasBackground = threadId !== state.activeThread?.id || document.hidden;
+  setThreadRunning(threadId, false);
+  const queue = state.messageQueues.get(threadId) || [];
+  if (queue.length) {
+    setTimeout(() => startNextQueuedMessage(threadId), 0);
+  } else if (wasBackground) {
+    notifyThreadCompletion(threadId, turn);
+  }
+  if (threadId === state.activeThread?.id) {
+    if (turn?.status === "failed") showDiagnostic(turn.error?.message || "本轮执行失败。", true);
+    if (turn?.status === "interrupted") showDiagnostic("本轮已停止。", false);
+  }
+  scheduleThreadRefresh();
 }
 
 function handleEvent(message) {
@@ -1884,6 +2078,15 @@ function handleEvent(message) {
     return;
   }
   const eventThreadId = params.threadId || params.conversationId || null;
+  if (method === "turn/started") {
+    setThreadRunning(eventThreadId, true, params.turn?.id || null);
+    flushPendingInterrupt(eventThreadId);
+    return;
+  }
+  if (method === "turn/completed") {
+    completeThreadRun(eventThreadId, params.turn);
+    return;
+  }
   const globallyRelevant = ["thread/name/updated", "thread/started", "thread/archived", "thread/unarchived", "thread/deleted"].includes(method);
   if (eventThreadId && !globallyRelevant && eventThreadId !== state.activeThread?.id) return;
   if (method === "item/started" || method === "item/completed") {
@@ -1902,17 +2105,6 @@ function handleEvent(message) {
     appendActivityDelta(params.itemId, params.turnId, "思考过程", params.delta, "brain");
   } else if (method === "item/plan/delta") {
     appendActivityDelta(params.itemId, params.turnId, "计划", params.delta, "list-checks");
-  } else if (method === "turn/started") {
-    state.activeTurn = params.turn?.id || state.activeTurn;
-    setRunning(true);
-    flushPendingInterrupt();
-  } else if (method === "turn/completed") {
-    const status = params.turn?.status;
-    setRunning(false);
-    state.activeTurn = null;
-    if (status === "failed") showDiagnostic(params.turn?.error?.message || "本轮执行失败。", true);
-    if (status === "interrupted") showDiagnostic("本轮已停止。", false);
-    scheduleThreadRefresh();
   } else if (method === "thread/name/updated") {
     if (state.activeThread?.id === params.threadId) {
       state.activeThread.name = params.threadName || state.activeThread.name;
@@ -1933,12 +2125,6 @@ function handleEvent(message) {
 }
 
 function showApproval(request) {
-  const requestThreadId = request.params?.threadId || request.params?.conversationId;
-  if (requestThreadId && requestThreadId !== state.activeThread?.id) {
-    api.answerApproval({ id: request.id, result: declinedRequestResult(request) })
-      .catch((error) => showDiagnostic(error.message, true));
-    return;
-  }
   if (state.activeApproval?.id === request.id || state.approvalQueue.some((item) => item.id === request.id)) return;
   state.approvalQueue.push(request);
   renderNextApproval();
@@ -1969,12 +2155,20 @@ function approvalResult(request, decision) {
   return { decision };
 }
 
-function renderNextApproval() {
-  if (state.activeApproval || state.approvalQueue.length === 0) {
+function renderNextApproval(threadId = state.activeThread?.id || null) {
+  if (state.activeApproval) {
+    elements.approval.classList.remove("hidden");
+    return;
+  }
+  const requestIndex = state.approvalQueue.findIndex((request) => {
+    const requestThreadId = request.params?.threadId || request.params?.conversationId || null;
+    return !requestThreadId || requestThreadId === threadId;
+  });
+  if (requestIndex < 0) {
     elements.approval.classList.toggle("hidden", !state.activeApproval);
     return;
   }
-  const request = state.approvalQueue.shift();
+  const [request] = state.approvalQueue.splice(requestIndex, 1);
   state.activeApproval = request;
   if (request.method === "item/tool/requestUserInput") {
     renderUserInputRequest(request);
@@ -2160,27 +2354,18 @@ function resolveApproval(requestId) {
 }
 
 function clearRequestsForThreadChange(nextThreadId) {
-  const pending = [state.activeApproval, ...state.approvalQueue].filter(Boolean);
-  const keep = [];
-  for (const request of pending) {
-    const requestThreadId = request.params?.threadId || request.params?.conversationId || null;
-    if (!requestThreadId || requestThreadId === nextThreadId) {
-      keep.push(request);
-      continue;
-    }
-    api.answerApproval({ id: request.id, result: declinedRequestResult(request) }).catch(showActionError);
-  }
+  if (state.activeApproval) state.approvalQueue.unshift(state.activeApproval);
   state.activeApproval = null;
-  state.approvalQueue = keep;
   elements.approval.classList.add("hidden");
-  renderNextApproval();
+  renderNextApproval(nextThreadId);
 }
 
 function newChat(switchToActive = true) {
   ++state.openThreadGeneration;
   state.openingThread = false;
   parkRenderedConversation();
-  setRunning(false);
+  state.pendingAttachments = [];
+  renderAttachments();
   clearRequestsForThreadChange(null);
   if (switchToActive && state.threadView !== "active") {
     state.threadView = "active";
@@ -2190,7 +2375,6 @@ function newChat(switchToActive = true) {
     renderProjects();
   }
   state.activeThread = null;
-  state.activeTurn = null;
   state.threadResumed = false;
   state.activeArchived = state.threadView !== "active";
   elements.chat.innerHTML = "";
@@ -2213,6 +2397,7 @@ function newChat(switchToActive = true) {
     elements.input.focus();
   }
   syncComposerState();
+  syncActiveRunState();
   renderThreadList();
 }
 
@@ -2308,14 +2493,20 @@ async function threadMenuAction(action) {
       showDiagnostic("会话已恢复到活动列表。", false);
       return;
     } else if (action === "remove") {
-      const confirmed = confirm("从 Share Master 中移除这个会话？\n\n只会在本应用中隐藏，官方 Codex 会话记录完全不变。");
+      const confirmed = confirm("从 Share Master 中移除这个会话？\n\n可在一小时内恢复；到期后会从 Share Master 列表清除。原始 ChatGPT/Codex/Claude 会话记录完全不变。");
       if (!confirmed) return;
-      const hiddenIds = await api.hideThread(thread.id);
-      state.hiddenThreadIds = new Set(hiddenIds);
+      const result = await api.hideThread({
+        threadId: thread.id,
+        engine: state.providerType === "claude" ? "claude" : "codex",
+        providerId: state.provider,
+      });
+      state.hiddenThreadIds = new Set(result.hiddenThreadIds || []);
+      state.pendingDeletions = result.pendingDeletions || [];
       if (state.activeThread?.id === thread.id) newChat();
       updateThreadViewControls();
       applyThreadFilter();
       renderProjects();
+      showDiagnostic("会话已移除，可在一小时内恢复。", false);
       return;
     } else if (action === "restore") {
       const hiddenIds = await api.restoreThread(thread.id);
@@ -2888,6 +3079,15 @@ elements.input.addEventListener("input", () => {
   resizeComposer();
   updateSkillAutocomplete();
 });
+elements.attachButton.addEventListener("click", async () => {
+  if (elements.attachButton.disabled) return;
+  try {
+    addAttachments(await api.chooseImages());
+    elements.input.focus();
+  } catch (error) {
+    showActionError(error);
+  }
+});
 elements.sessionModel.addEventListener("change", () => {
   renderEffortOptions(elements.sessionEffort.value);
   renderAppliedSettings();
@@ -3040,12 +3240,17 @@ api.onApproval(showApproval);
 api.onDiagnostic((message) => showDiagnostic(message));
 api.onDisconnected(() => {
   setConnected(false);
-  setRunning(false);
+  resetAllRuns();
   state.activeApproval = null;
   state.approvalQueue = [];
   elements.approval.classList.add("hidden");
 });
 api.onStoreChanged(applyStoreSnapshot);
+
+setInterval(() => {
+  updateThreadViewControls();
+  renderThreadList();
+}, 30000);
 
 (async function init() {
   try {

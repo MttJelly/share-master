@@ -69,6 +69,7 @@
         <footer class="composer-wrap">
           <div id="approval-banner" class="approval-banner hidden"></div>
           <div class="composer">
+            <div id="attachment-list" class="attachment-list hidden" aria-label="待发送图片"></div>
             <textarea id="composer-input" rows="1" placeholder="给 Codex 发送消息" disabled></textarea>
             <div id="skill-menu" class="skill-menu hidden" role="menu" aria-label="Skills">
               <input id="skill-search" type="search" placeholder="搜索 Skills" autocomplete="off" />
@@ -97,6 +98,9 @@
             </div>
             <div class="composer-footer">
               <div class="session-controls">
+                <button id="attach-button" class="skill-button" type="button" title="添加图片" aria-label="添加图片" disabled>
+                  <span data-lucide="paperclip"></span>
+                </button>
                 <button id="skill-button" class="skill-button" type="button" title="Skills" aria-label="Skills" aria-haspopup="menu" aria-expanded="false" disabled>
                   <span data-lucide="wand-sparkles"></span>
                 </button>

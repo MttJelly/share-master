@@ -102,9 +102,13 @@ async function run() {
     const index = scheduledTasks.findIndex((item) => item.id === taskId);
     return scheduledTasks.splice(index, 1)[0];
   });
-  ipcMain.handle("thread:hide", (_event, threadId) => {
-    hiddenThreads.add(threadId);
-    return [...hiddenThreads];
+  ipcMain.handle("thread:hide", (_event, input) => {
+    hiddenThreads.add(input.threadId);
+    return {
+      hiddenThreadIds: [...hiddenThreads],
+      pendingDeletion: { threadId: input.threadId, expiresAt: Date.now() + 3600000 },
+      pendingDeletions: [{ threadId: input.threadId, expiresAt: Date.now() + 3600000 }],
+    };
   });
   ipcMain.handle("thread:restore", (_event, threadId) => {
     hiddenThreads.delete(threadId);

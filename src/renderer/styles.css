@@ -127,7 +127,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 .empty-symbol svg { width: 24px; }
 .empty-state h1 { margin: 18px 0 7px; font-size: 21px; font-weight: 650; }
 .empty-state p { margin: 0; color: var(--muted); font-size: 13px; }
-.chat-view { flex: 1; min-height: 0; overflow-y: auto; padding: 32px max(24px, calc((100% - 820px)/2)) 190px; }
+.chat-view { flex: 1; min-height: 0; overflow-y: auto; padding: 32px max(24px, calc((100% - 820px)/2)) 240px; }
 .conversation-state { min-height: 100%; display: flex; align-items: center; justify-content: center; gap: 9px; color: var(--muted); font-size: 12px; }
 .conversation-state svg { width: 18px; height: 18px; }
 .conversation-loading svg { animation: conversation-spin 900ms linear infinite; }
@@ -154,12 +154,19 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 .activity-image { flex: 0 0 auto; margin: 5px 0 7px 21px; }
 .load-earlier-turns { display: block; margin: 0 auto 22px; padding: 7px 11px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--muted); cursor: pointer; font-size: 12px; }
 .load-earlier-turns:hover { background: var(--surface-2); color: var(--ink); }
+.thread-item.thread-running small { color: var(--teal); font-weight: 600; }
 
 .composer-wrap { position: absolute; left: 0; right: 0; bottom: 0; padding: 22px max(24px, calc((100% - 820px)/2)) 18px; background: linear-gradient(transparent, rgba(255,255,255,.95) 28%, #fff 58%); }
 .composer { position: relative; min-height: 108px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); box-shadow: 0 8px 28px rgba(27,34,40,.09); padding: 12px; }
 .composer:focus-within { border-color: #8f989f; }
 .composer textarea { width: 100%; max-height: 180px; min-height: 48px; resize: none; border: 0; outline: 0; background: transparent; color: var(--ink); line-height: 1.5; }
 .composer textarea::placeholder { color: #9aa0a6; }
+.attachment-list { display: flex; gap: 8px; margin-bottom: 9px; overflow-x: auto; }
+.attachment-list.hidden { display: none; }
+.attachment-item { position: relative; width: 64px; height: 64px; flex: 0 0 64px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-2); overflow: hidden; }
+.attachment-item img { width: 100%; height: 100%; object-fit: cover; }
+.attachment-remove { position: absolute; top: 3px; right: 3px; width: 20px; height: 20px; display: grid; place-items: center; border: 0; border-radius: 50%; background: rgba(24,29,33,.82); color: white; cursor: pointer; }
+.attachment-remove svg { width: 12px; height: 12px; }
 .composer-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 12px; }
 .session-controls { min-width: 0; flex: 1 1 390px; display: flex; align-items: center; gap: 7px; }
 .skill-button { width: 30px; height: 30px; flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-2); color: var(--muted); cursor: pointer; }

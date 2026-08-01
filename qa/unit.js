@@ -189,9 +189,11 @@ async function testClientUserMessageId() {
   assert.deepEqual(captured[0].params.input, [{ type: "text", text: "hello" }]);
   await server.startTurn("thread", "draft this", "F:\\codepro", null, {
     skillInputs: [{ name: "nature-writing", path: "F:\\skills\\nature-writing\\SKILL.md" }],
+    imageInputs: [{ path: "F:\\images\\figure.png", detail: "high" }],
   });
   assert.deepEqual(captured[1].params.input, [
     { type: "skill", name: "nature-writing", path: "F:\\skills\\nature-writing\\SKILL.md" },
+    { type: "localImage", path: "F:\\images\\figure.png", detail: "high" },
     { type: "text", text: "draft this" },
   ]);
 }
@@ -358,9 +360,13 @@ function testLegacyDeletionMigration() {
     }],
   }), "utf8");
   const store = new ProviderStore();
-  assert.equal(store.pendingDeletions().length, 0);
+  assert.equal(store.pendingDeletions().length, 1);
   assert.equal(store.metadata().hiddenThreads.includes("legacy-pending-thread"), true);
   assert.equal(store.deletedThreads().includes("legacy-pending-thread"), false);
+  assert.equal(store.dueThreadDeletions(2000).length, 1);
+  store.completeThreadDeletion("legacy-pending-thread");
+  assert.equal(store.metadata().hiddenThreads.includes("legacy-pending-thread"), false);
+  assert.equal(store.deletedThreads().includes("legacy-pending-thread"), true);
 }
 
 function testLocalThreadManagement() {

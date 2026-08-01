@@ -10,6 +10,8 @@ async function run() {
   let resumeCalls = 0;
   let readCalls = 0;
   let interruptCalls = 0;
+  let startTurnCalls = 0;
+  let notificationCalls = 0;
   ipcMain.handle("app:bootstrap", () => ({
     providers: [],
     projects: [],
@@ -54,6 +56,14 @@ async function run() {
   });
   ipcMain.handle("codex:interrupt", () => {
     interruptCalls += 1;
+    return true;
+  });
+  ipcMain.handle("codex:start-turn", () => {
+    startTurnCalls += 1;
+    return { turn: { id: `queued-turn-${startTurnCalls}` } };
+  });
+  ipcMain.handle("app:notify", () => {
+    notificationCalls += 1;
     return true;
   });
   const window = new BrowserWindow({
@@ -154,13 +164,32 @@ async function run() {
     updateThreadViewControls();
     await openThread({ id: 'archived-fixture', name: 'Archived fixture', cwd: ${JSON.stringify(root)}, _archived: true });
     state.activeThread = { id: 'interrupt-fixture' };
-    state.activeTurn = null;
-    setRunning(true);
+    setThreadRunning('interrupt-fixture', true);
     requestTurnInterrupt();
     const interruptQueuedBeforeTurnId = state.stopRequested && document.querySelector('#stop-button').disabled;
-    state.activeTurn = 'turn-fixture';
-    await flushPendingInterrupt();
-    setRunning(false);
+    state.runningThreads.get('interrupt-fixture').turnId = 'turn-fixture';
+    await flushPendingInterrupt('interrupt-fixture');
+    setThreadRunning('interrupt-fixture', false);
+    state.threadView = 'active';
+    state.activeArchived = false;
+    updateThreadViewControls();
+    state.activeThread = { id: 'background-a', name: 'Background A', cwd: ${JSON.stringify(root)} };
+    state.threadResumed = true;
+    setThreadRunning('background-a', true, 'background-turn-1');
+    const input = document.querySelector('#composer-input');
+    input.value = 'queued follow-up';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await sendMessage();
+    const queuedBeforeCompletion = (state.messageQueues.get('background-a') || []).length;
+    const composerEnabledWhileRunning = !input.disabled;
+    state.activeThread = { id: 'background-b', name: 'Background B', cwd: ${JSON.stringify(root)} };
+    syncActiveRunState();
+    const backgroundPreservedAfterSwitch = state.runningThreads.has('background-a');
+    handleEvent({ method: 'turn/completed', params: { threadId: 'background-a', turn: { id: 'background-turn-1', status: 'completed' } } });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const queuedTurnStarted = state.runningThreads.get('background-a')?.turnId === 'queued-turn-1';
+    handleEvent({ method: 'turn/completed', params: { threadId: 'background-a', turn: { id: 'queued-turn-1', status: 'completed' } } });
+    await new Promise((resolve) => setTimeout(resolve, 20));
     return {
       activeThreadId: state.activeThread.id,
       openingThread: state.openingThread,
@@ -168,20 +197,30 @@ async function run() {
       composerHidden: getComputedStyle(document.querySelector('.composer-wrap')).display === 'none',
       loadingVisible,
       diagnosticActivities: document.querySelectorAll('#chat-view .activity-row').length,
-      interruptQueuedBeforeTurnId
+      interruptQueuedBeforeTurnId,
+      queuedBeforeCompletion,
+      composerEnabledWhileRunning,
+      backgroundPreservedAfterSwitch,
+      queuedTurnStarted
     };
   })()`);
   assert.equal(resumeCalls, 1, "Active thread switching must call resume exactly once.");
   assert.equal(readCalls, 1, "Archived thread switching must call read exactly once.");
-  assert.equal(protocol.activeThreadId, "interrupt-fixture");
+  assert.equal(protocol.activeThreadId, "background-b");
   assert.equal(protocol.openingThread, false);
-  assert.equal(protocol.composerDisabled, true);
-  assert.equal(protocol.composerHidden, true);
+  assert.equal(protocol.composerDisabled, false);
+  assert.equal(protocol.composerHidden, false);
   assert.equal(protocol.loadingVisible, true);
   assert.equal(protocol.diagnosticActivities, 0);
   assert.equal(protocol.interruptQueuedBeforeTurnId, true);
   assert.equal(interruptCalls, 1);
-  console.log(JSON.stringify({ ok: true, ...result, resumeCalls, readCalls, interruptCalls, protocol }));
+  assert.equal(protocol.queuedBeforeCompletion, 1);
+  assert.equal(protocol.composerEnabledWhileRunning, true);
+  assert.equal(protocol.backgroundPreservedAfterSwitch, true);
+  assert.equal(protocol.queuedTurnStarted, true);
+  assert.equal(startTurnCalls, 1);
+  assert.equal(notificationCalls, 1);
+  console.log(JSON.stringify({ ok: true, ...result, resumeCalls, readCalls, interruptCalls, startTurnCalls, notificationCalls, protocol }));
   window.destroy();
 }
 
