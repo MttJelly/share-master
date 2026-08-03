@@ -6,9 +6,16 @@
   "description": "Share Master: a multi-account, multi-provider desktop client with shared local conversations.",
   "main": "src/main.js",
   "scripts": {
+    "build:renderer": "node scripts/build-vue-render.js",
+    "prestart": "npm run build:renderer",
     "start": "electron .",
-    "check": "node --check src/main.js && node --check src/codex-server.js && node --check src/claude-server.js && node --check src/claude-models.js && node --check src/openai-models.js && node --check src/provider-store.js && node --check src/relay-balance.js && node --check src/scheduled-task-runner.js && node --check src/conversation-mirror.js && node --check src/skill-mirror.js && node --check src/preload.js && node --check src/renderer/app.js && node --check qa/unit.js && node --check qa/niubi-live.js && node --check qa/claude-live.js && node --check qa/claude-model-fallback.js && node --check qa/relay-live.js && node --check qa/official-connect-smoke.js && node --check qa/multi-window.js && node --check qa/model-settings.js && node --check qa/thread-actions.js && node --check qa/project-actions.js && node --check qa/thread-switch-performance.js && node --check qa/app-server-smoke.js",
+    "check": "node scripts/build-vue-render.js --check && node --check src/main.js && node --check src/deep-link.js && node --check src/codex-server.js && node --check src/claude-server.js && node --check src/openai-compatible-server.js && node --check src/conversation-branches.js && node --check src/local-conversation-history.js && node --check src/local-provider-discovery.js && node --check src/claude-models.js && node --check src/openai-models.js && node --check src/provider-store.js && node --check src/relay-balance.js && node --check src/scheduled-task-runner.js && node --check src/conversation-mirror.js && node --check src/skill-mirror.js && node --check src/preload.js && node --check src/renderer/vue-bootstrap.js && node --check src/renderer/app.js && node --check qa/unit.js && node --check qa/vue-renderer.js && node --check qa/local-provider-discovery.js && node --check qa/hour-stability.js && node --check qa/logical-branches.js && node --check qa/deep-link-import.js && node --check qa/niubi-live.js && node --check qa/claude-live.js && node --check qa/claude-model-fallback.js && node --check qa/relay-live.js && node --check qa/official-connect-smoke.js && node --check qa/multi-window.js && node --check qa/model-settings.js && node --check qa/thread-actions.js && node --check qa/project-actions.js && node --check qa/thread-switch-performance.js && node --check qa/app-server-smoke.js",
     "test:unit": "node qa/unit.js",
+    "test:vue-ui": "electron qa/vue-renderer.js",
+    "test:stability-hour": "electron qa/hour-stability.js",
+    "test:logical-branches": "electron qa/logical-branches.js",
+    "test:deep-link": "node qa/deep-link-import.js",
+    "test:local-providers": "electron qa/local-provider-discovery.js",
     "test:niubi-live": "electron qa/niubi-live.js",
     "test:claude-live": "electron qa/claude-live.js",
     "test:claude-fallback": "node qa/claude-model-fallback.js",
@@ -26,9 +33,11 @@
     "dompurify": "^3.2.6",
     "lucide": "^0.468.0",
     "marked": "^15.0.12",
-    "simple-icons": "^14.15.0"
+    "simple-icons": "^14.15.0",
+    "vue": "^3.5.40"
   },
   "devDependencies": {
-    "electron": "^35.7.5"
+    "@vue/compiler-dom": "^3.5.40",
+    "electron": "^43.2.0"
   }
 }

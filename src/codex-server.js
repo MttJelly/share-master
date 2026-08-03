@@ -1,5 +1,5 @@
 const { EventEmitter } = require("node:events");
-const { spawn } = require("node:child_process");
+const { spawn, spawnSync } = require("node:child_process");
 const readline = require("node:readline");
 const path = require("node:path");
 
@@ -37,6 +37,21 @@ const APPROVAL_MODES = {
 
 function approvalSettings(mode = "ask") {
   return { ...(APPROVAL_MODES[mode] || APPROVAL_MODES.ask) };
+}
+
+function terminateProcessTree(child) {
+  if (!child || child.exitCode !== null) return;
+  if (process.platform === "win32" && Number.isInteger(child.pid)) {
+    const result = spawnSync("taskkill.exe", ["/pid", String(child.pid), "/t", "/f"], {
+      windowsHide: true,
+      stdio: "ignore",
+      timeout: 5000,
+    });
+    if (!result.error) return;
+  }
+  try {
+    child.kill();
+  } catch {}
 }
 
 const BASE_PROVIDERS = {
@@ -233,7 +248,7 @@ class CodexServer extends EventEmitter {
     this.ready = false;
     this.lines?.close();
     if (this.process?.stdin?.writable) this.process.stdin.end();
-    if (this.process && !this.process.killed) this.process.kill();
+    terminateProcessTree(this.process);
     this.process = null;
   }
 
@@ -313,6 +328,21 @@ class CodexServer extends EventEmitter {
   }
 
   startTurn(threadId, text, cwd, clientUserMessageId = null, options = {}) {
+    const input = this.turnInput(text, options);
+    if (!input.length) return Promise.reject(new Error("消息内容不能为空。"));
+    return this.request("turn/start", {
+      threadId,
+      cwd,
+      ...(options.model ? { model: options.model } : {}),
+      ...(options.effort ? { effort: options.effort } : {}),
+      ...approvalSettings(options.approvalMode),
+      personality: "pragmatic",
+      input,
+      ...(clientUserMessageId ? { clientUserMessageId } : {}),
+    }, 90000);
+  }
+
+  turnInput(text, options = {}) {
     const skillInputs = (options.skillInputs || [])
       .filter((skill) => skill && typeof skill.name === "string" && typeof skill.path === "string")
       .map((skill) => ({ type: "skill", name: skill.name, path: skill.path }));
@@ -325,16 +355,17 @@ class CodexServer extends EventEmitter {
       ...imageInputs,
       ...(prompt ? [{ type: "text", text: prompt }] : []),
     ];
-    if (!input.length) return Promise.reject(new Error("消息内容不能为空。"));
-    return this.request("turn/start", {
+    return input;
+  }
+
+  steerTurn(threadId, expectedTurnId, text, options = {}) {
+    const input = this.turnInput(text, options);
+    if (!input.length) return Promise.reject(new Error("引导内容不能为空。"));
+    if (!String(expectedTurnId || "").trim()) return Promise.reject(new Error("当前回复尚未开始，暂时无法引导。"));
+    return this.request("turn/steer", {
       threadId,
-      cwd,
-      ...(options.model ? { model: options.model } : {}),
-      ...(options.effort ? { effort: options.effort } : {}),
-      ...approvalSettings(options.approvalMode),
-      personality: "pragmatic",
+      expectedTurnId,
       input,
-      ...(clientUserMessageId ? { clientUserMessageId } : {}),
     }, 90000);
   }
 }

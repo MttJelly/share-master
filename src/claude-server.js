@@ -260,6 +260,7 @@ class ClaudeServer extends EventEmitter {
       updatedAt,
       recencyAt: updatedAt,
       turns,
+      _historyEngine: "claude",
     };
   }
 
@@ -292,6 +293,7 @@ class ClaudeServer extends EventEmitter {
       updatedAt,
       recencyAt: updatedAt,
       turns: [],
+      _historyEngine: "claude",
     };
   }
 
@@ -406,6 +408,10 @@ class ClaudeServer extends EventEmitter {
       windowsHide: true,
     });
     this.processes.set(threadId, { process: processHandle, turnId, requestedModel: selectedModel, completed: false });
+    this.emit("notification", {
+      method: "turn/started",
+      params: { threadId, turn: { id: turnId, status: "inProgress" } },
+    });
     const userItem = {
       id: crypto.randomUUID(),
       type: "userMessage",
@@ -478,11 +484,17 @@ class ClaudeServer extends EventEmitter {
       return;
     }
     if (event.type === "result") {
-      this.finishTurn(threadId, turnId, event.is_error ? "failed" : "completed", event.is_error ? event.result : null);
+      this.finishTurn(
+        threadId,
+        turnId,
+        event.is_error ? "failed" : "completed",
+        event.is_error ? event.result : null,
+        event.usage || event.modelUsage || null,
+      );
     }
   }
 
-  finishTurn(threadId, turnId, status, diagnostic = null) {
+  finishTurn(threadId, turnId, status, diagnostic = null, usage = null) {
     const active = this.processes.get(threadId);
     if (!active || active.turnId !== turnId || active.completed) return;
     active.completed = true;
@@ -491,7 +503,7 @@ class ClaudeServer extends EventEmitter {
     if (diagnostic) this.emit("diagnostic", diagnostic);
     this.emit("notification", {
       method: "turn/completed",
-      params: { threadId, turn: { id: turnId, status } },
+      params: { threadId, turn: { id: turnId, status, ...(usage ? { usage } : {}) } },
     });
   }
 

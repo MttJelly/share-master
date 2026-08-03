@@ -1,0 +1,839 @@
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const { app, BrowserWindow, ipcMain } = require("electron");
+
+const root = path.resolve(__dirname, "..");
+const artifactRoot = path.join(__dirname, "multi-window-artifacts");
+const desktopScreenshot = path.join(artifactRoot, "vue-renderer-desktop.png");
+const compactScreenshot = path.join(artifactRoot, "vue-renderer-compact.png");
+const conversationScreenshot = path.join(artifactRoot, "vue-renderer-conversation.png");
+const attachmentScreenshot = path.join(artifactRoot, "vue-renderer-attachment.png");
+const localHistoryScreenshot = path.join(artifactRoot, "vue-renderer-local-history.png");
+const localProviderScreenshot = path.join(artifactRoot, "vue-renderer-local-providers.png");
+const usageScreenshot = path.join(artifactRoot, "vue-renderer-usage.png");
+const usageCompactScreenshot = path.join(artifactRoot, "vue-renderer-usage-compact.png");
+const backupScreenshot = path.join(artifactRoot, "vue-renderer-backup.png");
+const syncScreenshot = path.join(artifactRoot, "vue-renderer-sync.png");
+const appSettingsScreenshot = path.join(artifactRoot, "vue-renderer-app-settings.png");
+const importPreviewScreenshot = path.join(artifactRoot, "vue-renderer-import-preview.png");
+const healthScreenshot = path.join(artifactRoot, "vue-renderer-health.png");
+const extensionsScreenshot = path.join(artifactRoot, "vue-renderer-extensions.png");
+const skillInstallScreenshot = path.join(artifactRoot, "vue-renderer-skill-install.png");
+const darkExtensionsScreenshot = path.join(artifactRoot, "vue-renderer-extensions-dark.png");
+app.setPath("userData", path.join(__dirname, ".vue-renderer-profile"));
+
+async function rendererSnapshot(window) {
+  return window.webContents.executeJavaScript(`({
+    vueMounted: Boolean(window.shareMasterVue),
+    stateExposed: Boolean(window.shareMasterState),
+    pending: document.querySelector('#app').classList.contains('vue-pending'),
+    providerDialogVisible: !document.querySelector('#provider-overlay').classList.contains('hidden'),
+    connectionDialogVisible: !document.querySelector('#connection-overlay').classList.contains('hidden'),
+    composerOverflow: document.querySelector('.composer').scrollWidth > document.querySelector('.composer').clientWidth,
+    bodyOverflow: document.body.scrollWidth > document.body.clientWidth || document.body.scrollHeight > document.body.clientHeight,
+    sidebarWidth: Math.round(document.querySelector('.sidebar').getBoundingClientRect().width),
+    relayColumns: getComputedStyle(document.querySelector('#relay-form')).gridTemplateColumns,
+    formActionsBackground: getComputedStyle(document.querySelector('#relay-form .form-actions')).backgroundColor,
+    providerGroups: [...document.querySelectorAll('.provider-group-label')].map((node) => node.textContent),
+    fatal: document.querySelector('.renderer-fatal')?.textContent || null
+  })`);
+}
+
+async function capturePageWithRetry(window) {
+  let lastError;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const image = await window.webContents.capturePage();
+      if (!image.isEmpty()) return image;
+      lastError = new Error("capturePage returned an empty image.");
+    } catch (error) {
+      lastError = error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  throw lastError;
+}
+
+async function run() {
+  await app.whenReady();
+  const extensionFixture = {
+    skills: [
+      { name: "nature-writing", description: "Draft and restructure technical writing", path: "F:\\private\\nature-writing\\SKILL.md", enabled: true, removable: true, source: "F:\\private\\installed\\nature-writing" },
+      { name: "figure-designer", description: "Design submission-grade figures", path: "F:\\private\\figure-designer\\SKILL.md", enabled: false, source: "Share Master 镜像库" },
+    ],
+    prompts: [
+      { id: "prompt_fixture", name: "summarize", description: "提炼当前内容", content: "请提炼当前内容的关键结论。", createdAt: Date.now(), updatedAt: Date.now() },
+    ],
+    mcpServers: [
+      { id: "mcp_fixture", name: "Local tools", transport: "stdio", command: "node", args: ["server.js"], envKeys: ["ACCESS_TOKEN"], enabled: true, hasSecrets: true },
+    ],
+  };
+  const syncFixture = {
+    backend: "webdav",
+    directory: "F:\\Share Master Sync",
+    webdavUrl: "https://dav.example.test/share-master/",
+    hasWebdavCredentials: true,
+    autoSync: true,
+    lastSyncedAt: Date.now() - 60000,
+    remoteExists: true,
+    history: [
+      { id: "sync_1", at: Date.now() - 60000, status: "success", direction: "push", message: "已将本机配置写入同步目录。" },
+      { id: "sync_2", at: Date.now() - 3600000, status: "conflict", direction: "none", message: "检测到配置冲突。" },
+    ],
+  };
+  let localProviderImported = false;
+  const steerRequests = [];
+  const interruptRequests = [];
+  const copiedTexts = [];
+  const persistedQueues = [];
+  ipcMain.handle("app:bootstrap", () => ({
+    providerPresets: [
+      { id: "deepseek", label: "DeepSeek", group: "国内模型", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat", protocol: "chat_completions", note: "DeepSeek 兼容接口。" },
+      { id: "qwen", label: "Qwen / DashScope", group: "国内模型", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-plus", protocol: "chat_completions", note: "Qwen 兼容接口。" },
+      { id: "custom", label: "自定义模型供应商", group: "高级连接", baseUrl: "", model: "", protocol: "chat_completions", note: "OpenAI 兼容接口。" },
+      { id: "responses", label: "Codex Responses 中转", group: "高级连接", baseUrl: "", model: "", protocol: "responses", note: "Responses 兼容接口。" },
+    ],
+    providers: [
+      { id: "official", type: "official", brand: "openai", label: "OpenAI", connectionLabel: "OpenAI 官方" },
+      { id: "deepseek-fixture", type: "relay", brand: "openai", preset: "deepseek", protocol: "chat_completions", label: "DeepSeek", connectionLabel: "DeepSeek", model: "deepseek-chat", baseUrl: "https://api.deepseek.com/v1", deletable: true, hasStoredKey: true },
+      { id: "qwen-fixture", type: "relay", brand: "openai", preset: "qwen", protocol: "chat_completions", label: "Qwen", connectionLabel: "Qwen", model: "qwen-plus", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", deletable: true, hasStoredKey: true },
+    ],
+    projects: [],
+    projectThreads: {},
+    hiddenProjectRoots: [],
+    threadSettings: {},
+    threadAliases: {},
+    providerRoutes: {
+      "deepseek-fixture": {
+        enabled: true,
+        fallbackProviderIds: ["qwen-fixture"],
+        failureThreshold: 2,
+        cooldownMs: 60000,
+      },
+    },
+    hiddenThreadIds: [],
+    deletedThreadIds: [],
+    localArchivedThreadIds: [],
+    pendingDeletions: [],
+    scheduledTasks: [],
+    promptTemplates: extensionFixture.prompts,
+    mcpServers: extensionFixture.mcpServers,
+    runningTaskIds: [],
+    recordHome: path.join(root, "share-master-data", "conversations"),
+  }));
+  ipcMain.handle("extension:list", () => structuredClone(extensionFixture));
+  ipcMain.handle("extension:refresh-skills", () => ({ result: { activated: 1 }, ...structuredClone(extensionFixture) }));
+  ipcMain.handle("extension:install-skill", () => ({ installed: [{ name: "installed-skill" }], ...structuredClone(extensionFixture) }));
+  ipcMain.handle("extension:remove-skill", (_event, name) => ({ removed: name, ...structuredClone(extensionFixture) }));
+  ipcMain.handle("extension:set-skill-enabled", (_event, input) => {
+    const skill = extensionFixture.skills.find((item) => item.name === input.name);
+    if (skill) skill.enabled = Boolean(input.enabled);
+    return { updated: input, ...structuredClone(extensionFixture) };
+  });
+  ipcMain.handle("prompt:save", (_event, input) => ({ ...input, id: input.id || "prompt_saved", updatedAt: Date.now() }));
+  ipcMain.handle("prompt:remove", (_event, id) => ({ id }));
+  ipcMain.handle("mcp:save", (_event, input) => ({ ...input, id: input.id || "mcp_saved", envKeys: Object.keys(input.env || {}), hasSecrets: true, updatedAt: Date.now() }));
+  ipcMain.handle("mcp:remove", (_event, id) => ({ id }));
+  ipcMain.handle("mcp:test", () => ({ ok: true, latencyMs: 24, detail: "进程已成功启动" }));
+  ipcMain.handle("usage:get", (_event, input) => ({
+    providerId: input?.providerId || null,
+    requestCount: 3,
+    completedCount: 1,
+    failedCount: 1,
+    interruptedCount: 1,
+    inputTokens: 2500,
+    outputTokens: 900,
+    totalTokens: 3400,
+    costUsd: 0.012345,
+    averageDurationMs: 1280,
+    daily: Array.from({ length: 14 }, (_, index) => {
+      const date = new Date();
+      date.setDate(date.getDate() - (13 - index));
+      return {
+        day: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`,
+        requestCount: index % 4,
+        totalTokens: index % 4 === 0 ? 0 : (index + 1) * 240,
+        costUsd: index * 0.0003,
+      };
+    }),
+    logs: [
+      { providerId: "deepseek-fixture", model: "deepseek-chat", status: "completed", durationMs: 980, totalTokens: 1800, costUsd: 0.006, finishedAt: Date.now() },
+      { providerId: "qwen-fixture", model: "qwen-plus", status: "interrupted", durationMs: 1450, totalTokens: 900, costUsd: 0.003, finishedAt: Date.now() - 60000 },
+      { providerId: "deepseek-fixture", model: "deepseek-reasoner", status: "failed", durationMs: 1410, totalTokens: 700, costUsd: 0.003345, finishedAt: Date.now() - 120000 },
+    ],
+  }));
+  ipcMain.handle("usage:pricing", () => ({}));
+  ipcMain.handle("usage:save-pricing", (_event, input) => ({
+    inputPerMillion: Number(input.inputPerMillion),
+    cachedInputPerMillion: Number(input.cachedInputPerMillion),
+    outputPerMillion: Number(input.outputPerMillion),
+    updatedAt: Date.now(),
+  }));
+  ipcMain.handle("usage:clear", () => ({ removed: 3, providerId: null }));
+  ipcMain.handle("provider:probe-models", (_event, input) => ({
+    models: [input.providerId === "qwen-fixture" ? "qwen-plus" : "deepseek-chat"],
+    latencyMs: input.providerId === "qwen-fixture" ? 48 : 36,
+  }));
+  ipcMain.handle("codex:steer", (_event, input) => {
+    steerRequests.push(structuredClone(input));
+    return { turnId: input.expectedTurnId };
+  });
+  ipcMain.handle("codex:interrupt", (_event, input) => {
+    interruptRequests.push(structuredClone(input));
+    return {};
+  });
+  ipcMain.handle("app:copy-text", (_event, value) => {
+    copiedTexts.push(String(value || ""));
+    return true;
+  });
+  ipcMain.handle("thread:save-message-queue", (_event, input) => {
+    persistedQueues.push(structuredClone(input));
+    return input.messages || [];
+  });
+  ipcMain.handle("codex:search", (_event, query) => ([{
+    id: "vue-conversation-fixture",
+    snippet: `消息正文命中：${query}`,
+  }]));
+  ipcMain.handle("backup:list", () => ([
+    { name: "share-master-backup-latest.json", createdAt: Date.now(), size: 24576 },
+    { name: "share-master-backup-previous.json", createdAt: Date.now() - 21600000, size: 23800 },
+  ]));
+  ipcMain.handle("backup:create", () => ({ created: true, name: "share-master-backup-latest.json", createdAt: Date.now() }));
+  ipcMain.handle("backup:restore", (_event, name) => ({ restored: true, name, restoredAt: Date.now() }));
+  ipcMain.handle("sync:status", () => structuredClone(syncFixture));
+  ipcMain.handle("sync:configure", (_event, input) => ({ ...structuredClone(syncFixture), ...input }));
+  ipcMain.handle("sync:configure-webdav", (_event, input) => ({ ...structuredClone(syncFixture), ...input, backend: "webdav", hasWebdavCredentials: true }));
+  ipcMain.handle("sync:run", (_event, mode) => ({
+    ...structuredClone(syncFixture),
+    result: { status: "success", direction: mode === "pull" ? "pull" : "push", message: "同步完成。" },
+    conflict: false,
+  }));
+  ipcMain.handle("app:settings", () => ({ launchAtLogin: false, closeToTray: true }));
+  ipcMain.handle("app:save-settings", (_event, input) => ({ ...input }));
+  ipcMain.handle("app:check-update", () => ({ status: "blocked", dirty: true, behind: 2, currentRevision: "1234567890", remoteRevision: "abcdef1234", message: "发现 2 个远端更新，但本地有未提交改动，已禁止自动更新。" }));
+  ipcMain.handle("local-history:sources", () => ([
+    { id: "codex", label: "Codex", description: "Codex CLI 与桌面客户端", available: true },
+    { id: "claude", label: "Claude Code", description: "Claude Code 本地项目会话", available: true },
+  ]));
+  ipcMain.handle("local-history:list", (_event, input) => ({
+    sourceId: input.sourceId,
+    total: 2,
+    scanned: 2,
+    conversations: [
+      { id: `${input.sourceId}-local-1`, sourceId: input.sourceId, sourceLabel: input.sourceId === "claude" ? "Claude Code" : "Codex", title: "本地记录功能迭代", cwd: "F:\\codepro", model: input.sourceId === "claude" ? "claude-opus-fixture" : "gpt-fixture", updatedAt: Date.now(), messageCount: 3, archived: false },
+      { id: `${input.sourceId}-local-2`, sourceId: input.sourceId, sourceLabel: input.sourceId === "claude" ? "Claude Code" : "Codex", title: "旧版界面检查", cwd: "F:\\archive", model: "fixture-model", updatedAt: Date.now() - 86400000, messageCount: 1, archived: true },
+    ],
+  }));
+  ipcMain.handle("local-history:read", (_event, input) => ({
+    id: input.conversationId,
+    sourceId: input.conversationId.startsWith("claude") ? "claude" : "codex",
+    sourceLabel: input.conversationId.startsWith("claude") ? "Claude Code" : "Codex",
+    title: "本地记录功能迭代",
+    cwd: "F:\\codepro",
+    model: "gpt-fixture",
+    updatedAt: Date.now(),
+    messageCount: 3,
+    archived: false,
+    truncated: false,
+    messages: [
+      { role: "user", text: "读取本地聊天记录", timestamp: Date.now() - 2000 },
+      { role: "reasoning", text: "验证只读路径与解析结果", timestamp: Date.now() - 1000 },
+      { role: "assistant", text: "本地记录已安全显示", timestamp: Date.now() },
+    ],
+  }));
+  ipcMain.handle("local-providers:discover", () => ({
+    sources: ["Codex · 用户配置", "CCSwitch"],
+    warnings: [],
+    scannedAt: Date.now(),
+    candidates: [
+      { id: "local-ready", kind: "relay", source: "CCSwitch · Lab Relay", label: "Lab Relay", baseUrl: "https://relay.example.test/v1", model: "lab-model", protocol: "responses", preset: "custom", hasCredential: true, importable: true, duplicate: localProviderImported, duplicateProviderId: localProviderImported ? "local-imported" : null, discoveredModels: ["lab-model"] },
+      { id: "local-existing", kind: "relay", source: "Codex · 用户配置", label: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat", protocol: "chat_completions", preset: "deepseek", hasCredential: true, importable: true, duplicate: true, duplicateProviderId: "deepseek-fixture", discoveredModels: [] },
+      { id: "local-missing", kind: "relay", source: "Codex · 用户配置", label: "No Key Relay", baseUrl: "https://missing.example.test/v1", model: "missing-model", protocol: "responses", preset: "custom", hasCredential: false, importable: false, duplicate: false, duplicateProviderId: null, discoveredModels: [] },
+    ],
+  }));
+  ipcMain.handle("local-providers:import", (_event, ids) => {
+    localProviderImported = ids.includes("local-ready");
+    return {
+      results: ids.map((id) => ({ id, status: id === "local-ready" ? "imported" : "duplicate" })),
+      providers: [
+        { id: "official", type: "official", brand: "openai", label: "OpenAI", connectionLabel: "OpenAI 官方" },
+        { id: "deepseek-fixture", type: "relay", brand: "openai", preset: "deepseek", protocol: "chat_completions", label: "DeepSeek", connectionLabel: "DeepSeek", model: "deepseek-chat", baseUrl: "https://api.deepseek.com/v1", deletable: true, hasStoredKey: true },
+        { id: "qwen-fixture", type: "relay", brand: "openai", preset: "qwen", protocol: "chat_completions", label: "Qwen", connectionLabel: "Qwen", model: "qwen-plus", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", deletable: true, hasStoredKey: true },
+        { id: "local-imported", type: "relay", brand: "openai", preset: "custom", protocol: "responses", label: "Lab Relay", connectionLabel: "Lab Relay", model: "lab-model", baseUrl: "https://relay.example.test/v1", deletable: true, hasStoredKey: true },
+      ],
+    };
+  });
+  ipcMain.handle("deep-link:confirm-import", (_event, input) => ({ ...input, requiresApiKey: input.importType === "provider" }));
+  const errors = [];
+  const window = new BrowserWindow({
+    show: false,
+    width: 1200,
+    height: 800,
+    minWidth: 900,
+    minHeight: 640,
+    webPreferences: {
+      preload: path.join(root, "src", "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  window.webContents.on("console-message", (_event, level, message) => {
+    if (level >= 2) errors.push(message);
+  });
+  await window.loadFile(path.join(root, "src", "renderer", "index.html"));
+  await window.webContents.executeJavaScript(`new Promise((resolve, reject) => {
+    const started = Date.now();
+    const timer = setInterval(() => {
+      if (window.shareMasterVue && document.querySelectorAll('.provider-option').length === 3) {
+        clearInterval(timer);
+        resolve();
+      } else if (Date.now() - started > 10000) {
+        clearInterval(timer);
+        reject(new Error('Vue renderer initialization timed out.'));
+      }
+    }, 50);
+  })`);
+  await window.webContents.executeJavaScript("applyTheme('dark'); document.querySelector('#add-connection-button').click()");
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  const desktop = await rendererSnapshot(window);
+  fs.mkdirSync(artifactRoot, { recursive: true });
+  fs.writeFileSync(desktopScreenshot, (await capturePageWithRetry(window)).toPNG());
+  window.setSize(900, 640);
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  const compact = await rendererSnapshot(window);
+  fs.writeFileSync(compactScreenshot, (await capturePageWithRetry(window)).toPNG());
+  window.setSize(1200, 800);
+  await window.webContents.executeJavaScript(`(() => {
+    document.querySelectorAll('.overlay').forEach((node) => node.classList.add('hidden'));
+    state.connected = true;
+    state.provider = 'deepseek-fixture';
+    state.providerType = 'relay';
+    state.providerEngine = 'openai-compatible';
+    state.modelCatalog = [{ id: 'deepseek-chat', model: 'deepseek-chat', displayName: 'DeepSeek Chat', isDefault: true, supportedReasoningEfforts: [] }];
+    const thread = {
+      id: 'vue-conversation-fixture',
+      name: '界面优化讨论',
+      cwd: 'F:\\\\codepro',
+      model: 'deepseek-chat',
+      turns: [{
+        id: 'turn-1',
+        items: [
+          { id: 'user-1', type: 'userMessage', content: [{ type: 'text', text: '请分析当前界面，并给出可以立即实施的改进。' }] },
+          { id: 'reasoning-1', type: 'reasoning', summary: [{ text: '先检查信息层级、对比度和高频操作路径，再确定视觉调整。这个摘要故意写得更长，用于确认 DeepSeek、Codex、Claude 以及工具执行输出等过程卡片都能使用完整的会话宽度，而不会被挤成狭窄的小框。\\n\\n第二段继续验证长文本换行、可读行高和暗色主题对比度。' }] },
+          { id: 'agent-1', type: 'agentMessage', text: '## 优化重点\\n\\n- 收紧侧栏层级，让 Project 与会话更容易扫描。\\n- 保持输入区稳定，模型切换不应改变布局。\\n- 对运行中、已完成和错误状态使用明确但克制的提示。\\n\\n这些调整不会改变现有聊天记录或模型配置。' }
+        ]
+      }]
+    };
+    state.activeThread = thread;
+    state.activeThreads = [thread];
+    state.allThreads = [thread];
+    state.threads = [thread];
+    state.threadResumed = true;
+    applyThreadSessionSettings(thread);
+    renderConversation(thread);
+    document.querySelector('#composer-input').value = '回复完成后继续处理下一条消息';
+    state.runningThreads.set(thread.id, { turnId: 'turn-running', stopRequested: false, interruptingTurnId: null, startedAt: Date.now() });
+    syncActiveRunState();
+    syncComposerState();
+  })()`);
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  fs.writeFileSync(conversationScreenshot, (await capturePageWithRetry(window)).toPNG());
+  const conversation = await window.webContents.executeJavaScript(`(() => {
+    const userBubble = document.querySelector('.message.user .message-body');
+    const agentHeader = document.querySelector('.message.agent .message-header');
+    const composer = document.querySelector('.composer');
+    const activity = document.querySelector('.activity');
+    const reasoningOutput = document.querySelector('.activity-reasoning .activity-output');
+    const send = document.querySelector('#send-button');
+    const stop = document.querySelector('#stop-button');
+    return {
+      messages: document.querySelectorAll('.message').length,
+      agentHeader: agentHeader?.textContent || '',
+      userBubbleColor: userBubble ? getComputedStyle(userBubble).backgroundColor : '',
+      composerWidth: Math.round(composer?.getBoundingClientRect().width || 0),
+      chatOverflow: document.querySelector('#chat-view').scrollWidth > document.querySelector('#chat-view').clientWidth,
+      activityWidth: Math.round(activity?.getBoundingClientRect().width || 0),
+      reasoningOutputWidth: Math.round(reasoningOutput?.getBoundingClientRect().width || 0),
+      reasoningLineHeight: reasoningOutput ? parseFloat(getComputedStyle(reasoningOutput).lineHeight) : 0,
+      stopVisible: !stop.classList.contains('hidden'),
+      actionTopDelta: Math.abs(Math.round(send.getBoundingClientRect().top - stop.getBoundingClientRect().top)),
+      actionLaneWidth: Math.round(document.querySelector('.composer-submit').getBoundingClientRect().width),
+      composerFooterOverflow: document.querySelector('.composer-footer').scrollWidth > document.querySelector('.composer-footer').clientWidth
+    };
+  })()`);
+  window.setSize(900, 640);
+  await new Promise((resolve) => setTimeout(resolve, 180));
+  Object.assign(conversation, await window.webContents.executeJavaScript(`(() => {
+    const send = document.querySelector('#send-button').getBoundingClientRect();
+    const stop = document.querySelector('#stop-button').getBoundingClientRect();
+    return {
+      compactActionTopDelta: Math.abs(Math.round(send.top - stop.top)),
+      compactFooterOverflow: document.querySelector('.composer-footer').scrollWidth > document.querySelector('.composer-footer').clientWidth,
+      compactBodyOverflow: document.body.scrollWidth > document.body.clientWidth || document.body.scrollHeight > document.body.clientHeight,
+      compactActivityWidth: Math.round(document.querySelector('.activity').getBoundingClientRect().width),
+    };
+  })()`));
+  window.setSize(1200, 800);
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  const messageFeatures = await window.webContents.executeJavaScript(`(async () => {
+    const agent = document.querySelector('.message.agent');
+    const user = document.querySelector('.message.user');
+    agent.querySelector('[title="复制消息"]').click();
+    user.querySelector('[title="引用到输入框"]').click();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const quotedText = document.querySelector('#composer-input').value;
+    document.querySelector('#composer-input').value = '';
+    document.querySelector('#thread-search').value = '克制的提示';
+    scheduleThreadSearch();
+    await new Promise((resolve) => setTimeout(resolve, 340));
+    return {
+      actionButtons: document.querySelectorAll('.message-action-button').length,
+      agentActions: agent.querySelectorAll('.message-action-button').length,
+      userActions: user.querySelectorAll('.message-action-button').length,
+      quotedText,
+      searchHits: state.threadSearchHits.size,
+      searchSnippet: document.querySelector('.thread-item small')?.textContent || '',
+      searchBodyOverflow: document.body.scrollWidth > document.body.clientWidth || document.body.scrollHeight > document.body.clientHeight,
+    };
+  })()`);
+  messageFeatures.copiedText = copiedTexts.at(-1) || '';
+  const deliveryModes = await window.webContents.executeJavaScript(`(async () => {
+    const input = document.querySelector('#composer-input');
+    state.providerEngine = 'openai-compatible';
+    input.value = '等当前回复完成后再执行这一条';
+    syncComposerState();
+    await sendMessage('queue');
+    input.value = '立刻改变方向，先检查失败测试';
+    syncComposerState();
+    await sendMessage('steer');
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    const fallbackQueue = state.messageQueues.get(state.activeThread.id) || [];
+    const fallback = {
+      queueLength: fallbackQueue.length,
+      firstQueuedText: fallbackQueue[0]?.displayText || '',
+      secondQueuedText: fallbackQueue[1]?.displayText || '',
+      stopRequested: state.runningThreads.get(state.activeThread.id)?.stopRequested === true,
+      queueBadge: document.querySelector('#queue-button').dataset.count,
+      deliveryLabels: [...document.querySelectorAll('.message-delivery-state')].map((node) => node.textContent),
+    };
+    const run = state.runningThreads.get(state.activeThread.id);
+    run.stopRequested = false;
+    run.interruptingTurnId = null;
+    state.providerEngine = 'codex';
+    input.value = '原生引导当前 Codex 回复';
+    syncComposerState();
+    await sendMessage('steer');
+    return {
+      ...fallback,
+      nativeQueueLength: (state.messageQueues.get(state.activeThread.id) || []).length,
+      sendTitle: document.querySelector('#send-button').title,
+      queueTitle: document.querySelector('#queue-button').title,
+      actionTopDelta: Math.abs(Math.round(document.querySelector('#send-button').getBoundingClientRect().top - document.querySelector('#queue-button').getBoundingClientRect().top)),
+      footerOverflow: document.querySelector('.composer-footer').scrollWidth > document.querySelector('.composer-footer').clientWidth,
+    };
+  })()`);
+  deliveryModes.nativeSteerRequests = steerRequests.length;
+  deliveryModes.interruptRequests = interruptRequests.length;
+  deliveryModes.nativeExpectedTurnId = steerRequests[0]?.expectedTurnId || null;
+  deliveryModes.persistedQueueWrites = persistedQueues.length;
+  deliveryModes.persistedQueueLength = persistedQueues.at(-1)?.messages?.length || 0;
+  const attachments = await window.webContents.executeJavaScript(`(async () => {
+    const testImage = ${JSON.stringify(conversationScreenshot)};
+    const result = addDroppedAttachments([testImage, 'F:\\\\codepro\\\\notes.pdf']);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const tray = {
+      count: document.querySelectorAll('#attachment-list .attachment-item').length,
+      filename: document.querySelector('.attachment-copy strong')?.textContent || '',
+      reactiveCount: ShareMasterVueRuntime.attachmentUi.items.length,
+      ignoredMessage: document.querySelector('#status-toast').textContent,
+    };
+    const transfer = new DataTransfer();
+    transfer.items.add(new File(['image'], 'drop.png', { type: 'image/png' }));
+    window.dispatchEvent(new DragEvent('dragenter', { dataTransfer: transfer }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    tray.overlayVisible = !document.querySelector('#attachment-drop-overlay').classList.contains('hidden');
+    window.dispatchEvent(new DragEvent('dragleave', { dataTransfer: transfer }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    tray.overlayCleared = document.querySelector('#attachment-drop-overlay').classList.contains('hidden');
+    return { ...result, ...tray };
+  })()`);
+  fs.writeFileSync(attachmentScreenshot, (await capturePageWithRetry(window)).toPNG());
+  Object.assign(attachments, await window.webContents.executeJavaScript(`(async () => {
+    document.querySelector('.attachment-remove').click();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return {
+      countAfterRemove: document.querySelectorAll('#attachment-list .attachment-item').length,
+      reactiveCountAfterRemove: ShareMasterVueRuntime.attachmentUi.items.length,
+    };
+  })()`));
+  await window.webContents.executeJavaScript("(async () => { await openLocalHistoryDialog(); await openLocalHistoryConversation(state.localHistoryConversations[0]); })()");
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  fs.writeFileSync(localHistoryScreenshot, (await capturePageWithRetry(window)).toPNG());
+  const localHistory = await window.webContents.executeJavaScript(`(() => ({
+    visible: !document.querySelector('#local-history-overlay').classList.contains('hidden'),
+    sources: document.querySelectorAll('#local-history-sources button').length,
+    conversations: document.querySelectorAll('.local-history-item').length,
+    messages: document.querySelectorAll('.local-history-message').length,
+    title: document.querySelector('.local-history-preview-heading h3')?.textContent || '',
+    readOnlyNotice: document.querySelector('#local-history-title').parentElement.textContent,
+    bodyOverflow: document.body.scrollWidth > document.body.clientWidth || document.body.scrollHeight > document.body.clientHeight,
+    dialogOverflow: document.querySelector('.local-history-dialog').scrollHeight > document.querySelector('.local-history-dialog').clientHeight
+  }))()`);
+  await window.webContents.executeJavaScript("closeLocalHistoryDialog(); openLocalProviderDialog()");
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  fs.writeFileSync(localProviderScreenshot, (await capturePageWithRetry(window)).toPNG());
+  const localProviders = await window.webContents.executeJavaScript(`(async () => {
+    const before = {
+      visible: !document.querySelector('#local-provider-overlay').classList.contains('hidden'),
+      rows: document.querySelectorAll('.local-provider-row').length,
+      selectable: document.querySelectorAll('.local-provider-row input:not(:disabled)').length,
+      privacy: document.querySelector('.local-provider-privacy').textContent,
+      exposedSecret: document.querySelector('#local-provider-overlay').textContent.includes('unit-secret'),
+      bodyOverflow: document.body.scrollWidth > document.body.clientWidth || document.body.scrollHeight > document.body.clientHeight,
+      dialogOverflow: document.querySelector('.local-provider-dialog').scrollHeight > document.querySelector('.local-provider-dialog').clientHeight,
+    };
+    document.querySelector('.local-provider-row input:not(:disabled)').click();
+    document.querySelector('#local-provider-import-button').click();
+    const started = Date.now();
+    while (!document.querySelector('#local-provider-status').textContent.includes('已导入')) {
+      if (Date.now() - started > 5000) throw new Error('Local provider import timed out.');
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    return {
+      ...before,
+      importStatus: document.querySelector('#local-provider-status').textContent,
+      providerAdded: state.providers.some((provider) => provider.id === 'local-imported'),
+      importedCandidateMarkedDuplicate: state.localProviderCandidates.find((candidate) => candidate.id === 'local-ready')?.duplicate === true,
+    };
+  })()`);
+  await window.webContents.executeJavaScript("closeLocalProviderDialog(); openUsageDialog()");
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  fs.writeFileSync(usageScreenshot, (await capturePageWithRetry(window)).toPNG());
+  const usage = await window.webContents.executeJavaScript(`(() => ({
+    visible: !document.querySelector('#usage-overlay').classList.contains('hidden'),
+    stats: document.querySelectorAll('.usage-stat').length,
+    rows: document.querySelectorAll('.usage-log-row').length,
+    trendColumns: document.querySelectorAll('.usage-trend-column').length,
+    pricingTop: Math.round(document.querySelector('.pricing-form').getBoundingClientRect().top),
+    logBottom: Math.round(document.querySelector('.usage-log-section').getBoundingClientRect().bottom),
+    dialogOverflow: document.querySelector('.usage-dialog').scrollHeight > document.querySelector('.usage-dialog').clientHeight,
+    bodyOverflow: document.body.scrollWidth > document.body.clientWidth || document.body.scrollHeight > document.body.clientHeight
+  }))()`);
+  window.setSize(900, 640);
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  fs.writeFileSync(usageCompactScreenshot, (await capturePageWithRetry(window)).toPNG());
+  usage.compactBodyOverflow = await window.webContents.executeJavaScript("document.body.scrollWidth > document.body.clientWidth || document.body.scrollHeight > document.body.clientHeight");
+  window.setSize(1200, 800);
+  await window.webContents.executeJavaScript("closeUsageDialog(); openBackupDialog()");
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  fs.writeFileSync(backupScreenshot, (await capturePageWithRetry(window)).toPNG());
+  const backup = await window.webContents.executeJavaScript(`(() => ({
+    visible: !document.querySelector('#backup-overlay').classList.contains('hidden'),
+    rows: document.querySelectorAll('.backup-row').length,
+    restoreButtons: document.querySelectorAll('.backup-restore').length,
+    bodyOverflow: document.body.scrollWidth > document.body.clientWidth || document.body.scrollHeight > document.body.clientHeight
+  }))()`);
+  await window.webContents.executeJavaScript("closeBackupDialog(); openSyncDialog()");
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  fs.writeFileSync(syncScreenshot, (await capturePageWithRetry(window)).toPNG());
+  const sync = await window.webContents.executeJavaScript(`(() => ({
+    visible: !document.querySelector('#sync-overlay').classList.contains('hidden'),
+    rows: document.querySelectorAll('.sync-history-row').length,
+    directory: document.querySelector('#sync-directory-input').value,
+    webdavVisible: !document.querySelector('#sync-webdav-form').classList.contains('hidden'),
+    webdavUrl: document.querySelector('#sync-webdav-form [name="url"]').value,
+    pullLabel: document.querySelector('#sync-pull-label').textContent,
+    bodyOverflow: document.body.scrollWidth > document.body.clientWidth || document.body.scrollHeight > document.body.clientHeight,
+    dialogOverflow: document.querySelector('.sync-dialog').scrollHeight > document.querySelector('.sync-dialog').clientHeight
+  }))()`);
+  await window.webContents.executeJavaScript("closeSyncDialog(); openAppSettingsDialog()");
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  fs.writeFileSync(appSettingsScreenshot, (await capturePageWithRetry(window)).toPNG());
+  const appSettings = await window.webContents.executeJavaScript(`(() => ({
+    visible: !document.querySelector('#app-settings-overlay').classList.contains('hidden'),
+    toggles: document.querySelectorAll('#app-settings-form input[type="checkbox"]').length,
+    closeToTray: document.querySelector('#app-settings-form [name="closeToTray"]').checked,
+    bodyOverflow: document.body.scrollWidth > document.body.clientWidth || document.body.scrollHeight > document.body.clientHeight
+  }))()`);
+  Object.assign(appSettings, await window.webContents.executeJavaScript(`(async () => {
+    document.querySelector('#check-update-button').click();
+    const started = Date.now();
+    while (document.querySelector('#check-update-button').disabled) {
+      if (Date.now() - started > 5000) throw new Error('Update check timed out.');
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    return {
+      updateState: document.querySelector('#update-status').dataset.state,
+      updateMessage: document.querySelector('#update-status').textContent,
+    };
+  })()`));
+  await window.webContents.executeJavaScript(`(() => {
+    closeAppSettingsDialog();
+    openDeepLinkImportPreview({
+      importType: 'provider',
+      config: { label: 'Imported Lab API', baseUrl: 'https://api.example.test/v1', model: 'lab-model', preset: 'custom', protocol: 'chat_completions' },
+    });
+  })()`);
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  fs.writeFileSync(importPreviewScreenshot, (await capturePageWithRetry(window)).toPNG());
+  const importPreview = await window.webContents.executeJavaScript(`(async () => {
+    const before = {
+      visible: !document.querySelector('#deep-link-import-overlay').classList.contains('hidden'),
+      rows: document.querySelectorAll('#import-preview-details .import-preview-row').length,
+      safety: document.querySelector('.import-safety-note').textContent,
+      bodyOverflow: document.body.scrollWidth > document.body.clientWidth || document.body.scrollHeight > document.body.clientHeight,
+    };
+    document.querySelector('#import-preview-confirm-button').click();
+    const started = Date.now();
+    while (document.querySelector('#import-preview-confirm-button').disabled) {
+      if (Date.now() - started > 5000) throw new Error('Deep link import timed out.');
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    return {
+      ...before,
+      connectionVisible: !document.querySelector('#connection-overlay').classList.contains('hidden'),
+      importedLabel: document.querySelector('#relay-form [name="label"]').value,
+      importedModel: document.querySelector('#relay-form [name="model"]').value,
+      apiKey: document.querySelector('#relay-form [name="apiKey"]').value,
+      apiKeyRequired: document.querySelector('#relay-form [name="apiKey"]').required,
+    };
+  })()`);
+  await window.webContents.executeJavaScript(`(async () => {
+    document.querySelector('#connection-overlay').classList.add('hidden');
+    openHealthDialog();
+    document.querySelector('#health-test-all-button').click();
+    const started = Date.now();
+    while (document.querySelector('#health-status').textContent !== '检测完成') {
+      if (Date.now() - started > 5000) throw new Error('Health monitor timed out.');
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  })()`);
+  fs.writeFileSync(healthScreenshot, (await capturePageWithRetry(window)).toPNG());
+  const health = await window.webContents.executeJavaScript(`(() => ({
+    visible: !document.querySelector('#health-overlay').classList.contains('hidden'),
+    rows: document.querySelectorAll('.health-row').length,
+    healthy: document.querySelectorAll('.health-row.health-healthy').length,
+    routeText: document.querySelector('.health-copy span')?.textContent || '',
+    summary: document.querySelector('#health-summary').textContent,
+    bodyOverflow: document.body.scrollWidth > document.body.clientWidth || document.body.scrollHeight > document.body.clientHeight
+  }))()`);
+  await window.webContents.executeJavaScript("closeHealthDialog()");
+  window.webContents.send("app:navigate", { action: "extensions", tab: "skills" });
+  await new Promise((resolve) => setTimeout(resolve, 180));
+  fs.writeFileSync(extensionsScreenshot, (await capturePageWithRetry(window)).toPNG());
+  await window.webContents.executeJavaScript(`(() => {
+    openSkillInstallDialog();
+    setSkillInstallKind('github');
+    document.querySelector('#skill-install-source').value = 'https://github.com/example/skills';
+  })()`);
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  fs.writeFileSync(skillInstallScreenshot, (await capturePageWithRetry(window)).toPNG());
+  const skillInstall = await window.webContents.executeJavaScript(`(() => ({
+    visible: !document.querySelector('#skill-install-overlay').classList.contains('hidden'),
+    kind: state.skillInstallKind,
+    sourceType: document.querySelector('#skill-install-source').type,
+    browseHidden: document.querySelector('#skill-install-browse').classList.contains('hidden'),
+    bodyOverflow: document.body.scrollWidth > document.body.clientWidth || document.body.scrollHeight > document.body.clientHeight
+  }))()`);
+  await window.webContents.executeJavaScript("closeSkillInstallDialog()");
+  const extensions = await window.webContents.executeJavaScript(`(async () => {
+    const skillRows = document.querySelectorAll('#extensions-skill-list .extension-row').length;
+    const removableButtons = document.querySelectorAll('#extensions-skill-list .danger-icon').length;
+    document.querySelector('[data-extension-tab="prompts"]').click();
+    document.querySelector('.extension-index-row')?.click();
+    const promptName = document.querySelector('#prompt-form [name="name"]').value;
+    document.querySelector('[data-prompt-mode="preview"]').click();
+    const promptPreview = {
+      visible: !document.querySelector('#prompt-markdown-preview').matches(':not(:empty)') ? false : getComputedStyle(document.querySelector('#prompt-markdown-preview')).display !== 'none',
+      text: document.querySelector('#prompt-markdown-preview').textContent,
+    };
+    document.querySelector('[data-extension-tab="mcp"]').click();
+    document.querySelector('#extensions-mcp-list .extension-index-row')?.click();
+    const secretValue = document.querySelector('#mcp-form [name="env"]').value;
+    closeExtensionsDialog();
+    document.querySelectorAll('.overlay').forEach((node) => node.classList.add('hidden'));
+    const input = document.querySelector('#composer-input');
+    input.value = '/summ';
+    input.setSelectionRange(input.value.length, input.value.length);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const promptOption = document.querySelector('.skill-option[data-command-type="prompt"]');
+    promptOption?.click();
+    return {
+      skillRows,
+      removableButtons,
+      promptName,
+      promptPreview,
+      mcpRows: document.querySelectorAll('#extensions-mcp-list .extension-index-row').length,
+      secretValue,
+      insertedPrompt: input.value,
+      bodyOverflow: document.body.scrollWidth > document.body.clientWidth || document.body.scrollHeight > document.body.clientHeight,
+    };
+  })()`);
+  await window.webContents.executeJavaScript("applyTheme('dark'); openExtensionsDialog('mcp')");
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  fs.writeFileSync(darkExtensionsScreenshot, (await capturePageWithRetry(window)).toPNG());
+  const darkTheme = await window.webContents.executeJavaScript(`(() => ({
+    theme: document.documentElement.dataset.theme,
+    bodyBackground: getComputedStyle(document.body).backgroundColor,
+    dialogBackground: getComputedStyle(document.querySelector('.extensions-dialog')).backgroundColor,
+    inputBackground: getComputedStyle(document.querySelector('#mcp-form input[name="name"]')).backgroundColor,
+    bodyOverflow: document.body.scrollWidth > document.body.clientWidth || document.body.scrollHeight > document.body.clientHeight
+  }))()`);
+
+  assert.equal(desktop.vueMounted, true);
+  assert.equal(desktop.stateExposed, true);
+  assert.equal(desktop.pending, false);
+  assert.equal(desktop.connectionDialogVisible, true);
+  assert.equal(desktop.composerOverflow, false);
+  assert.equal(desktop.bodyOverflow, false);
+  assert.equal(desktop.fatal, null);
+  assert.notEqual(desktop.formActionsBackground, "rgb(255, 255, 255)");
+  assert.deepEqual(desktop.providerGroups, ["OpenAI 账号", "Chat Completions 模型"]);
+  assert.equal(compact.vueMounted, true);
+  assert.equal(compact.bodyOverflow, false);
+  assert.equal(compact.fatal, null);
+  assert.equal(conversation.messages, 2);
+  assert.equal(conversation.agentHeader, "DeepSeek");
+  assert.notEqual(conversation.userBubbleColor, "rgb(255, 255, 255)");
+  assert.ok(conversation.composerWidth >= 600);
+  assert.equal(conversation.chatOverflow, false);
+  assert.ok(conversation.activityWidth >= 700, `Reasoning activity remained too narrow: ${JSON.stringify(conversation)}`);
+  assert.ok(conversation.reasoningOutputWidth >= 650, `Reasoning output remained too narrow: ${JSON.stringify(conversation)}`);
+  assert.ok(conversation.reasoningLineHeight >= 19);
+  assert.equal(conversation.stopVisible, true);
+  assert.ok(conversation.actionTopDelta <= 1, `Send and stop controls are on different rows: ${JSON.stringify(conversation)}`);
+  assert.ok(conversation.actionLaneWidth >= 70);
+  assert.equal(conversation.composerFooterOverflow, false);
+  assert.ok(conversation.compactActionTopDelta <= 1);
+  assert.equal(conversation.compactFooterOverflow, false);
+  assert.equal(conversation.compactBodyOverflow, false);
+  assert.ok(conversation.compactActivityWidth >= 500);
+  assert.equal(messageFeatures.actionButtons, 5);
+  assert.equal(messageFeatures.agentActions, 3);
+  assert.equal(messageFeatures.userActions, 2);
+  assert.match(messageFeatures.copiedText, /优化重点/);
+  assert.match(messageFeatures.quotedText, /^回复完成后继续处理下一条消息/);
+  assert.match(messageFeatures.quotedText, /> 请分析当前界面/);
+  assert.equal(messageFeatures.searchHits, 1);
+  assert.match(messageFeatures.searchSnippet, /消息正文命中/);
+  assert.equal(messageFeatures.searchBodyOverflow, false);
+  assert.equal(deliveryModes.queueLength, 2);
+  assert.equal(deliveryModes.firstQueuedText, "立刻改变方向，先检查失败测试");
+  assert.equal(deliveryModes.secondQueuedText, "等当前回复完成后再执行这一条");
+  assert.equal(deliveryModes.stopRequested, true);
+  assert.equal(deliveryModes.nativeQueueLength, 2);
+  assert.equal(deliveryModes.nativeSteerRequests, 1);
+  assert.equal(deliveryModes.interruptRequests, 1);
+  assert.ok(deliveryModes.persistedQueueWrites >= 2);
+  assert.equal(deliveryModes.persistedQueueLength, 2);
+  assert.equal(deliveryModes.nativeExpectedTurnId, "turn-running");
+  assert.match(deliveryModes.sendTitle, /引导当前回复/);
+  assert.match(deliveryModes.queueTitle, /排队发送/);
+  assert.ok(deliveryModes.deliveryLabels.some((label) => label.includes("已排队")));
+  assert.ok(deliveryModes.deliveryLabels.some((label) => label.includes("接续")));
+  assert.ok(deliveryModes.actionTopDelta <= 1);
+  assert.equal(deliveryModes.footerOverflow, false);
+  assert.deepEqual({ added: attachments.added, unsupported: attachments.unsupported }, { added: 1, unsupported: 1 });
+  assert.equal(attachments.count, 1);
+  assert.equal(attachments.reactiveCount, 1);
+  assert.equal(attachments.filename, "vue-renderer-conversation.png");
+  assert.match(attachments.ignoredMessage, /已忽略 1 个非图片文件/);
+  assert.equal(attachments.overlayVisible, true);
+  assert.equal(attachments.overlayCleared, true);
+  assert.equal(attachments.countAfterRemove, 0);
+  assert.equal(attachments.reactiveCountAfterRemove, 0);
+  assert.deepEqual({ visible: localHistory.visible, sources: localHistory.sources, conversations: localHistory.conversations, messages: localHistory.messages }, { visible: true, sources: 2, conversations: 2, messages: 3 });
+  assert.equal(localHistory.title, "本地记录功能迭代");
+  assert.match(localHistory.readOnlyNotice, /不修改原始文件/);
+  assert.equal(localHistory.bodyOverflow, false);
+  assert.equal(localHistory.dialogOverflow, false);
+  assert.deepEqual(
+    { visible: localProviders.visible, rows: localProviders.rows, selectable: localProviders.selectable },
+    { visible: true, rows: 3, selectable: 1 },
+  );
+  assert.match(localProviders.privacy, /API Key 不会发送到界面/);
+  assert.equal(localProviders.exposedSecret, false);
+  assert.match(localProviders.importStatus, /已导入 1 项/);
+  assert.equal(localProviders.providerAdded, true);
+  assert.equal(localProviders.importedCandidateMarkedDuplicate, true);
+  assert.equal(localProviders.bodyOverflow, false);
+  assert.equal(localProviders.dialogOverflow, false);
+  assert.deepEqual({ visible: usage.visible, stats: usage.stats, rows: usage.rows }, { visible: true, stats: 5, rows: 3 });
+  assert.equal(usage.trendColumns, 14);
+  assert.ok(usage.pricingTop >= usage.logBottom, `Pricing overlaps request log: ${JSON.stringify(usage)}`);
+  assert.equal(usage.bodyOverflow, false);
+  assert.equal(usage.compactBodyOverflow, false);
+  assert.deepEqual({ visible: backup.visible, rows: backup.rows, restoreButtons: backup.restoreButtons }, { visible: true, rows: 2, restoreButtons: 2 });
+  assert.equal(backup.bodyOverflow, false);
+  assert.deepEqual(
+    { visible: sync.visible, rows: sync.rows, directory: sync.directory, webdavVisible: sync.webdavVisible, webdavUrl: sync.webdavUrl, pullLabel: sync.pullLabel },
+    { visible: true, rows: 2, directory: "F:\\Share Master Sync", webdavVisible: true, webdavUrl: "https://dav.example.test/share-master/", pullLabel: "使用 WebDAV" },
+  );
+  assert.equal(sync.bodyOverflow, false);
+  assert.equal(sync.dialogOverflow, false);
+  assert.deepEqual({ visible: appSettings.visible, toggles: appSettings.toggles, closeToTray: appSettings.closeToTray }, { visible: true, toggles: 2, closeToTray: true });
+  assert.equal(appSettings.bodyOverflow, false);
+  assert.equal(appSettings.updateState, "blocked");
+  assert.match(appSettings.updateMessage, /禁止自动更新/);
+  assert.equal(importPreview.visible, true);
+  assert.equal(importPreview.rows, 4);
+  assert.match(importPreview.safety, /敏感信息不会从链接导入/);
+  assert.equal(importPreview.bodyOverflow, false);
+  assert.equal(importPreview.connectionVisible, true);
+  assert.equal(importPreview.importedLabel, "Imported Lab API");
+  assert.equal(importPreview.importedModel, "lab-model");
+  assert.equal(importPreview.apiKey, "");
+  assert.equal(importPreview.apiKeyRequired, true);
+  assert.deepEqual({ visible: skillInstall.visible, kind: skillInstall.kind, sourceType: skillInstall.sourceType, browseHidden: skillInstall.browseHidden }, { visible: true, kind: "github", sourceType: "url", browseHidden: true });
+  assert.equal(skillInstall.bodyOverflow, false);
+  assert.deepEqual({ visible: health.visible, rows: health.rows, healthy: health.healthy }, { visible: true, rows: 3, healthy: 3 });
+  assert.match(health.routeText, /备用 Qwen/);
+  assert.match(health.summary, /3 正常/);
+  assert.equal(health.bodyOverflow, false);
+  assert.deepEqual({ skillRows: extensions.skillRows, promptName: extensions.promptName, mcpRows: extensions.mcpRows }, { skillRows: 2, promptName: "summarize", mcpRows: 1 });
+  assert.equal(extensions.removableButtons, 1);
+  assert.equal(extensions.promptPreview.visible, true);
+  assert.match(extensions.promptPreview.text, /提炼当前内容/);
+  assert.equal(extensions.secretValue, "ACCESS_TOKEN=");
+  assert.equal(extensions.insertedPrompt, "请提炼当前内容的关键结论。\n");
+  assert.equal(extensions.bodyOverflow, false);
+  assert.equal(darkTheme.theme, "dark");
+  assert.equal(darkTheme.bodyOverflow, false);
+  assert.notEqual(darkTheme.bodyBackground, "rgb(255, 255, 255)");
+  assert.notEqual(darkTheme.dialogBackground, "rgb(255, 255, 255)");
+  assert.notEqual(darkTheme.inputBackground, "rgb(255, 255, 255)");
+  assert.equal(errors.some((message) => /Content Security Policy|Uncaught|Vue warn/i.test(message)), false, errors.join("\n"));
+
+  console.log(JSON.stringify({
+    ok: true,
+    desktop,
+    compact,
+    conversation,
+    messageFeatures,
+    deliveryModes,
+    attachments,
+    localHistory,
+    localProviders,
+    usage,
+    backup,
+    sync,
+    appSettings,
+    importPreview,
+    skillInstall,
+    health,
+    extensions,
+    darkTheme,
+    errors,
+    screenshots: [desktopScreenshot, compactScreenshot, conversationScreenshot, attachmentScreenshot, localHistoryScreenshot, localProviderScreenshot, usageScreenshot, usageCompactScreenshot, backupScreenshot, syncScreenshot, appSettingsScreenshot, importPreviewScreenshot, healthScreenshot, extensionsScreenshot, skillInstallScreenshot, darkExtensionsScreenshot],
+  }));
+  window.destroy();
+  app.quit();
+}
+
+run().catch((error) => {
+  console.error(error.stack || error.message);
+  app.exit(1);
+});

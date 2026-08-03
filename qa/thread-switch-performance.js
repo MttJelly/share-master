@@ -24,6 +24,7 @@ async function run() {
     runningTaskIds: [],
     recordHome: "",
   }));
+  ipcMain.handle("extension:list", () => ({ skills: [], prompts: [], mcpServers: [] }));
   ipcMain.handle("codex:resume", (_event, input) => {
     resumeCalls += 1;
     return {
@@ -62,6 +63,7 @@ async function run() {
     startTurnCalls += 1;
     return { turn: { id: `queued-turn-${startTurnCalls}` } };
   });
+  ipcMain.handle("thread:save-message-queue", (_event, input) => input.messages || []);
   ipcMain.handle("app:notify", () => {
     notificationCalls += 1;
     return true;
@@ -179,7 +181,7 @@ async function run() {
     const input = document.querySelector('#composer-input');
     input.value = 'queued follow-up';
     input.dispatchEvent(new Event('input', { bubbles: true }));
-    await sendMessage();
+    await sendMessage('queue');
     const queuedBeforeCompletion = (state.messageQueues.get('background-a') || []).length;
     const composerEnabledWhileRunning = !input.disabled;
     state.activeThread = { id: 'background-b', name: 'Background B', cwd: ${JSON.stringify(root)} };

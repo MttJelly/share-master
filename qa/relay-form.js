@@ -30,12 +30,14 @@ try {
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(result.stderr || result.stdout || `Electron exited with ${result.status}.`);
   assert.doesNotMatch(result.stderr, /Cannot read properties of null \(reading 'reset'\)/);
+  assert.doesNotMatch(result.stderr, /Unknown provider:/);
   const line = result.stdout.split(/\r?\n/).find((value) => value.startsWith('{"title":'));
   if (!line) throw new Error(`Relay form QA result was not found.\n${result.stdout}\n${result.stderr}`);
   const summary = JSON.parse(line);
   assert.ok(summary.relayForm);
   assert.equal(summary.relayForm.fatal, undefined);
   assert.equal(summary.relayForm.providerAdded, true);
+  assert.equal(summary.relayForm.providerEdited, true);
   assert.equal(summary.relayForm.formReset, true);
   assert.equal(summary.relayForm.providerDeleted, true);
   assert.equal(summary.relayForm.error, null);

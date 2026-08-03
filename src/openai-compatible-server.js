@@ -1,0 +1,739 @@
+const { EventEmitter } = require("node:events");
+const crypto = require("node:crypto");
+const fs = require("node:fs");
+const path = require("node:path");
+
+const IMAGE_MIME_TYPES = {
+  ".gif": "image/gif",
+  ".jpeg": "image/jpeg",
+  ".jpg": "image/jpeg",
+  ".png": "image/png",
+  ".webp": "image/webp",
+};
+
+function writeJsonAtomic(file, value) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const temporary = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`;
+  fs.writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  fs.renameSync(temporary, file);
+}
+
+function readJson(file, fallback = null) {
+  try {
+    return JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch (error) {
+    if (error.code === "ENOENT" || error instanceof SyntaxError) return fallback;
+    throw error;
+  }
+}
+
+function chatCompletionsEndpoint(baseUrl) {
+  const parsed = new URL(String(baseUrl || "").trim());
+  if (!["http:", "https:"].includes(parsed.protocol)) throw new Error("模型供应商 Base URL 无效。");
+  const normalized = parsed.pathname.replace(/\/+$/, "");
+  parsed.pathname = normalized.endsWith("/chat/completions")
+    ? normalized
+    : `${normalized}/chat/completions`;
+  parsed.search = "";
+  parsed.hash = "";
+  return parsed.toString();
+}
+
+function textFromUserItem(item) {
+  return (item?.content || [])
+    .filter((part) => part?.type === "text")
+    .map((part) => part.text || "")
+    .join("\n");
+}
+
+function imageDataUrl(file) {
+  const resolved = path.resolve(String(file || ""));
+  const mimeType = IMAGE_MIME_TYPES[path.extname(resolved).toLowerCase()];
+  if (!mimeType) throw new Error(`不支持的图片格式：${path.basename(resolved)}`);
+  const stats = fs.statSync(resolved);
+  if (!stats.isFile()) throw new Error(`图片路径不是文件：${resolved}`);
+  if (stats.size > 20 * 1024 * 1024) throw new Error(`图片超过 20 MB：${path.basename(resolved)}`);
+  return `data:${mimeType};base64,${fs.readFileSync(resolved).toString("base64")}`;
+}
+
+function assistantMessageText(item) {
+  return String(item?.text || "");
+}
+
+function trimMessages(messages, maxCharacters = 100000) {
+  const selected = [];
+  let characters = 0;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    const length = typeof message.content === "string" ? message.content.length : 0;
+    if (selected.length && characters + length > maxCharacters) break;
+    selected.unshift(message);
+    characters += length;
+  }
+  while (selected.length > 1 && selected[0].role === "assistant") selected.shift();
+  return selected;
+}
+
+function messagesForThread(thread, imageInputs = []) {
+  const messages = [];
+  for (const turn of thread.turns || []) {
+    for (const item of turn.items || []) {
+      if (item.type === "userMessage") {
+        const content = textFromUserItem(item);
+        if (content) messages.push({ role: "user", content });
+      } else if (item.type === "agentMessage" && assistantMessageText(item)) {
+        messages.push({ role: "assistant", content: assistantMessageText(item) });
+      }
+    }
+  }
+  const trimmed = trimMessages(messages);
+  if (imageInputs.length && trimmed.length) {
+    const latest = trimmed.at(-1);
+    if (latest.role === "user") {
+      const text = latest.content;
+      latest.content = [
+        ...(text ? [{ type: "text", text }] : []),
+        ...imageInputs.map((image) => ({
+          type: "image_url",
+          image_url: { url: imageDataUrl(image.path), detail: image.detail || "auto" },
+        })),
+      ];
+    }
+  }
+  return trimmed;
+}
+
+function jsonlFiles(directory) {
+  if (!fs.existsSync(directory)) return [];
+  const files = [];
+  const visit = (current) => {
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      const target = path.join(current, entry.name);
+      if (entry.isDirectory()) visit(target);
+      else if (entry.isFile() && entry.name.toLowerCase().endsWith(".jsonl")) files.push(target);
+    }
+  };
+  visit(directory);
+  return files;
+}
+
+function parseJsonl(text) {
+  const rows = [];
+  for (const line of String(text || "").split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    try {
+      rows.push(JSON.parse(line));
+    } catch {}
+  }
+  return rows;
+}
+
+function eventMessage(row) {
+  if (row?.type !== "event_msg") return null;
+  const type = row.payload?.type;
+  if (!['user_message', 'agent_message'].includes(type)) return null;
+  const text = String(row.payload?.message || "").trim();
+  if (!text) return null;
+  return { role: type === "user_message" ? "user" : "assistant", text, phase: row.payload?.phase || null };
+}
+
+function responseMessage(row) {
+  if (row?.type !== "response_item" || row.payload?.type !== "message") return null;
+  if (!['user', 'assistant'].includes(row.payload?.role)) return null;
+  const text = (Array.isArray(row.payload?.content) ? row.payload.content : [])
+    .filter((part) => ["input_text", "output_text", "text"].includes(part?.type))
+    .map((part) => String(part.text || ""))
+    .join("\n")
+    .trim();
+  return text ? { role: row.payload.role, text, phase: null } : null;
+}
+
+function codexMetadata(rows) {
+  return rows.find((row) => row?.type === "session_meta")?.payload || null;
+}
+
+function codexMessages(rows) {
+  const events = rows.map(eventMessage).filter(Boolean);
+  return events.length ? events : rows.map(responseMessage).filter(Boolean);
+}
+
+function codexThreadSummary(file, stat = fs.statSync(file), prefixBytes = 2 * 1024 * 1024) {
+  const handle = fs.openSync(file, "r");
+  let text = "";
+  try {
+    const buffer = Buffer.alloc(Math.min(stat.size, prefixBytes));
+    const bytes = fs.readSync(handle, buffer, 0, buffer.length, 0);
+    text = buffer.subarray(0, bytes).toString("utf8");
+    if (bytes < stat.size) text = text.slice(0, Math.max(0, text.lastIndexOf("\n")));
+  } finally {
+    fs.closeSync(handle);
+  }
+  const rows = parseJsonl(text);
+  const metadata = codexMetadata(rows);
+  const id = String(metadata?.id || metadata?.session_id || "").trim();
+  if (!id) return null;
+  const firstUser = codexMessages(rows).find((message) => message.role === "user")?.text || "Codex 会话";
+  const createdAt = Math.floor((Date.parse(metadata?.timestamp) || stat.birthtimeMs || stat.mtimeMs) / 1000);
+  const updatedAt = Math.floor(stat.mtimeMs / 1000);
+  return {
+    id,
+    name: null,
+    preview: firstUser.split(/\r?\n/)[0].slice(0, 160),
+    modelProvider: metadata?.model_provider || "codex",
+    model: null,
+    cwd: metadata?.cwd || null,
+    createdAt,
+    updatedAt,
+    recencyAt: updatedAt,
+    turns: [],
+    _syncedFromCodex: true,
+    _historyEngine: "codex",
+  };
+}
+
+function parseCodexThreadFile(file) {
+  const stat = fs.statSync(file);
+  const rows = parseJsonl(fs.readFileSync(file, "utf8"));
+  const summary = codexThreadSummary(file, stat);
+  if (!summary) throw new Error("Codex 会话缺少有效的会话 ID。");
+  const turns = [];
+  let turn = null;
+  let itemIndex = 0;
+  for (const message of codexMessages(rows)) {
+    if (message.role === "user") {
+      turn = {
+        id: `${summary.id}-imported-${turns.length + 1}`,
+        status: "completed",
+        items: [{
+          id: `${summary.id}-item-${++itemIndex}`,
+          type: "userMessage",
+          content: [{ type: "text", text: message.text }],
+        }],
+      };
+      turns.push(turn);
+    } else if (turn) {
+      turn.items.push({
+        id: `${summary.id}-item-${++itemIndex}`,
+        type: "agentMessage",
+        text: message.text,
+        phase: message.phase || "final_answer",
+        sourceLabel: "Codex 历史",
+      });
+    }
+  }
+  return { ...summary, turns };
+}
+
+function parseSseBlock(block) {
+  const data = block.split(/\r?\n/)
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trimStart())
+    .join("\n");
+  if (!data || data === "[DONE]") return data || null;
+  try {
+    return JSON.parse(data);
+  } catch {
+    return null;
+  }
+}
+
+async function consumeSse(response, visitor) {
+  if (!response.body) throw new Error("模型供应商没有返回流式响应体。");
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+    const blocks = buffer.split(/\r?\n\r?\n/);
+    buffer = blocks.pop() || "";
+    for (const block of blocks) {
+      const event = parseSseBlock(block);
+      if (event === "[DONE]") return;
+      if (event) visitor(event);
+    }
+    if (done) break;
+  }
+  if (buffer.trim()) {
+    const event = parseSseBlock(buffer);
+    if (event && event !== "[DONE]") visitor(event);
+  }
+}
+
+function responseError(status, statusText, text) {
+  let payload;
+  try {
+    payload = text ? JSON.parse(text) : {};
+  } catch {
+    payload = {};
+  }
+  const detail = payload?.error?.message || payload?.message || text || statusText;
+  const error = new Error(`模型接口返回 ${status}：${detail}`);
+  error.status = status;
+  return error;
+}
+
+function emptyResponseError() {
+  const error = new Error("模型接口返回了空响应。");
+  error.code = "EMPTY_RESPONSE";
+  return error;
+}
+
+class OpenAICompatibleServer extends EventEmitter {
+  constructor(provider, fetchImpl = globalThis.fetch) {
+    super();
+    if (!provider?.id || !provider?.baseUrl || !provider?.apiKey) {
+      throw new Error("Invalid OpenAI-compatible provider definition.");
+    }
+    this.provider = provider;
+    this.fetchImpl = fetchImpl;
+    this.ready = false;
+    this.activeTurns = new Map();
+    this.root = path.join(provider.codexHome, "openai-compatible-conversations");
+    this.codexSummaryCache = new Map();
+    this.codexFileIndex = new Map();
+    this.fallbackProviders = Array.isArray(provider.fallbackProviders) ? provider.fallbackProviders : [];
+    this.failover = provider.failover || null;
+    this.providerHealth = new Map();
+  }
+
+  async start() {
+    fs.mkdirSync(this.root, { recursive: true });
+    this.ready = true;
+  }
+
+  threadFile(threadId) {
+    const id = String(threadId || "").trim();
+    if (!/^[a-zA-Z0-9_-]{8,100}$/.test(id)) throw new Error("无效的会话 ID。");
+    return path.join(this.root, `${id}.json`);
+  }
+
+  loadThread(threadId) {
+    const local = readJson(this.threadFile(threadId));
+    if (local?.id && Array.isArray(local.turns)) return local;
+    const source = this.findCodexThreadFile(threadId);
+    if (!source) throw new Error("未找到共享会话记录。");
+    return parseCodexThreadFile(source);
+  }
+
+  saveThread(thread) {
+    writeJsonAtomic(this.threadFile(thread.id), thread);
+  }
+
+  summary(thread) {
+    return {
+      id: thread.id,
+      name: thread.name || null,
+      preview: thread.preview || "新会话",
+      modelProvider: thread.modelProvider || this.provider.id,
+      model: thread.model || this.provider.model,
+      cwd: thread.cwd || null,
+      createdAt: thread.createdAt,
+      updatedAt: thread.updatedAt,
+      recencyAt: thread.updatedAt,
+      turns: [],
+      _syncedFromCodex: Boolean(thread._syncedFromCodex),
+      _historyEngine: "openai-compatible",
+    };
+  }
+
+  codexThreadFiles(archived = false) {
+    const area = archived ? "archived_sessions" : "sessions";
+    return jsonlFiles(path.join(this.provider.codexHome, area));
+  }
+
+  cachedCodexSummary(file) {
+    const stat = fs.statSync(file);
+    const cached = this.codexSummaryCache.get(file);
+    if (cached?.size === stat.size && cached?.mtimeMs === stat.mtimeMs) return cached.summary;
+    const summary = codexThreadSummary(file, stat);
+    this.codexSummaryCache.set(file, { size: stat.size, mtimeMs: stat.mtimeMs, summary });
+    if (summary?.id) this.codexFileIndex.set(summary.id, file);
+    return summary;
+  }
+
+  findCodexThreadFile(threadId) {
+    const id = String(threadId || "").trim();
+    if (!/^[a-zA-Z0-9_-]{8,100}$/.test(id)) return null;
+    const indexed = this.codexFileIndex.get(id);
+    if (indexed && fs.existsSync(indexed)) return indexed;
+    for (const file of [...this.codexThreadFiles(false), ...this.codexThreadFiles(true)]) {
+      const summary = this.cachedCodexSummary(file);
+      if (summary?.id === id) return file;
+    }
+    return null;
+  }
+
+  async listThreads(searchTerm = "", archived = false) {
+    const query = String(searchTerm || "").trim().toLocaleLowerCase("zh-CN");
+    const local = archived ? [] : fs.readdirSync(this.root, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+      .map((entry) => readJson(path.join(this.root, entry.name)))
+      .filter((thread) => thread?.id && Array.isArray(thread.turns))
+      .map((thread) => this.summary(thread));
+    const localIds = new Set(local.map((thread) => thread.id));
+    const shared = this.codexThreadFiles(archived)
+      .map((file) => this.cachedCodexSummary(file))
+      .filter((thread) => thread?.id && !localIds.has(thread.id));
+    const data = [...local, ...shared]
+      .filter((thread) => !query || `${thread.name || ""} ${thread.preview || ""}`.toLocaleLowerCase("zh-CN").includes(query))
+      .sort((left, right) => right.recencyAt - left.recencyAt);
+    return { data, nextCursor: null, backwardsCursor: null };
+  }
+
+  async readThread(threadId) {
+    return { thread: this.loadThread(threadId) };
+  }
+
+  async resumeThread(threadId) {
+    return this.readThread(threadId);
+  }
+
+  async startThread(cwd, model = null) {
+    const now = Math.floor(Date.now() / 1000);
+    const thread = {
+      id: crypto.randomUUID(),
+      name: null,
+      preview: "新会话",
+      modelProvider: this.provider.id,
+      model: model || this.provider.model,
+      cwd: cwd || null,
+      createdAt: now,
+      updatedAt: now,
+      recencyAt: now,
+      turns: [],
+    };
+    this.saveThread(thread);
+    this.emit("notification", { method: "thread/started", params: { thread } });
+    return { thread };
+  }
+
+  async renameThread(threadId, name) {
+    const value = String(name || "").trim();
+    if (!value) throw new Error("会话名称不能为空。");
+    const thread = this.loadThread(threadId);
+    thread.name = value.slice(0, 160);
+    thread.updatedAt = Math.floor(Date.now() / 1000);
+    this.saveThread(thread);
+    this.emit("notification", {
+      method: "thread/name/updated",
+      params: { threadId, threadName: thread.name },
+    });
+    return {};
+  }
+
+  async deleteThread(threadId) {
+    const file = this.threadFile(threadId);
+    if (fs.existsSync(file)) fs.unlinkSync(file);
+    return {};
+  }
+
+  async listModels() {
+    const models = [...new Set([
+      this.provider.model,
+      ...(this.provider.discoveredModels || []),
+    ].map((model) => String(model || "").trim()).filter(Boolean))];
+    return {
+      data: models.map((model, index) => ({
+        id: model,
+        model,
+        displayName: model,
+        description: `${this.provider.label} · Chat Completions`,
+        isDefault: index === 0,
+        defaultReasoningEffort: null,
+        supportedReasoningEfforts: [],
+        reasoningCapabilitiesVerified: false,
+      })),
+      nextCursor: null,
+    };
+  }
+
+  startTurn(threadId, text, cwd, clientUserMessageId = null, options = {}) {
+    if (this.activeTurns.has(threadId)) return Promise.reject(new Error("该会话仍在生成回复。"));
+    const prompt = String(text || "").trim();
+    const imageInputs = Array.isArray(options.imageInputs) ? options.imageInputs : [];
+    if (!prompt && !imageInputs.length) return Promise.reject(new Error("消息内容不能为空。"));
+    let thread;
+    try {
+      thread = this.loadThread(threadId);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    const turnId = crypto.randomUUID();
+    const userItem = {
+      id: crypto.randomUUID(),
+      type: "userMessage",
+      clientId: clientUserMessageId,
+      content: [
+        ...(prompt ? [{ type: "text", text: prompt }] : []),
+        ...imageInputs.map((image) => ({ type: "localImage", path: image.path })),
+      ],
+    };
+    const assistantItem = { id: crypto.randomUUID(), type: "agentMessage", text: "", phase: "final_answer" };
+    const reasoningItem = { id: crypto.randomUUID(), type: "reasoning", content: [], summary: [] };
+    const turn = { id: turnId, status: "inProgress", items: [userItem] };
+    thread.turns.push(turn);
+    thread.cwd = cwd || thread.cwd;
+    thread.model = options.model || thread.model || this.provider.model;
+    thread.modelProvider = this.provider.id;
+    thread.preview = thread.preview === "新会话"
+      ? (prompt.split(/\r?\n/)[0].slice(0, 120) || "图片会话")
+      : thread.preview;
+    thread.updatedAt = Math.floor(Date.now() / 1000);
+    thread.recencyAt = thread.updatedAt;
+    this.saveThread(thread);
+
+    const controller = new AbortController();
+    this.activeTurns.set(threadId, { controller, turnId, completed: false });
+    this.emit("notification", {
+      method: "thread/settings/updated",
+      params: {
+        threadId,
+        threadSettings: {
+          model: thread.model,
+          modelProvider: this.provider.id,
+          approvalPolicy: "never",
+          approvalsReviewer: "user",
+          sandboxPolicy: { type: "readOnly" },
+        },
+      },
+    });
+    this.emit("notification", { method: "turn/started", params: { threadId, turn: { id: turnId, status: "inProgress" } } });
+    this.emit("notification", { method: "item/started", params: { threadId, turnId, item: userItem } });
+    this.emit("notification", { method: "item/completed", params: { threadId, turnId, item: userItem } });
+    this.emit("notification", { method: "item/started", params: { threadId, turnId, item: assistantItem } });
+    this.executeTurn(thread, turn, assistantItem, reasoningItem, imageInputs, controller).catch((error) => {
+      this.finishTurn(thread, turn, assistantItem, reasoningItem, error?.name === "AbortError" ? "interrupted" : "failed", error);
+    });
+    return Promise.resolve({ turn: { id: turnId, status: "inProgress" } });
+  }
+
+  async executeTurn(thread, turn, assistantItem, reasoningItem, imageInputs, controller) {
+    const configuredProviders = [this.provider, ...this.fallbackProviders];
+    const now = Date.now();
+    const availableProviders = configuredProviders.filter((provider) => (
+      (this.providerHealth.get(provider.id)?.openUntil || 0) <= now
+    ));
+    const providers = availableProviders.length
+      ? availableProviders
+      : [configuredProviders.reduce((earliest, provider) => (
+        (this.providerHealth.get(provider.id)?.openUntil || 0)
+          < (this.providerHealth.get(earliest.id)?.openUntil || 0) ? provider : earliest
+      ))];
+    let lastError = null;
+    for (let index = 0; index < providers.length; index += 1) {
+      const provider = providers[index];
+      const contentLength = assistantItem.text.length;
+      const reasoningLength = reasoningItem.summary.length;
+      const startedAt = Date.now();
+      const isPrimary = provider.id === this.provider.id;
+      turn.actualProviderId = provider.id;
+      turn.actualModel = isPrimary ? thread.model || this.provider.model : provider.model;
+      try {
+        await this.executeProviderTurn(
+          provider,
+          isPrimary ? thread.model || this.provider.model : provider.model,
+          thread,
+          turn,
+          assistantItem,
+          reasoningItem,
+          imageInputs,
+          controller,
+        );
+        this.providerHealth.set(provider.id, {
+          failures: 0,
+          openUntil: 0,
+          lastSuccessAt: Date.now(),
+          latencyMs: Date.now() - startedAt,
+          lastError: null,
+          status: "healthy",
+        });
+        if (!isPrimary) {
+          this.emit("notification", {
+            method: "model/rerouted",
+            params: {
+              threadId: thread.id,
+              fromModel: thread.model || this.provider.model,
+              toModel: provider.model,
+              fromProviderId: this.provider.id,
+              toProviderId: provider.id,
+              reason: "failover",
+            },
+          });
+        }
+        this.emitHealth(provider.id, thread.id);
+        this.finishTurn(thread, turn, assistantItem, reasoningItem, "completed");
+        return;
+      } catch (error) {
+        if (error?.name === "AbortError") throw error;
+        lastError = error;
+        const retryable = this.retryableProviderError(error);
+        this.markProviderFailure(provider.id, error, retryable);
+        this.emitHealth(provider.id, thread.id);
+        const emittedPartial = assistantItem.text.length > contentLength || reasoningItem.summary.length > reasoningLength;
+        if (!retryable || emittedPartial || index === providers.length - 1) throw error;
+      }
+    }
+    throw lastError || new Error("没有可用的模型连接。");
+  }
+
+  async executeProviderTurn(provider, model, thread, turn, assistantItem, reasoningItem, imageInputs, controller) {
+    const response = await this.fetchImpl(chatCompletionsEndpoint(provider.baseUrl), {
+      method: "POST",
+      headers: {
+        Accept: "text/event-stream",
+        Authorization: `Bearer ${provider.apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        messages: messagesForThread(thread, imageInputs),
+        stream: true,
+      }),
+      signal: controller.signal,
+    });
+    if (!response.ok) throw responseError(response.status, response.statusText, await response.text());
+    if (response.headers.get("content-type")?.includes("application/json")) {
+      const payload = await response.json();
+      if (payload?.usage && typeof payload.usage === "object") turn.usage = { ...payload.usage };
+      const message = payload?.choices?.[0]?.message || payload?.choices?.[0]?.delta || {};
+      const reasoning = message.reasoning_content || message.reasoning || "";
+      const content = typeof message.content === "string" ? message.content : "";
+      if (reasoning) {
+        reasoningItem.summary.push({ type: "summary_text", text: reasoning });
+        this.emit("notification", {
+          method: "item/reasoning/summaryTextDelta",
+          params: { threadId: thread.id, turnId: turn.id, itemId: reasoningItem.id, delta: reasoning },
+        });
+      }
+      if (content) {
+        assistantItem.text += content;
+        this.emit("notification", {
+          method: "item/agentMessage/delta",
+          params: { threadId: thread.id, turnId: turn.id, itemId: assistantItem.id, delta: content },
+        });
+      }
+      if (!content && !reasoning) throw emptyResponseError();
+      return;
+    }
+    await consumeSse(response, (event) => {
+      if (event?.usage && typeof event.usage === "object") turn.usage = { ...event.usage };
+      const delta = event?.choices?.[0]?.delta || {};
+      const reasoning = delta.reasoning_content || delta.reasoning || "";
+      if (reasoning) {
+        reasoningItem.summary.push({ type: "summary_text", text: reasoning });
+        this.emit("notification", {
+          method: "item/reasoning/summaryTextDelta",
+          params: { threadId: thread.id, turnId: turn.id, itemId: reasoningItem.id, delta: reasoning },
+        });
+      }
+      if (delta.content) {
+        assistantItem.text += delta.content;
+        this.emit("notification", {
+          method: "item/agentMessage/delta",
+          params: { threadId: thread.id, turnId: turn.id, itemId: assistantItem.id, delta: delta.content },
+        });
+      }
+    });
+    if (!assistantItem.text && !reasoningItem.summary.length) throw emptyResponseError();
+  }
+
+  retryableProviderError(error) {
+    const status = Number(error?.status);
+    return error instanceof TypeError
+      || error?.code === "EMPTY_RESPONSE"
+      || [408, 409, 425, 429].includes(status)
+      || status >= 500;
+  }
+
+  markProviderFailure(providerId, error, retryable) {
+    const previous = this.providerHealth.get(providerId) || { failures: 0, openUntil: 0 };
+    const failures = retryable ? previous.failures + 1 : previous.failures;
+    const threshold = Math.max(1, Number(this.failover?.failureThreshold) || 2);
+    const cooldownMs = Math.max(5000, Number(this.failover?.cooldownMs) || 60000);
+    const breakerEnabled = Boolean(this.failover && this.fallbackProviders.length);
+    const openUntil = breakerEnabled && retryable && failures >= threshold ? Date.now() + cooldownMs : 0;
+    this.providerHealth.set(providerId, {
+      ...previous,
+      failures,
+      openUntil,
+      lastFailureAt: Date.now(),
+      lastError: String(error?.message || error).slice(0, 500),
+      status: openUntil > Date.now() ? "open" : retryable ? "degraded" : "configuration-error",
+    });
+  }
+
+  emitHealth(providerId, threadId) {
+    const health = this.providerHealth.get(providerId) || { failures: 0, openUntil: 0 };
+    this.emit("notification", {
+      method: "provider/health-updated",
+      params: {
+        threadId,
+        providerId,
+        status: health.openUntil > Date.now() ? "open" : health.status || "unknown",
+        ...health,
+      },
+    });
+  }
+
+  finishTurn(thread, turn, assistantItem, reasoningItem, status, error = null) {
+    const active = this.activeTurns.get(thread.id);
+    if (!active || active.turnId !== turn.id || active.completed) return;
+    active.completed = true;
+    this.activeTurns.delete(thread.id);
+    if (reasoningItem.summary.length) {
+      turn.items.push(reasoningItem);
+      this.emit("notification", { method: "item/completed", params: { threadId: thread.id, turnId: turn.id, item: reasoningItem } });
+    }
+    if (assistantItem.text) turn.items.push(assistantItem);
+    this.emit("notification", { method: "item/completed", params: { threadId: thread.id, turnId: turn.id, item: assistantItem } });
+    turn.status = status;
+    if (error && status === "failed") turn.error = { message: error.message };
+    thread.updatedAt = Math.floor(Date.now() / 1000);
+    thread.recencyAt = thread.updatedAt;
+    this.saveThread(thread);
+    if (error && status === "failed") this.emit("diagnostic", error.message);
+    this.emit("notification", {
+      method: "turn/completed",
+      params: {
+        threadId: thread.id,
+        turn: {
+          id: turn.id,
+          status,
+          model: turn.actualModel || thread.model || this.provider.model,
+          providerId: turn.actualProviderId || this.provider.id,
+          ...(turn.usage ? { usage: turn.usage } : {}),
+          ...(turn.error ? { error: turn.error } : {}),
+        },
+      },
+    });
+  }
+
+  request(method, params = {}) {
+    if (method !== "turn/interrupt") {
+      return Promise.reject(new Error(`Chat Completions engine does not support ${method}.`));
+    }
+    const active = this.activeTurns.get(params.threadId);
+    if (!active || (params.turnId && active.turnId !== params.turnId)) return Promise.resolve({});
+    active.controller.abort();
+    return Promise.resolve({});
+  }
+
+  respond() {}
+
+  respondError() {}
+
+  stop() {
+    this.ready = false;
+    for (const active of this.activeTurns.values()) active.controller.abort();
+  }
+}
+
+module.exports = {
+  OpenAICompatibleServer,
+  chatCompletionsEndpoint,
+  consumeSse,
+  messagesForThread,
+  parseCodexThreadFile,
+  parseSseBlock,
+};

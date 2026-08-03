@@ -1,12 +1,23 @@
-/* global lucide, marked, DOMPurify */
+/* global lucide, marked, DOMPurify, ShareMasterVueRuntime */
 
 const api = window.codexDeck;
-const state = {
+const state = ShareMasterVueRuntime.shallowReactive({
   provider: null,
   providerType: null,
+  providerEngine: null,
   modelProvider: null,
   modelCatalog: [],
   skills: [],
+  managedSkills: [],
+  promptTemplates: [],
+  mcpServers: [],
+  theme: ["system", "light", "dark"].includes(localStorage.getItem("share-master-theme"))
+    ? localStorage.getItem("share-master-theme")
+    : "system",
+  extensionTab: "skills",
+  editingPromptId: null,
+  promptEditorMode: "edit",
+  editingMcpId: null,
   skillsLoading: false,
   skillQueryStart: null,
   threadSettings: {},
@@ -29,7 +40,18 @@ const state = {
   deletedThreadIds: new Set(),
   localArchivedThreadIds: new Set(),
   pendingDeletions: [],
+  usage: null,
+  modelPricing: {},
+  providerRoutes: {},
+  providerHealth: {},
+  draggingProviderId: null,
+  routeFallbackDraft: [],
+  draggingFallbackId: null,
+  syncBackend: "directory",
+  skillInstallKind: "folder",
   scheduledTasks: [],
+  editingRelay: null,
+  probedProviderModels: [],
   runningTaskIds: new Set(),
   activeProject: null,
   activeThread: null,
@@ -40,13 +62,18 @@ const state = {
   interruptingTurnId: null,
   runningThreads: new Map(),
   messageQueues: new Map(),
+  threadSearchHits: new Map(),
+  threadSearchGeneration: 0,
+  threadSearchQuery: "",
   submitting: false,
   pendingAttachments: [],
-  workspace: "F:\\codepro",
+  workspace: "",
   running: false,
   streamNodes: new Map(),
   menuThread: null,
   providers: [],
+  providerPresets: {},
+  pendingDeepLinkImport: null,
   connectingProvider: null,
   connectionGeneration: 0,
   loadGeneration: 0,
@@ -71,7 +98,18 @@ const state = {
   conversationCache: new Map(),
   visibleTurnCounts: new Map(),
   threadRefreshTimer: null,
-};
+  localHistorySources: [],
+  localHistorySourceId: null,
+  localHistoryConversations: [],
+  localHistorySelectedId: null,
+  localHistoryLoading: false,
+  localHistoryGeneration: 0,
+  localProviderCandidates: [],
+  selectedLocalProviderIds: new Set(),
+  localProviderLoading: false,
+  localProviderGeneration: 0,
+});
+window.shareMasterState = state;
 
 const INITIAL_VISIBLE_TURNS = 40;
 const EARLIER_TURN_BATCH = 40;
@@ -81,7 +119,8 @@ const elements = {
   overlay: $("#provider-overlay"), providerError: $("#provider-error"), providerName: $("#provider-name"),
   providerState: $("#provider-state"), providerMark: $("#provider-mark"), threadList: $("#thread-list"),
   threadCount: $("#thread-count"), search: $("#thread-search"), chat: $("#chat-view"), empty: $("#empty-state"),
-  emptyTitle: $("#empty-title"), emptySubtitle: $("#empty-subtitle"), input: $("#composer-input"), send: $("#send-button"), stop: $("#stop-button"),
+  emptyTitle: $("#empty-title"), emptySubtitle: $("#empty-subtitle"), input: $("#composer-input"), send: $("#send-button"),
+  queue: $("#queue-button"), stop: $("#stop-button"),
   connection: $("#connection-badge"), workspaceLabel: $("#workspace-label"), windowTitle: $("#window-thread-title"),
   approval: $("#approval-banner"), menu: $("#thread-menu"), projectList: $("#project-list"),
   activeThreadCount: $("#active-thread-count"), archivedThreadCount: $("#archived-thread-count"),
@@ -93,12 +132,35 @@ const elements = {
   credentialError: $("#credential-error"), credentialApiKey: $("#credential-api-key"),
   claudeOverlay: $("#claude-overlay"), claudeForm: $("#claude-form"),
   recordHomeOverlay: $("#record-home-overlay"), recordHomeInput: $("#record-home-input"),
+  localHistoryOverlay: $("#local-history-overlay"), localHistorySources: $("#local-history-sources"),
+  localHistoryList: $("#local-history-list"), localHistoryPreview: $("#local-history-preview"),
+  localHistorySearch: $("#local-history-search"), localHistorySummary: $("#local-history-summary"),
+  localProviderOverlay: $("#local-provider-overlay"), localProviderList: $("#local-provider-list"),
+  localProviderSummary: $("#local-provider-summary"), localProviderStatus: $("#local-provider-status"),
+  localProviderImportButton: $("#local-provider-import-button"),
+  usageOverlay: $("#usage-overlay"), usageProviderFilter: $("#usage-provider-filter"),
+  usageStats: $("#usage-stats"), usageTrend: $("#usage-trend"), usageLogList: $("#usage-log-list"),
+  healthOverlay: $("#health-overlay"), healthList: $("#health-list"),
+  extensionsOverlay: $("#extensions-overlay"), extensionsSkillList: $("#extensions-skill-list"),
+  extensionsSkillSearch: $("#extensions-skill-search"), extensionsStatus: $("#extensions-status"),
+  extensionsPromptList: $("#extensions-prompt-list"), extensionsMcpList: $("#extensions-mcp-list"),
+  promptForm: $("#prompt-form"), mcpForm: $("#mcp-form"),
+  skillInstallOverlay: $("#skill-install-overlay"), skillInstallForm: $("#skill-install-form"),
+  pricingForm: $("#pricing-form"), pricingProvider: $("#pricing-provider"), pricingModel: $("#pricing-model"),
+  backupOverlay: $("#backup-overlay"), backupList: $("#backup-list"), backupStatus: $("#backup-status"),
+  syncOverlay: $("#sync-overlay"), syncDirectoryInput: $("#sync-directory-input"),
+  syncAutoInput: $("#sync-auto-input"), syncStatus: $("#sync-status"), syncHistory: $("#sync-history"),
+  syncWebdavForm: $("#sync-webdav-form"),
+  appSettingsOverlay: $("#app-settings-overlay"), appSettingsForm: $("#app-settings-form"),
+  importPreviewOverlay: $("#deep-link-import-overlay"), importPreviewDetails: $("#import-preview-details"),
   projectOverlay: $("#project-overlay"), projectForm: $("#project-form"),
   projectNameInput: $("#project-name-input"), projectRootInput: $("#project-root-input"),
   taskOverlay: $("#task-overlay"), taskForm: $("#task-form"), taskNameInput: $("#task-name-input"),
   taskPromptInput: $("#task-prompt-input"), taskTimeInput: $("#task-time-input"),
   taskRepeatSelect: $("#task-repeat-select"), taskProjectSelect: $("#task-project-select"),
   taskProviderSelect: $("#task-provider-select"), taskEnabledInput: $("#task-enabled-input"), taskError: $("#task-error"),
+  taskModelInput: $("#task-model-input"), taskApprovalSelect: $("#task-approval-select"),
+  taskNotifyInput: $("#task-notify-input"), taskRetryInput: $("#task-retry-input"),
   sessionModel: $("#session-model"), sessionEffort: $("#session-effort"),
   appliedSettings: $("#applied-settings"), modeBadge: $("#mode-badge"),
   approvalModeMenu: $("#approval-mode-menu"), approvalModeLabel: $("#approval-mode-label"),
@@ -126,6 +188,24 @@ const renderMarkdown = (text) => {
   return rendered;
 };
 const refreshIcons = () => lucide.createIcons({ attrs: { "stroke-width": 1.8 } });
+
+function applyTheme(theme, persist = true) {
+  const preference = ["system", "light", "dark"].includes(theme) ? theme : "system";
+  const resolved = preference === "system"
+    ? matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"
+    : preference;
+  state.theme = preference;
+  document.documentElement.dataset.theme = resolved;
+  document.documentElement.style.colorScheme = resolved;
+  if (persist) localStorage.setItem("share-master-theme", preference);
+  const labels = { system: "跟随系统", light: "浅色", dark: "深色" };
+  const icons = { system: "monitor", light: "sun", dark: "moon" };
+  const button = $("#theme-button");
+  button.title = `主题：${labels[preference]}`;
+  button.setAttribute("aria-label", `切换主题，当前${labels[preference]}`);
+  button.innerHTML = `<span data-lucide="${icons[preference]}"></span>`;
+  refreshIcons();
+}
 const titleOf = (thread) => state.threadAliases[thread?.id] || thread?.name || thread?.preview || "未命名会话";
 const normalizePath = (value) => String(value || "").replaceAll("/", "\\").replace(/\\+$/, "").toLowerCase();
 const samePath = (left, right) => normalizePath(left) === normalizePath(right);
@@ -495,20 +575,30 @@ function connect(provider, closeOverlay = true) {
       state.provider = provider;
       state.connectingProvider = null;
       state.providerType = result.providerType;
+      state.providerEngine = result.providerEngine;
       state.modelProvider = result.modelProvider;
       state.threadResumed = false;
       state.relayBalance = null;
       applyAccountSnapshot(result);
       setConnected(true, result.label);
-      elements.providerMark.innerHTML = `<img src="${brandIconPath(result.brand)}" alt="${result.brand === "claude" ? "Claude" : "OpenAI"}" />`;
-      elements.composerBrandIcon.src = brandIconPath(result.brand);
+      const visual = providerVisual(currentProviderDefinition() || {
+        brand: result.brand,
+        preset: result.providerPreset,
+      });
+      elements.providerMark.className = `provider-mark ${visual.className}`;
+      elements.providerMark.innerHTML = visual.markup;
+      elements.composerBrandIcon.src = result.providerPreset === "qwen"
+        ? "../../node_modules/simple-icons/icons/alibabacloud.svg"
+        : brandIconPath(result.brand);
+      elements.composerBrandIcon.alt = visual.label;
       if (closeOverlay) elements.overlay.classList.add("hidden");
       elements.providerError.textContent = "";
       await Promise.all([loadThreads(), loadSessionModels(), loadSkills()]);
       if (result.modelWarning) {
         showDiagnostic(`中转站模型列表不可用，已退回配置模型：${result.modelWarning}`, true);
       }
-      if (["api", "relay"].includes(state.providerType)) refreshRelayBalance();
+      if (["api", "relay"].includes(state.providerType)
+        && currentProviderDefinition()?.protocol !== "chat_completions") refreshRelayBalance();
       return generation === state.connectionGeneration;
     } catch (error) {
       if (generation !== state.connectionGeneration) return false;
@@ -565,7 +655,15 @@ function closeSkillMenu() {
 
 function renderSkillMenu(query = "") {
   const normalizedQuery = String(query || "").trim().toLocaleLowerCase("en-US");
-  const matches = state.skills.filter((skill) => {
+  const commands = [
+    ...state.promptTemplates.map((template) => ({
+      ...template,
+      commandType: "prompt",
+      description: template.description || "本地 Prompt 模板",
+    })),
+    ...state.skills.map((skill) => ({ ...skill, commandType: "skill" })),
+  ];
+  const matches = commands.filter((skill) => {
     if (!normalizedQuery) return true;
     return `${skill.name} ${skill.description || ""}`.toLocaleLowerCase("en-US").includes(normalizedQuery);
   });
@@ -573,7 +671,7 @@ function renderSkillMenu(query = "") {
   if (!matches.length) {
     const empty = document.createElement("div");
     empty.className = "skill-empty";
-    empty.textContent = state.skillsLoading ? "正在读取 Skills..." : "没有匹配的 Skill";
+    empty.textContent = state.skillsLoading ? "正在读取命令..." : "没有匹配的命令";
     elements.skillList.appendChild(empty);
     return;
   }
@@ -582,17 +680,18 @@ function renderSkillMenu(query = "") {
     option.type = "button";
     option.className = "skill-option";
     option.dataset.skillName = skill.name;
+    option.dataset.commandType = skill.commandType;
     option.setAttribute("role", "menuitem");
     const icon = document.createElement("span");
-    icon.dataset.lucide = "wand-sparkles";
+    icon.dataset.lucide = skill.commandType === "prompt" ? "text-cursor-input" : "wand-sparkles";
     const copy = document.createElement("span");
     const name = document.createElement("strong");
     name.textContent = `/${skill.name}`;
     const description = document.createElement("small");
-    description.textContent = skill.description || "Codex Skill";
+    description.textContent = skill.description || (skill.commandType === "prompt" ? "本地 Prompt 模板" : "Codex Skill");
     copy.append(name, description);
     option.append(icon, copy);
-    option.addEventListener("click", () => insertSkill(skill.name));
+    option.addEventListener("click", () => insertCommand(skill));
     elements.skillList.appendChild(option);
   }
   refreshIcons();
@@ -609,8 +708,8 @@ function openSkillMenu(query = "", fromComposer = false) {
   if (!fromComposer) requestAnimationFrame(() => elements.skillSearch.focus());
 }
 
-function insertSkill(name) {
-  const token = `/${name} `;
+function insertCommand(command) {
+  const text = command.commandType === "prompt" ? `${command.content}\n` : `/${command.name} `;
   const input = elements.input;
   const selectionStart = input.selectionStart ?? input.value.length;
   const selectionEnd = input.selectionEnd ?? selectionStart;
@@ -620,14 +719,14 @@ function insertSkill(name) {
     start = selectionStart;
     if (start > 0 && !/\s/.test(input.value[start - 1])) prefix = " ";
   }
-  input.setRangeText(`${prefix}${token}`, start, selectionEnd, "end");
+  input.setRangeText(`${prefix}${text}`, start, selectionEnd, "end");
   closeSkillMenu();
   input.focus();
   resizeComposer();
 }
 
 function updateSkillAutocomplete() {
-  if (elements.input.disabled || state.providerType === "claude") {
+  if (elements.input.disabled) {
     closeSkillMenu();
     return;
   }
@@ -647,8 +746,11 @@ function updateSkillAutocomplete() {
 }
 
 async function loadSkills(forceReload = false) {
-  if (!state.connected || state.providerType === "claude") {
+  if (!state.connected || ["claude", "openai-compatible"].includes(state.providerEngine)) {
     state.skills = [];
+    elements.skillButton.title = state.promptTemplates.length
+      ? `Prompt 命令 (${state.promptTemplates.length})`
+      : "没有可用的命令";
     renderSkillMenu();
     syncComposerState();
     return;
@@ -674,9 +776,8 @@ async function loadSkills(forceReload = false) {
     }
     state.skills = [...deduplicated.values()]
       .sort((left, right) => left.name.localeCompare(right.name, "en-US"));
-    elements.skillButton.title = state.skills.length
-      ? `Skills (${state.skills.length})`
-      : "没有可用的 Skills";
+    const commandCount = state.skills.length + state.promptTemplates.length;
+    elements.skillButton.title = commandCount ? `命令 (${commandCount})` : "没有可用的命令";
     if (!elements.skillMenu.classList.contains("hidden")) {
       renderSkillMenu(elements.skillSearch.value);
     }
@@ -691,6 +792,280 @@ async function loadSkills(forceReload = false) {
       syncComposerState();
     }
   }
+}
+
+function applyExtensionSnapshot(snapshot = {}) {
+  state.managedSkills = Array.isArray(snapshot.skills) ? snapshot.skills : state.managedSkills;
+  state.promptTemplates = Array.isArray(snapshot.prompts) ? snapshot.prompts : state.promptTemplates;
+  state.mcpServers = Array.isArray(snapshot.mcpServers) ? snapshot.mcpServers : state.mcpServers;
+  $("#extensions-skill-count").textContent = String(state.managedSkills.length);
+  $("#extensions-prompt-count").textContent = String(state.promptTemplates.length);
+  $("#extensions-mcp-count").textContent = String(state.mcpServers.length);
+  renderManagedSkills(elements.extensionsSkillSearch.value);
+  renderPromptIndex();
+  renderMcpIndex();
+  renderSkillMenu(elements.skillSearch.value);
+  syncComposerState();
+}
+
+async function loadExtensions() {
+  const snapshot = await api.listExtensions();
+  applyExtensionSnapshot(snapshot);
+  return snapshot;
+}
+
+function renderManagedSkills(query = "") {
+  const needle = String(query || "").trim().toLocaleLowerCase("zh-CN");
+  const matches = state.managedSkills.filter((skill) => (
+    !needle || `${skill.name} ${skill.description || ""} ${skill.source || ""}`.toLocaleLowerCase("zh-CN").includes(needle)
+  ));
+  elements.extensionsSkillList.replaceChildren();
+  if (!matches.length) {
+    elements.extensionsSkillList.innerHTML = `<div class="extensions-empty">${state.managedSkills.length ? "没有匹配的 Skill" : "尚未发现可管理的 Skill"}</div>`;
+    return;
+  }
+  for (const skill of matches) {
+    const row = document.createElement("div");
+    row.className = `extension-row${skill.enabled ? "" : " disabled"}`;
+    const source = String(skill.source || "Share Master 私有目录");
+    row.innerHTML = `<span class="extension-row-icon"><span data-lucide="wand-sparkles"></span></span><span class="extension-copy"><strong><code>/${escapeHtml(skill.name)}</code></strong><span title="${escapeHtml(`${skill.description || "Share Master Skill"}\n来源：${source}\n私有副本：${skill.path || ""}`)}">${escapeHtml(skill.description || "Share Master Skill")} · ${escapeHtml(source.split(/[\\/]/).filter(Boolean).slice(-2).join(" / "))}</span></span>`;
+    const toggle = document.createElement("label");
+    toggle.className = "extension-toggle";
+    toggle.innerHTML = `<span>${skill.enabled ? "已启用" : "已停用"}</span>`;
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = skill.enabled;
+    input.setAttribute("aria-label", `${skill.enabled ? "停用" : "启用"} ${skill.name}`);
+    input.addEventListener("change", async () => {
+      input.disabled = true;
+      elements.extensionsStatus.textContent = `正在${input.checked ? "启用" : "停用"} ${skill.name}...`;
+      try {
+        const response = await api.setSkillEnabled({ name: skill.name, enabled: input.checked });
+        applyExtensionSnapshot(response);
+        if (state.connected && !["claude", "openai-compatible"].includes(state.providerEngine)) await loadSkills(true);
+        elements.extensionsStatus.textContent = `${skill.name} 已${input.checked ? "启用" : "停用"}`;
+      } catch (error) {
+        input.checked = !input.checked;
+        elements.extensionsStatus.textContent = error.message;
+      } finally {
+        input.disabled = false;
+      }
+    });
+    toggle.appendChild(input);
+    const actions = document.createElement("span");
+    actions.className = "extension-row-actions";
+    if (skill.removable) {
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "icon-button danger-icon";
+      remove.title = `卸载 ${skill.name}`;
+      remove.setAttribute("aria-label", remove.title);
+      remove.innerHTML = '<span data-lucide="trash-2"></span>';
+      remove.addEventListener("click", async () => {
+        if (!confirm(`卸载 Skill“${skill.name}”？\n\n只删除 Share Master 私有安装副本。`)) return;
+        remove.disabled = true;
+        try {
+          const response = await api.removeSkill(skill.name);
+          applyExtensionSnapshot(response);
+          elements.extensionsStatus.textContent = `${skill.name} 已卸载`;
+        } catch (error) {
+          remove.disabled = false;
+          elements.extensionsStatus.textContent = error.message;
+        }
+      });
+      actions.appendChild(remove);
+    }
+    actions.appendChild(toggle);
+    row.appendChild(actions);
+    elements.extensionsSkillList.appendChild(row);
+  }
+  refreshIcons();
+}
+
+function switchExtensionTab(tab) {
+  state.extensionTab = ["skills", "prompts", "mcp"].includes(tab) ? tab : "skills";
+  document.querySelectorAll("[data-extension-tab]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.extensionTab === state.extensionTab);
+  });
+  for (const name of ["skills", "prompts", "mcp"]) {
+    $(`#extensions-${name}-panel`).classList.toggle("hidden", name !== state.extensionTab);
+  }
+}
+
+async function openExtensionsDialog(tab = "skills") {
+  elements.overlay.classList.add("hidden");
+  elements.extensionsOverlay.classList.remove("hidden");
+  elements.extensionsStatus.textContent = "";
+  switchExtensionTab(tab);
+  try {
+    await loadExtensions();
+  } catch (error) {
+    elements.extensionsStatus.textContent = error.message;
+  }
+  refreshIcons();
+}
+
+function closeExtensionsDialog() {
+  elements.extensionsOverlay.classList.add("hidden");
+  elements.overlay.classList.remove("hidden");
+}
+
+function setSkillInstallKind(kind) {
+  state.skillInstallKind = ["folder", "zip", "github"].includes(kind) ? kind : "folder";
+  document.querySelectorAll("[data-skill-install-kind]").forEach((button) => button.classList.toggle("active", button.dataset.skillInstallKind === state.skillInstallKind));
+  const source = $("#skill-install-source");
+  source.value = "";
+  source.readOnly = state.skillInstallKind !== "github";
+  source.type = state.skillInstallKind === "github" ? "url" : "text";
+  source.placeholder = state.skillInstallKind === "github"
+    ? "https://github.com/owner/repository"
+    : state.skillInstallKind === "zip" ? "选择 Skill ZIP 包" : "选择包含 SKILL.md 的文件夹";
+  $("#skill-install-source-label").textContent = state.skillInstallKind === "github" ? "GitHub 仓库 URL" : state.skillInstallKind === "zip" ? "Skill ZIP 包" : "Skill 文件夹";
+  $("#skill-install-browse").classList.toggle("hidden", state.skillInstallKind === "github");
+  $("#skill-install-status").textContent = "";
+}
+
+function openSkillInstallDialog() {
+  elements.extensionsOverlay.classList.add("hidden");
+  elements.skillInstallOverlay.classList.remove("hidden");
+  elements.skillInstallForm.reset();
+  setSkillInstallKind("folder");
+  refreshIcons();
+}
+
+function closeSkillInstallDialog() {
+  elements.skillInstallOverlay.classList.add("hidden");
+  elements.extensionsOverlay.classList.remove("hidden");
+}
+
+function resetPromptEditor() {
+  state.editingPromptId = null;
+  elements.promptForm.reset();
+  elements.promptForm.elements.id.value = "";
+  $("#prompt-editor-title").textContent = "新建 Prompt";
+  $("#prompt-delete-button").classList.add("hidden");
+  $("#prompt-error").textContent = "";
+  setPromptEditorMode("edit");
+  renderPromptIndex();
+}
+
+function selectPrompt(template) {
+  state.editingPromptId = template.id;
+  elements.promptForm.elements.id.value = template.id;
+  elements.promptForm.elements.name.value = template.name;
+  elements.promptForm.elements.description.value = template.description || "";
+  elements.promptForm.elements.content.value = template.content || "";
+  $("#prompt-editor-title").textContent = `编辑 /${template.name}`;
+  $("#prompt-delete-button").classList.remove("hidden");
+  $("#prompt-error").textContent = "";
+  setPromptEditorMode("edit");
+  renderPromptIndex();
+  refreshIcons();
+}
+
+function setPromptEditorMode(mode) {
+  state.promptEditorMode = mode === "preview" ? "preview" : "edit";
+  document.querySelectorAll("[data-prompt-mode]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.promptMode === state.promptEditorMode);
+  });
+  const field = $("#prompt-content-field");
+  field.classList.toggle("prompt-preview-mode", state.promptEditorMode === "preview");
+  if (state.promptEditorMode === "preview") {
+    const content = elements.promptForm.elements.content.value.trim();
+    $("#prompt-markdown-preview").innerHTML = content ? renderMarkdown(content) : '<span class="prompt-preview-empty">暂无可预览内容</span>';
+  }
+  refreshIcons();
+}
+
+function renderPromptIndex() {
+  elements.extensionsPromptList.replaceChildren();
+  if (!state.promptTemplates.length) {
+    elements.extensionsPromptList.innerHTML = '<div class="extensions-empty">暂无 Prompt 模板</div>';
+    return;
+  }
+  for (const template of state.promptTemplates) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `extension-index-row${template.id === state.editingPromptId ? " active" : ""}`;
+    button.innerHTML = `<span><strong>/${escapeHtml(template.name)}</strong><span>${escapeHtml(template.description || "本地模板")}</span></span><i class="extension-state"></i>`;
+    button.addEventListener("click", () => selectPrompt(template));
+    elements.extensionsPromptList.appendChild(button);
+  }
+}
+
+function resetMcpEditor() {
+  state.editingMcpId = null;
+  elements.mcpForm.reset();
+  elements.mcpForm.elements.id.value = "";
+  elements.mcpForm.elements.enabled.checked = true;
+  $("#mcp-editor-title").textContent = "添加 MCP";
+  $("#mcp-delete-button").classList.add("hidden");
+  $("#mcp-test-button").classList.add("hidden");
+  setMcpStatus("");
+  updateMcpTransportFields();
+  renderMcpIndex();
+}
+
+function selectMcp(server) {
+  state.editingMcpId = server.id;
+  const form = elements.mcpForm.elements;
+  form.id.value = server.id;
+  form.name.value = server.name;
+  form.transport.value = server.transport || "stdio";
+  form.command.value = server.command || "";
+  form.args.value = (server.args || []).join("\n");
+  form.url.value = server.url || "";
+  form.env.value = (server.envKeys || []).map((key) => `${key}=`).join("\n");
+  form.enabled.checked = server.enabled !== false;
+  $("#mcp-editor-title").textContent = `编辑 ${server.name}`;
+  $("#mcp-delete-button").classList.remove("hidden");
+  $("#mcp-test-button").classList.remove("hidden");
+  setMcpStatus(server.hasSecrets ? "敏感变量已加密保存，留空可保留原值。" : "");
+  updateMcpTransportFields();
+  renderMcpIndex();
+  refreshIcons();
+}
+
+function setMcpStatus(message, isError = false) {
+  const status = $("#mcp-error");
+  status.textContent = message || "";
+  status.classList.toggle("neutral-status", !isError);
+}
+
+function renderMcpIndex() {
+  elements.extensionsMcpList.replaceChildren();
+  if (!state.mcpServers.length) {
+    elements.extensionsMcpList.innerHTML = '<div class="extensions-empty">暂无 MCP 服务</div>';
+    return;
+  }
+  for (const server of state.mcpServers) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `extension-index-row${server.id === state.editingMcpId ? " active" : ""}`;
+    button.innerHTML = `<span><strong>${escapeHtml(server.name)}</strong><span>${escapeHtml(server.transport === "stdio" ? server.command : server.url)}</span></span><i class="extension-state${server.enabled === false ? " off" : ""}"></i>`;
+    button.addEventListener("click", () => selectMcp(server));
+    elements.extensionsMcpList.appendChild(button);
+  }
+}
+
+function updateMcpTransportFields() {
+  const stdio = elements.mcpForm.elements.transport.value === "stdio";
+  $("#mcp-command-field").classList.toggle("hidden", !stdio);
+  $("#mcp-args-field").classList.toggle("hidden", !stdio);
+  $("#mcp-url-field").classList.toggle("hidden", stdio);
+  elements.mcpForm.elements.command.required = stdio;
+  elements.mcpForm.elements.url.required = !stdio;
+}
+
+function mcpEnvironmentInput(value) {
+  const env = {};
+  for (const line of String(value || "").split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const separator = line.indexOf("=");
+    if (separator < 1) throw new Error("环境变量必须使用 KEY=VALUE 格式。");
+    env[line.slice(0, separator).trim()] = line.slice(separator + 1);
+  }
+  return env;
 }
 
 function syncProjects() {
@@ -827,6 +1202,10 @@ function setThreadView(view) {
 
 function applyThreadFilter(search = elements.search.value.trim()) {
   const query = search.toLocaleLowerCase("zh-CN");
+  if (query !== state.threadSearchQuery) {
+    state.threadSearchHits.clear();
+    state.threadSearchQuery = query;
+  }
   if (state.threadView === "scheduled") {
     state.threads = [];
     renderThreadList();
@@ -838,9 +1217,34 @@ function applyThreadFilter(search = elements.search.value.trim()) {
     if (state.threadView === "removed" ? !hidden : hidden) return false;
     if (state.activeProject && !threadBelongsToProject(thread, state.activeProject)) return false;
     if (!query) return true;
-    return [titleOf(thread), thread.cwd, thread.modelProvider].some((value) => String(value || "").toLocaleLowerCase("zh-CN").includes(query));
+    return [titleOf(thread), thread.cwd, thread.modelProvider].some((value) => String(value || "").toLocaleLowerCase("zh-CN").includes(query))
+      || state.threadSearchHits.has(thread.id);
   });
   renderThreadList();
+}
+
+async function runThreadFullTextSearch(query, generation) {
+  if (!state.connected || state.threadView === "scheduled" || query.length < 2) return;
+  try {
+    const matches = await api.searchThreads(query);
+    if (generation !== state.threadSearchGeneration || elements.search.value.trim().toLocaleLowerCase("zh-CN") !== query) return;
+    state.threadSearchHits = new Map((matches || []).map((match) => [match.id, match.snippet || ""]));
+    applyThreadFilter(query);
+  } catch (error) {
+    if (generation === state.threadSearchGeneration) showDiagnostic(`全文搜索失败：${error.message}`, true);
+  }
+}
+
+function scheduleThreadSearch() {
+  const query = elements.search.value.trim().toLocaleLowerCase("zh-CN");
+  const generation = ++state.threadSearchGeneration;
+  clearTimeout(elements.search._timer);
+  if (query !== state.threadSearchQuery) state.threadSearchHits.clear();
+  state.threadSearchQuery = query;
+  applyThreadFilter(query);
+  if (query.length >= 2) {
+    elements.search._timer = setTimeout(() => runThreadFullTextSearch(query, generation), 260);
+  }
 }
 
 function renderProjects() {
@@ -985,10 +1389,15 @@ function renderThreadList() {
     const deletion = pendingDeletion(thread.id);
     const run = state.runningThreads.get(thread.id);
     const queueLength = (state.messageQueues.get(thread.id) || []).length;
+    const searchSnippet = state.threadSearchHits.get(thread.id);
     const deletionMinutes = deletion ? Math.max(1, Math.ceil((deletion.expiresAt - Date.now()) / 60000)) : null;
-    const detail = deletion
+    const detail = searchSnippet
+      ? searchSnippet
+      : deletion
       ? `${deletionMinutes} 分钟后从 Share Master 清除`
       : run ? `正在运行${queueLength ? ` · ${queueLength} 条排队` : ""}`
+      : queueLength ? `${queueLength} 条待发送 · 点击会话后继续`
+      : thread._syncedFromCodex ? `已同步的 Codex 会话 · ${timeAgo(thread.recencyAt || thread.updatedAt)}`
       : `${savedModel || thread.model || thread.modelProvider || "会话"} · ${timeAgo(thread.recencyAt || thread.updatedAt)}`;
     item.classList.toggle("pending-delete", Boolean(deletion));
     item.classList.toggle("thread-running", Boolean(run));
@@ -1013,7 +1422,7 @@ function renderThreadList() {
 }
 
 function taskScheduleLabel(task) {
-  const repeat = task.repeat === "daily" ? "每天" : task.repeat === "weekly" ? "每周" : "一次";
+  const repeat = ({ once: "一次", hourly: "每小时", daily: "每天", weekdays: "工作日", weekly: "每周", monthly: "每月" })[task.repeat] || "一次";
   const when = new Date(task.scheduledAt).toLocaleString("zh-CN", {
     month: "short",
     day: "numeric",
@@ -1021,7 +1430,9 @@ function taskScheduleLabel(task) {
     minute: "2-digit",
   });
   if (state.runningTaskIds.has(task.id)) return "正在执行";
-  if (task.lastError) return `${task.enabled ? "重试" : "需处理"} · ${task.lastError}`;
+  if (task.retryAt) return `${timeAgo(Math.floor(task.retryAt / 1000)) === "刚刚" ? "即将重试" : `${new Date(task.retryAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })} 重试`} · ${repeat}`;
+  if (task.lastError) return `${task.enabled ? "上次失败" : "需处理"} · ${repeat}`;
+  if (task.enabled && task.scheduledAt <= Date.now()) return `等待连接 · ${repeat}`;
   if (!task.enabled && task.lastRunAt) return `已完成 · ${new Date(task.lastRunAt).toLocaleDateString("zh-CN")}`;
   return `${task.enabled ? when : "已暂停"} · ${repeat}`;
 }
@@ -1046,6 +1457,14 @@ function renderScheduledTasks() {
     main.innerHTML = `<strong>${escapeHtml(task.title)}</strong><small>${escapeHtml(taskScheduleLabel(task))}</small>`;
     main.addEventListener("click", () => openTaskDialog(task));
     row.appendChild(main);
+    const run = document.createElement("button");
+    run.className = "task-action run";
+    run.title = running ? "任务执行中" : "立即运行";
+    run.setAttribute("aria-label", run.title);
+    run.disabled = running;
+    run.innerHTML = '<span data-lucide="play"></span>';
+    run.addEventListener("click", () => runScheduledTaskNow(task, run));
+    row.appendChild(run);
     const toggle = document.createElement("button");
     toggle.className = "task-action task-toggle";
     toggle.title = running ? "任务执行中" : task.enabled ? "暂停任务" : "启用任务";
@@ -1068,23 +1487,101 @@ function renderScheduledTasks() {
   refreshIcons();
 }
 
+function providerGroup(provider) {
+  if (["official", "account"].includes(provider.type)) return { rank: 0, label: "OpenAI 账号" };
+  if (provider.protocol === "chat_completions") return { rank: 2, label: "Chat Completions 模型" };
+  return { rank: 1, label: "Codex 与编程代理" };
+}
+
+function providerVisual(provider = {}) {
+  if (provider.preset === "deepseek") {
+    return { className: "deepseek", label: "DeepSeek", markup: "<span>DS</span>" };
+  }
+  if (provider.preset === "qwen") {
+    return { className: "qwen", label: "Qwen", markup: "<span>QW</span>" };
+  }
+  if (provider.protocol === "chat_completions") {
+    return { className: "compatible", label: "兼容模型", markup: "<span>AI</span>" };
+  }
+  const brandLabel = provider.brand === "claude" ? "Claude" : "OpenAI";
+  return {
+    className: "brand",
+    label: brandLabel,
+    markup: `<img src="${brandIconPath(provider.brand)}" alt="${brandLabel}" />`,
+  };
+}
+
 function renderProviderOptions() {
   const container = $("#provider-options");
   container.innerHTML = "";
-  for (const provider of state.providers) {
+  const providers = state.providers
+    .map((provider, index) => ({ provider, index, group: providerGroup(provider) }))
+    .sort((left, right) => left.group.rank - right.group.rank || left.index - right.index);
+  let previousGroup = null;
+  for (const { provider, group } of providers) {
+    if (group.label !== previousGroup) {
+      const heading = document.createElement("div");
+      heading.className = "provider-group-label";
+      heading.textContent = group.label;
+      container.appendChild(heading);
+      previousGroup = group.label;
+    }
     const row = document.createElement("div");
-    row.className = "provider-option-row";
+    row.className = `provider-option-row provider-${provider.preset || provider.brand || "default"}`;
     row.dataset.providerRow = provider.id;
+    row.dataset.providerGroup = group.label;
+    const drag = document.createElement("button");
+    drag.className = "provider-drag";
+    drag.type = "button";
+    drag.draggable = true;
+    drag.title = `拖动调整 ${provider.connectionLabel || provider.label} 的顺序`;
+    drag.setAttribute("aria-label", drag.title);
+    drag.innerHTML = '<span data-lucide="grip-vertical"></span>';
+    drag.addEventListener("dragstart", (event) => {
+      state.draggingProviderId = provider.id;
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", provider.id);
+      row.classList.add("dragging");
+    });
+    drag.addEventListener("dragend", () => {
+      state.draggingProviderId = null;
+      document.querySelectorAll(".provider-option-row").forEach((item) => item.classList.remove("dragging", "drag-target"));
+    });
+    row.addEventListener("dragover", (event) => {
+      const source = state.providers.find((item) => item.id === state.draggingProviderId);
+      if (!source || providerGroup(source).label !== group.label || source.id === provider.id) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+      row.classList.add("drag-target");
+    });
+    row.addEventListener("dragleave", () => row.classList.remove("drag-target"));
+    row.addEventListener("drop", async (event) => {
+      event.preventDefault();
+      row.classList.remove("drag-target");
+      const sourceId = state.draggingProviderId || event.dataTransfer.getData("text/plain");
+      const source = state.providers.find((item) => item.id === sourceId);
+      if (!source || providerGroup(source).label !== group.label || sourceId === provider.id) return;
+      const providerIds = state.providers.map((item) => item.id);
+      providerIds.splice(providerIds.indexOf(sourceId), 1);
+      providerIds.splice(providerIds.indexOf(provider.id), 0, sourceId);
+      try {
+        state.providers = await api.reorderProviders(providerIds);
+        renderProviderOptions();
+      } catch (error) {
+        showActionError(error);
+      }
+    });
     const option = document.createElement("button");
     option.className = "provider-option";
     option.dataset.provider = provider.id;
-    const brandLabel = provider.brand === "claude" ? "Claude" : "OpenAI";
-    const icon = `<img src="${brandIconPath(provider.brand)}" alt="${brandLabel}" />`;
+    const visual = providerVisual(provider);
+    const health = state.providerHealth[provider.id] || null;
+    const route = state.providerRoutes[provider.id] || null;
     const configuredKey = provider.hasStoredKey ? "密钥已加密保存在应用内" : null;
-    const detail = provider.type === "account"
+    const baseDetail = provider.type === "account"
       ? "OpenAI · 独立官方登录，共享聊天记录"
       : provider.type === "relay"
-        ? `OpenAI · ${provider.model} · ${provider.baseUrl}`
+        ? `${provider.protocol === "chat_completions" ? "Chat Completions" : "Codex Responses"} · ${provider.model} · ${provider.baseUrl}`
         : provider.id === "niubi"
           ? `OpenAI · ${provider.model} · ${configuredKey || "首次连接时配置 API Key"}`
           : provider.id === "hexuan"
@@ -1092,21 +1589,33 @@ function renderProviderOptions() {
             : provider.id === "claude"
               ? `Claude · ${provider.model || "未选择模型"} · ${configuredKey || "需要配置 Token"}`
               : "OpenAI · 使用 Codex 官方登录状态";
-    option.innerHTML = `<span class="provider-icon brand">${icon}</span><span><strong>${escapeHtml(provider.connectionLabel || provider.label)}</strong><small>${escapeHtml(detail)}</small></span><span data-lucide="chevron-right"></span>`;
+    const healthLabel = health?.openUntil > Date.now()
+      ? `冷却中 · ${Math.max(1, Math.ceil((health.openUntil - Date.now()) / 1000))} 秒`
+      : health?.status === "healthy" ? `正常 · ${Math.max(0, Number(health.latencyMs) || 0)} ms`
+        : health?.status === "degraded" ? `不稳定 · 连续失败 ${health.failures || 1} 次`
+          : health?.status === "configuration-error" ? "连接配置错误"
+            : route?.enabled ? `自动切换 · ${route.fallbackProviderIds?.length || 0} 个备用` : null;
+    const detail = [baseDetail, healthLabel].filter(Boolean).join(" · ");
+    const trailing = healthLabel
+      ? `<span class="provider-health ${health?.openUntil > Date.now() ? "open" : health?.status || "route"}" title="${escapeHtml(healthLabel)}"></span>`
+      : '<span data-lucide="chevron-right"></span>';
+    option.innerHTML = `<span class="provider-icon ${visual.className}" aria-label="${escapeHtml(visual.label)}">${visual.markup}</span><span><strong>${escapeHtml(provider.connectionLabel || provider.label)}</strong><small>${escapeHtml(detail)}</small></span>${trailing}`;
     option.addEventListener("click", () => {
       if (provider.id === "claude" && !provider.hasStoredKey) openClaudeDialog(provider);
       else connect(provider.id);
     });
-    row.appendChild(option);
-    if (provider.id === "claude") {
+    row.append(drag, option);
+    if (provider.id === "claude" || provider.type === "relay") {
       row.classList.add("configurable");
       const configure = document.createElement("button");
       configure.className = "provider-configure";
       configure.type = "button";
-      configure.title = "配置 Claude Token 和模型";
+      configure.title = provider.type === "relay" ? "编辑供应商" : "配置 Claude Token 和模型";
       configure.setAttribute("aria-label", configure.title);
       configure.innerHTML = '<span data-lucide="settings"></span>';
-      configure.addEventListener("click", () => openClaudeDialog(provider));
+      configure.addEventListener("click", () => (
+        provider.type === "relay" ? openRelayDialog(provider) : openClaudeDialog(provider)
+      ));
       row.appendChild(configure);
     }
     if (provider.deletable) {
@@ -1161,17 +1670,31 @@ function applyStoreSnapshot(snapshot) {
   const wasLocalArchived = activeId ? state.localArchivedThreadIds.has(activeId) : false;
   const providerArchived = Boolean(state.activeThread?._archived && !state.activeThread?._localArchived);
   state.providers = snapshot.providers || state.providers;
+  if (Array.isArray(snapshot.providerPresets) && Object.keys(state.providerPresets).length === 0) {
+    renderProviderPresetCatalog(snapshot.providerPresets);
+  }
   state.savedProjects = snapshot.projects || [];
   state.projectThreads = snapshot.projectThreads || {};
   state.hiddenProjectRoots = snapshot.hiddenProjectRoots || [];
   state.threadSettings = snapshot.threadSettings || {};
+  state.providerRoutes = snapshot.providerRoutes || state.providerRoutes;
   state.threadAliases = snapshot.threadAliases || {};
   state.hiddenThreadIds = new Set(snapshot.hiddenThreadIds || []);
   state.deletedThreadIds = new Set(snapshot.deletedThreadIds || []);
   state.localArchivedThreadIds = new Set(snapshot.localArchivedThreadIds || []);
   state.pendingDeletions = snapshot.pendingDeletions || [];
   state.scheduledTasks = snapshot.scheduledTasks || [];
+  if (snapshot.messageQueues && typeof snapshot.messageQueues === "object") {
+    state.messageQueues = restoredMessageQueues(snapshot.messageQueues);
+  }
+  if (Array.isArray(snapshot.promptTemplates)) state.promptTemplates = snapshot.promptTemplates;
+  if (Array.isArray(snapshot.mcpServers)) state.mcpServers = snapshot.mcpServers;
   state.runningTaskIds = new Set(snapshot.runningTaskIds || []);
+  $("#extensions-prompt-count").textContent = String(state.promptTemplates.length);
+  $("#extensions-mcp-count").textContent = String(state.mcpServers.length);
+  renderPromptIndex();
+  renderMcpIndex();
+  renderSkillMenu(elements.skillSearch.value);
   const hasNewTaskThread = state.scheduledTasks.some((task) => task.lastThreadId && !previousTaskThreads.has(task.lastThreadId));
   state.recordHome = snapshot.recordHome || state.recordHome;
   const isHidden = activeId ? state.hiddenThreadIds.has(activeId) : false;
@@ -1207,6 +1730,7 @@ function applyStoreSnapshot(snapshot) {
     state.connectingProvider = null;
     state.provider = null;
     state.providerType = null;
+    state.providerEngine = null;
     state.modelProvider = null;
     state.modelCatalog = [];
     state.account = null;
@@ -1277,9 +1801,13 @@ async function openThread(thread) {
       });
       if (!isCurrent()) return;
       state.activeThread = result.thread;
-      state.threadResumed = true;
+      state.threadResumed = !result.thread._crossModelReadOnly;
+      if (result.thread._crossModelReadOnly) state.activeArchived = true;
       applyThreadSessionSettings(result.thread);
       renderConversation(result.thread);
+      if (result.thread._crossModelReadOnly) {
+        showDiagnostic("该会话来自其他模型，当前以只读方式打开；跨模型接续分支正在启用中。", false);
+      }
     } catch (error) {
       if (!isCurrent()) return;
       const readResult = await api.readThread(thread.id);
@@ -1491,7 +2019,9 @@ function renderItem(item, turnId = null) {
     }
     return appendUserMessage(item);
   }
-  if (item.type === "agentMessage") return appendMessage("agent", item.text, item.id, item.phase);
+  if (item.type === "agentMessage") {
+    return appendMessage("agent", item.text, item.id, item.phase, item.sourceLabel || null);
+  }
   if (item.type === "plan") {
     return appendActivity({
       ...item,
@@ -1556,29 +2086,11 @@ function safeImageSource(value, isLocal = false) {
 }
 
 function renderAttachments() {
-  elements.attachmentList.replaceChildren();
-  elements.attachmentList.classList.toggle("hidden", state.pendingAttachments.length === 0);
-  state.pendingAttachments.forEach((filePath, index) => {
-    const item = document.createElement("div");
-    item.className = "attachment-item";
-    const image = document.createElement("img");
-    image.src = localImageUrl(filePath);
-    image.alt = `待发送图片 ${index + 1}`;
-    const remove = document.createElement("button");
-    remove.type = "button";
-    remove.className = "attachment-remove";
-    remove.title = "移除图片";
-    remove.setAttribute("aria-label", "移除图片");
-    remove.innerHTML = '<span data-lucide="x"></span>';
-    remove.addEventListener("click", () => {
-      state.pendingAttachments.splice(index, 1);
-      renderAttachments();
-      syncComposerState();
-    });
-    item.append(image, remove);
-    elements.attachmentList.appendChild(item);
-  });
-  refreshIcons();
+  ShareMasterVueRuntime.attachmentUi.items = state.pendingAttachments.map((filePath) => ({
+    path: filePath,
+    name: String(filePath).split(/[\\/]/).filter(Boolean).at(-1) || "图片附件",
+    url: localImageUrl(filePath),
+  }));
 }
 
 function addAttachments(paths) {
@@ -1593,18 +2105,100 @@ function addAttachments(paths) {
   syncComposerState();
 }
 
-function appendPendingUserMessage(text, id, attachments = []) {
-  return appendUserMessage({
+const IMAGE_ATTACHMENT_PATTERN = /\.(?:gif|jpe?g|png|webp)$/i;
+let attachmentDragDepth = 0;
+
+function hasDraggedFiles(event) {
+  return Array.from(event.dataTransfer?.types || []).includes("Files");
+}
+
+function setAttachmentDragActive(active) {
+  ShareMasterVueRuntime.attachmentUi.dragActive = Boolean(active);
+}
+
+function resetAttachmentDrag() {
+  attachmentDragDepth = 0;
+  setAttachmentDragActive(false);
+}
+
+function droppedAttachmentPaths(files) {
+  return Array.from(files || []).map((file) => {
+    try {
+      return api.localFilePath(file);
+    } catch {
+      return "";
+    }
+  }).filter(Boolean);
+}
+
+function addDroppedAttachments(paths) {
+  const files = Array.from(paths || []).filter(Boolean);
+  const images = files.filter((filePath) => IMAGE_ATTACHMENT_PATTERN.test(filePath));
+  if (images.length) addAttachments(images);
+  const unsupported = files.length - images.length;
+  if (unsupported > 0 && images.length) showDiagnostic(`已忽略 ${unsupported} 个非图片文件`, true);
+  if (files.length && !images.length) showDiagnostic("当前仅支持 PNG、JPG、WebP 和 GIF 图片附件", true);
+  return { added: images.length, unsupported };
+}
+
+window.addEventListener("share-master:remove-attachment", (event) => {
+  const index = Number(event.detail?.index);
+  if (!Number.isInteger(index) || index < 0 || index >= state.pendingAttachments.length) return;
+  state.pendingAttachments.splice(index, 1);
+  renderAttachments();
+  syncComposerState();
+});
+
+window.addEventListener("dragenter", (event) => {
+  if (!hasDraggedFiles(event) || elements.attachButton.disabled) return;
+  event.preventDefault();
+  attachmentDragDepth += 1;
+  setAttachmentDragActive(true);
+});
+
+window.addEventListener("dragover", (event) => {
+  if (!hasDraggedFiles(event) || elements.attachButton.disabled) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = "copy";
+});
+
+window.addEventListener("dragleave", (event) => {
+  if (!hasDraggedFiles(event)) return;
+  attachmentDragDepth = Math.max(0, attachmentDragDepth - 1);
+  if (attachmentDragDepth === 0) setAttachmentDragActive(false);
+});
+
+window.addEventListener("drop", (event) => {
+  if (!hasDraggedFiles(event)) return;
+  event.preventDefault();
+  const paths = droppedAttachmentPaths(event.dataTransfer.files);
+  resetAttachmentDrag();
+  addDroppedAttachments(paths);
+});
+
+function appendPendingUserMessage(text, id, attachments = [], delivery = null) {
+  const node = appendUserMessage({
     id,
     content: [
       ...(text ? [{ type: "text", text }] : []),
       ...attachments.map((filePath) => ({ type: "localImage", path: filePath })),
     ],
   });
+  node.querySelector(".message-delivery-state")?.remove();
+  if (delivery) {
+    const status = document.createElement("div");
+    status.className = `message-delivery-state delivery-${delivery}`;
+    status.textContent = delivery === "queue" ? "已排队"
+      : delivery === "steer-fallback" ? "正在停止当前回复并接续"
+        : "正在引导当前回复";
+    node.querySelector(".message-column")?.appendChild(status);
+  }
+  return node;
 }
 
 function appendUserMessage(item) {
   const node = appendMessage("user", userText(item), item.id);
+  if (item.clientId) node.querySelector(".message-delivery-state")?.remove();
   node.querySelector(".message-media")?.remove();
   const images = (item.content || []).filter((part) => ["image", "localImage"].includes(part.type));
   if (!images.length) return node;
@@ -1635,18 +2229,111 @@ function appendUserMessage(item) {
   return node;
 }
 
-function appendMessage(role, text, id = crypto.randomUUID(), phase = null) {
+function providerInitials(label) {
+  const value = String(label || "").trim();
+  if (/deepseek/i.test(value)) return "DS";
+  if (/qwen|通义|千问/i.test(value)) return "QW";
+  if (/claude|anthropic/i.test(value)) return "CL";
+  if (/codex/i.test(value)) return "CX";
+  if (/openai|chatgpt/i.test(value)) return "OA";
+  const words = value.match(/[a-zA-Z0-9]+/g);
+  if (words?.length > 1) return words.slice(0, 2).map((word) => word[0]).join("").toUpperCase();
+  if (words?.[0]) return words[0].slice(0, 2).toUpperCase();
+  return [...value].slice(0, 2).join("") || "AI";
+}
+
+function composerInsert(value) {
+  const text = String(value || "").trim();
+  if (!text) return;
+  elements.input.value = elements.input.value.trim()
+    ? `${elements.input.value.trim()}\n\n${text}`
+    : text;
+  elements.input.dispatchEvent(new Event("input", { bubbles: true }));
+  elements.input.focus();
+}
+
+function previousUserMessageText(node) {
+  let current = node?.previousElementSibling || null;
+  while (current) {
+    if (current.matches?.(".message.user")) return current.dataset.rawText || "";
+    current = current.previousElementSibling;
+  }
+  return "";
+}
+
+function ensureMessageActions(node, role) {
+  let actions = node.querySelector(".message-actions");
+  if (actions) return;
+  actions = document.createElement("div");
+  actions.className = "message-actions";
+  const addAction = (icon, title, handler) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "message-action-button";
+    button.title = title;
+    button.setAttribute("aria-label", title);
+    button.innerHTML = `<span data-lucide="${icon}"></span>`;
+    button.addEventListener("click", handler);
+    actions.appendChild(button);
+  };
+  addAction("copy", "复制消息", async (event) => {
+    const button = event.currentTarget;
+    try {
+      await api.copyText(node.dataset.rawText || "");
+      button.title = "已复制";
+      button.innerHTML = '<span data-lucide="check"></span>';
+      refreshIcons();
+      setTimeout(() => {
+        if (!button.isConnected) return;
+        button.title = "复制消息";
+        button.innerHTML = '<span data-lucide="copy"></span>';
+        refreshIcons();
+      }, 1400);
+    } catch (error) {
+      showActionError(error);
+    }
+  });
+  addAction("quote", "引用到输入框", () => {
+    const quoted = String(node.dataset.rawText || "").slice(0, 4000).split("\n").map((line) => `> ${line}`).join("\n");
+    composerInsert(quoted);
+  });
+  if (role === "agent") {
+    addAction("refresh-cw", "重新生成回答", () => {
+      if (state.running || state.submitting) {
+        showDiagnostic("请先停止或等待当前回复完成。", true);
+        return;
+      }
+      const prompt = previousUserMessageText(node);
+      if (!prompt) {
+        showDiagnostic("未找到可重新生成的用户消息。", true);
+        return;
+      }
+      elements.input.value = prompt;
+      elements.input.dispatchEvent(new Event("input", { bubbles: true }));
+      sendMessage("auto");
+    });
+  }
+  node.querySelector(".message-column")?.appendChild(actions);
+  if (!state.renderTarget) refreshIcons();
+}
+
+function appendMessage(role, text, id = crypto.randomUUID(), phase = null, sourceLabel = null) {
   const target = conversationTarget();
   let node = target.querySelector(`[data-message-id="${CSS.escape(id)}"]`);
   if (!node) {
     node = document.createElement("article");
     node.className = `message ${role}`;
     node.dataset.messageId = id;
-    node.innerHTML = `<div class="message-avatar">${role === "user" ? "YOU" : state.providerType === "claude" ? "CL" : "CX"}</div><div class="message-body"></div>`;
+    node.dataset.messageRole = role;
+    const providerLabel = sourceLabel || currentProviderDefinition()?.label
+      || (state.providerType === "claude" ? "Claude" : "Share Master");
+    const avatar = role === "user" ? "你" : providerInitials(providerLabel);
+    node.innerHTML = `<div class="message-avatar">${avatar}</div><div class="message-column"><div class="message-header">${role === "user" ? "你" : escapeHtml(providerLabel)}</div><div class="message-body"></div></div>`;
     target.appendChild(node);
   }
   node.querySelector(".message-body").innerHTML = role === "agent" ? renderMarkdown(text) : `<p>${escapeHtml(text).replaceAll("\n", "<br>")}</p>`;
-  if (role === "agent") node.dataset.rawText = String(text || "");
+  node.dataset.rawText = String(text || "");
+  ensureMessageActions(node, role);
   if (phase) node.dataset.phase = phase;
   state.streamNodes.set(id, node);
   if (!state.renderTarget) scrollToBottom();
@@ -1666,12 +2353,16 @@ function appendActivity(item, turnId = null) {
   let row = group.querySelector(`[data-activity-id="${CSS.escape(item.id)}"]`);
   if (!row) {
     row = document.createElement("div");
-    row.className = "activity-row";
+    row.className = `activity-row activity-${String(item.type || "operation").replace(/[^a-z0-9_-]/gi, "-").toLowerCase()}`;
     row.dataset.activityId = item.id;
     group.appendChild(row);
   }
   const details = item.command || item.tool || item.query || item.path || (item.changes ? `${item.changes.length} 个文件变更` : item.type);
-  const icon = item.type === "commandExecution" ? "terminal" : item.type === "fileChange" ? "file-diff" : item.type === "webSearch" ? "globe" : "wrench";
+  const icon = item.type === "commandExecution" ? "terminal"
+    : item.type === "fileChange" ? "file-diff"
+      : item.type === "webSearch" ? "globe"
+        : item.type === "reasoning" ? "brain"
+          : item.type === "plan" ? "list-checks" : "wrench";
   const output = item.displayOutput && item.aggregatedOutput
     ? `<pre class="activity-output">${escapeHtml(item.aggregatedOutput)}</pre>`
     : "";
@@ -1726,7 +2417,25 @@ function showDiagnostic(message, isError = false) {
   elements.statusToast._timer = setTimeout(() => elements.statusToast.classList.add("hidden"), isError ? 9000 : 5000);
 }
 
-async function sendMessage() {
+function restoredMessageQueues(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return new Map();
+  return new Map(Object.entries(value).flatMap(([threadId, messages]) => {
+    if (!Array.isArray(messages) || !messages.length) return [];
+    return [[threadId, messages.map((message) => ({ ...message, threadId }))]];
+  }));
+}
+
+async function persistMessageQueue(threadId) {
+  if (!threadId) return;
+  try {
+    await api.saveMessageQueue({ threadId, messages: state.messageQueues.get(threadId) || [] });
+  } catch (error) {
+    showDiagnostic(`待发送队列保存失败：${error.message}`, true);
+  }
+}
+
+async function sendMessage(deliveryMode = "auto") {
+  const requestedDelivery = typeof deliveryMode === "string" ? deliveryMode : "auto";
   const text = elements.input.value.trim();
   const attachments = [...state.pendingAttachments];
   if ((!text && !attachments.length) || !state.connected || state.submitting) return;
@@ -1743,8 +2452,9 @@ async function sendMessage() {
   renderAttachments();
   resizeComposer();
   if (initialThread && state.runningThreads.has(initialThread.id)) {
+    const run = state.runningThreads.get(initialThread.id);
     const clientUserMessageId = crypto.randomUUID();
-    const queued = {
+    const outgoing = {
       threadId: initialThread.id,
       text: prompt,
       displayText: text,
@@ -1752,13 +2462,54 @@ async function sendMessage() {
       imageInputs: attachments.map((filePath) => ({ path: filePath, detail: "auto" })),
       cwd: workspace,
       clientUserMessageId,
+      providerId: state.provider,
+      queuedAt: Date.now(),
       ...sessionSettings,
     };
+    if (requestedDelivery === "queue") {
+      const queue = state.messageQueues.get(initialThread.id) || [];
+      queue.push(outgoing);
+      state.messageQueues.set(initialThread.id, queue);
+      appendPendingUserMessage(text, clientUserMessageId, attachments, "queue");
+      await persistMessageQueue(initialThread.id);
+      showDiagnostic(`消息已排队（${queue.length}）`, false);
+      syncActiveRunState();
+      return;
+    }
+    if (state.providerEngine === "codex" && run?.turnId) {
+      const optimistic = appendPendingUserMessage(text, clientUserMessageId, attachments, "steer");
+      state.submitting = true;
+      syncComposerState();
+      try {
+        await api.steerTurn({ ...outgoing, expectedTurnId: run.turnId });
+        const delivery = optimistic.querySelector(".message-delivery-state");
+        if (delivery) {
+          delivery.className = "message-delivery-state delivery-steered";
+          delivery.textContent = "已引导";
+          setTimeout(() => delivery.remove(), 1800);
+        }
+        showDiagnostic("已引导当前回复。", false);
+      } catch (error) {
+        optimistic.remove();
+        elements.input.value = elements.input.value.trim()
+          ? `${text}\n${elements.input.value}`
+          : text;
+        addAttachments(attachments);
+        resizeComposer();
+        showDiagnostic(`引导发送失败：${error.message}`, true);
+      } finally {
+        state.submitting = false;
+        syncComposerState();
+      }
+      return;
+    }
     const queue = state.messageQueues.get(initialThread.id) || [];
-    queue.push(queued);
+    queue.unshift(outgoing);
     state.messageQueues.set(initialThread.id, queue);
-    appendPendingUserMessage(text, clientUserMessageId, attachments);
-    showDiagnostic(`消息已排队（${queue.length}）`, false);
+    appendPendingUserMessage(text, clientUserMessageId, attachments, "steer-fallback");
+    await persistMessageQueue(initialThread.id);
+    showDiagnostic("当前连接将停止本轮，并立即按新 Prompt 接续。", false);
+    requestTurnInterrupt();
     syncActiveRunState();
     return;
   }
@@ -1821,6 +2572,7 @@ async function sendMessage() {
     await beginTurn({
       threadId: targetThread.id,
       text: prompt,
+      displayText: text,
       skillInputs,
       imageInputs: attachments.map((filePath) => ({ path: filePath, detail: "auto" })),
       cwd: workspace,
@@ -1856,19 +2608,30 @@ async function beginTurn(payload) {
 
 async function startNextQueuedMessage(threadId) {
   const queue = state.messageQueues.get(threadId) || [];
-  const next = queue.shift();
+  const next = queue[0];
+  if (next?.providerId && next.providerId !== state.provider) {
+    const label = state.providers.find((provider) => provider.id === next.providerId)?.connectionLabel || "原连接";
+    showDiagnostic(`这条待发送消息属于${label}，请先切换连接。`, true);
+    syncActiveRunState();
+    return;
+  }
+  queue.shift();
   if (!queue.length) state.messageQueues.delete(threadId);
   else state.messageQueues.set(threadId, queue);
+  await persistMessageQueue(threadId);
   if (!next || !state.connected) {
     syncActiveRunState();
     return;
   }
   try {
-    await beginTurn(next);
+    await beginTurn({ ...next, threadId });
   } catch (error) {
+    const pending = state.messageQueues.get(threadId) || [];
+    pending.unshift(next);
+    state.messageQueues.set(threadId, pending);
+    await persistMessageQueue(threadId);
     showDiagnostic(`排队消息发送失败：${error.message}`, true);
     api.notify({ title: "Share Master", body: `排队消息发送失败：${error.message}` }).catch(() => {});
-    if ((state.messageQueues.get(threadId) || []).length) startNextQueuedMessage(threadId);
   }
 }
 
@@ -1889,9 +2652,9 @@ function setThreadRunning(threadId, running, turnId = null) {
   syncActiveRunState();
 }
 
-function resetAllRuns() {
+function resetAllRuns(clearQueues = false) {
   state.runningThreads.clear();
-  state.messageQueues.clear();
+  if (clearQueues) state.messageQueues.clear();
   state.submitting = false;
   syncActiveRunState();
 }
@@ -1905,11 +2668,17 @@ function syncActiveRunState() {
   state.stopRequested = Boolean(run?.stopRequested);
   state.interruptingTurnId = run?.interruptingTurnId || null;
   elements.send.classList.remove("hidden");
+  elements.queue.classList.toggle("hidden", !run && !queueLength);
   elements.stop.classList.toggle("hidden", !run);
   elements.stop.disabled = Boolean(run?.stopRequested);
-  elements.stop.title = run?.stopRequested ? "正在停止" : "停止当前会话";
-  elements.send.title = run ? `排队发送${queueLength ? `（已有 ${queueLength} 条）` : ""}` : "发送";
-  elements.send.setAttribute("aria-label", run ? "排队发送" : "发送");
+  elements.stop.title = run?.stopRequested ? "正在停止" : "停止当前回复";
+  elements.send.title = run ? "引导当前回复（Enter）" : "发送";
+  elements.send.setAttribute("aria-label", run ? "引导当前回复" : "发送");
+  elements.queue.title = run
+    ? `排队发送（Alt+Enter）${queueLength ? ` · 已有 ${queueLength} 条` : ""}`
+    : queueLength ? `继续发送 ${queueLength} 条恢复队列` : "排队发送";
+  elements.queue.setAttribute("aria-label", run ? `排队发送，已有 ${queueLength} 条` : `继续发送 ${queueLength} 条恢复队列`);
+  elements.queue.dataset.count = String(queueLength);
   syncComposerState();
   if (state.threads.length) renderThreadList();
 }
@@ -1955,17 +2724,22 @@ function syncComposerState() {
   elements.input.disabled = disabled;
   const hasContent = Boolean(elements.input.value.trim() || state.pendingAttachments.length);
   elements.send.disabled = disabled || state.submitting || !hasContent;
+  const hasRecoveredQueue = !state.running && Boolean(state.activeThread?.id && state.messageQueues.get(state.activeThread.id)?.length);
+  elements.queue.disabled = disabled || state.submitting || (!hasContent && !hasRecoveredQueue);
   const controlsDisabled = disabled || state.modelCatalog.length === 0;
   elements.sessionModel.disabled = controlsDisabled;
   elements.sessionEffort.disabled = controlsDisabled;
-  elements.modeBadge.disabled = disabled;
-  elements.skillButton.disabled = disabled || state.skillsLoading || state.providerType === "claude";
+  elements.modeBadge.disabled = disabled || state.providerEngine === "openai-compatible";
+  elements.skillButton.disabled = disabled || state.skillsLoading || (state.skills.length + state.promptTemplates.length === 0);
   elements.attachButton.disabled = disabled || state.submitting;
   elements.input.placeholder = state.activeArchived
     ? "当前会话为只读"
     : state.openingThread ? "正在加载会话"
-    : state.running ? "继续输入，消息将在当前回复后发送"
-    : state.providerType === "claude" ? "给 Claude 发送消息" : "给 Codex 发送消息";
+    : state.running ? "继续输入，可引导当前回复或排队发送"
+    : hasRecoveredQueue ? "存在恢复的待发送消息，可点击队列按钮继续"
+    : state.providerType === "claude"
+      ? "给 Claude 发送消息"
+      : state.providerEngine === "openai-compatible" ? "给当前模型发送消息" : "给 Codex 发送消息";
 }
 
 function refreshAccountStatus() {
@@ -2038,7 +2812,15 @@ function handleEvent(message) {
       reason: params.reason,
     });
     if (params.threadId === state.activeThread?.id) renderAppliedSettings();
-    showDiagnostic(`模型已由服务端重路由：${params.fromModel} → ${params.toModel}`, false);
+    const targetLabel = providerUsageLabel(params.toProviderId);
+    showDiagnostic(`已自动切换到 ${targetLabel}：${params.fromModel} → ${params.toModel}`, false);
+    renderProviderOptions();
+    return;
+  }
+  if (method === "provider/health-updated") {
+    state.providerHealth[params.providerId] = { ...params };
+    renderProviderOptions();
+    if (!elements.healthOverlay.classList.contains("hidden")) renderHealthMonitor();
     return;
   }
   if (method === "provider/model-resolved") {
@@ -2085,6 +2867,7 @@ function handleEvent(message) {
   }
   if (method === "turn/completed") {
     completeThreadRun(eventThreadId, params.turn);
+    if (!elements.usageOverlay.classList.contains("hidden")) refreshUsage();
     return;
   }
   const globallyRelevant = ["thread/name/updated", "thread/started", "thread/archived", "thread/unarchived", "thread/deleted"].includes(method);
@@ -2389,11 +3172,11 @@ function newChat(switchToActive = true) {
       ? "选择任务进行编辑，或使用日历按钮安排新任务。"
       : `选择一条${viewLabel}会话查看内容。`;
   } else {
-    elements.emptyTitle.textContent = "开始一个工作会话";
+    elements.emptyTitle.textContent = "新会话";
     elements.windowTitle.textContent = state.activeProject ? `${state.activeProject.label} · 新会话` : "新会话";
     elements.emptySubtitle.textContent = state.activeProject
-      ? `在 ${state.activeProject.label} 中开始新会话。`
-      : "选择左侧记录，或直接描述你要完成的事情。";
+      ? state.activeProject.label
+      : "Share Master";
     elements.input.focus();
   }
   syncComposerState();
@@ -2408,6 +3191,7 @@ function openThreadMenu(thread, event) {
   const archiveButton = elements.menu.querySelector("[data-action=archive], [data-action=unarchive]");
   const renameButton = elements.menu.querySelector("[data-action=rename]");
   const deleteButton = elements.menu.querySelector("[data-action=delete-now]");
+  const clearQueueButton = elements.menu.querySelector("[data-action=clear-queue]");
   const hidden = state.hiddenThreadIds.has(thread.id);
   const deletion = pendingDeletion(thread.id);
   const locallyArchived = state.localArchivedThreadIds.has(thread.id);
@@ -2420,6 +3204,7 @@ function openThreadMenu(thread, event) {
   archiveButton.classList.toggle("hidden", hidden || providerArchived);
   renameButton.classList.toggle("hidden", hidden);
   deleteButton.classList.toggle("hidden", !hidden);
+  clearQueueButton.classList.toggle("hidden", !(state.messageQueues.get(thread.id) || []).length);
   const anchor = event.currentTarget?.getBoundingClientRect?.();
   const clientX = event.clientX || (anchor ? anchor.right - 8 : 0);
   const clientY = event.clientY || (anchor ? anchor.bottom : 0);
@@ -2497,7 +3282,7 @@ async function threadMenuAction(action) {
       if (!confirmed) return;
       const result = await api.hideThread({
         threadId: thread.id,
-        engine: state.providerType === "claude" ? "claude" : "codex",
+        engine: state.providerEngine === "claude" ? "claude" : state.providerEngine === "openai-compatible" ? "openai-compatible" : "codex",
         providerId: state.provider,
       });
       state.hiddenThreadIds = new Set(result.hiddenThreadIds || []);
@@ -2531,6 +3316,15 @@ async function threadMenuAction(action) {
       syncProjects();
       applyThreadFilter();
       showDiagnostic("会话已从 Share Master 中永久移除，原始记录未修改。", false);
+      return;
+    } else if (action === "clear-queue") {
+      const count = (state.messageQueues.get(thread.id) || []).length;
+      if (!count || !confirm(`清空这个会话的 ${count} 条待发送消息？`)) return;
+      state.messageQueues.delete(thread.id);
+      await persistMessageQueue(thread.id);
+      syncActiveRunState();
+      renderThreadList();
+      showDiagnostic("待发送队列已清空。", false);
       return;
     }
     await loadThreads();
@@ -2672,6 +3466,656 @@ function closeRecordHomeDialog() {
   elements.overlay.classList.remove("hidden");
 }
 
+function localHistoryEmpty(icon, title, detail) {
+  elements.localHistoryPreview.innerHTML = "";
+  const empty = document.createElement("div");
+  empty.className = "local-history-empty";
+  empty.innerHTML = `<span data-lucide="${icon}"></span><strong>${escapeHtml(title)}</strong><span>${escapeHtml(detail)}</span>`;
+  elements.localHistoryPreview.appendChild(empty);
+  refreshIcons();
+}
+
+function renderLocalHistorySources() {
+  elements.localHistorySources.innerHTML = "";
+  for (const source of state.localHistorySources) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = state.localHistorySourceId === source.id ? "active" : "";
+    button.disabled = !source.available;
+    button.innerHTML = `<span data-lucide="${source.id === "claude" ? "bot" : "terminal-square"}"></span><span><strong>${escapeHtml(source.label)}</strong><small>${escapeHtml(source.available ? source.description : "本机未发现记录")}</small></span>`;
+    button.addEventListener("click", () => {
+      if (state.localHistorySourceId === source.id) return;
+      state.localHistorySourceId = source.id;
+      state.localHistorySelectedId = null;
+      renderLocalHistorySources();
+      loadLocalHistory();
+    });
+    elements.localHistorySources.appendChild(button);
+  }
+  refreshIcons();
+}
+
+function renderLocalHistoryList(result) {
+  state.localHistoryConversations = result.conversations || [];
+  elements.localHistoryList.innerHTML = "";
+  elements.localHistorySummary.textContent = `${result.total || 0} 条会话${result.total > state.localHistoryConversations.length ? ` · 显示前 ${state.localHistoryConversations.length} 条` : ""}`;
+  if (!state.localHistoryConversations.length) {
+    const empty = document.createElement("div");
+    empty.className = "local-history-list-empty";
+    empty.textContent = elements.localHistorySearch.value.trim() ? "没有匹配的本地会话" : "该来源暂无本地会话";
+    elements.localHistoryList.appendChild(empty);
+    localHistoryEmpty("search-x", "没有可预览的会话", "可以切换来源、修改搜索词或刷新。");
+    return;
+  }
+  const fragment = document.createDocumentFragment();
+  for (const conversation of state.localHistoryConversations) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `local-history-item ${conversation.id === state.localHistorySelectedId ? "active" : ""}`;
+    button.dataset.conversationId = conversation.id;
+    const heading = document.createElement("strong");
+    heading.textContent = conversation.title || "未命名会话";
+    heading.title = heading.textContent;
+    const details = document.createElement("small");
+    const time = timeAgo((conversation.updatedAt || 0) / 1000);
+    details.textContent = [conversation.model, conversation.archived ? "已归档" : "", time].filter(Boolean).join(" · ") || "本地会话";
+    const directory = document.createElement("code");
+    directory.textContent = conversation.cwd || "未记录工作目录";
+    directory.title = directory.textContent;
+    const count = document.createElement("span");
+    count.className = "local-history-message-count";
+    count.textContent = conversation.messageCountApproximate
+      ? `至少 ${conversation.messageCount || 0} 条消息`
+      : `${conversation.messageCount || 0} 条消息`;
+    button.append(heading, details, directory, count);
+    button.addEventListener("click", () => openLocalHistoryConversation(conversation));
+    fragment.appendChild(button);
+  }
+  elements.localHistoryList.appendChild(fragment);
+}
+
+async function loadLocalHistory() {
+  if (!state.localHistorySourceId || elements.localHistoryOverlay.classList.contains("hidden")) return;
+  const generation = ++state.localHistoryGeneration;
+  state.localHistoryLoading = true;
+  elements.localHistorySummary.textContent = "正在读取…";
+  elements.localHistoryList.innerHTML = '<div class="local-history-list-empty local-history-loading"><span data-lucide="loader-circle"></span>正在建立只读索引</div>';
+  refreshIcons();
+  try {
+    const result = await api.listLocalHistory({
+      sourceId: state.localHistorySourceId,
+      search: elements.localHistorySearch.value.trim(),
+      limit: 500,
+    });
+    if (generation !== state.localHistoryGeneration) return;
+    renderLocalHistoryList(result);
+    const selected = state.localHistoryConversations.find((item) => item.id === state.localHistorySelectedId);
+    if (selected) {
+      state.localHistoryLoading = false;
+      openLocalHistoryConversation(selected);
+    }
+  } catch (error) {
+    if (generation !== state.localHistoryGeneration) return;
+    elements.localHistorySummary.textContent = "读取失败";
+    elements.localHistoryList.innerHTML = "";
+    const empty = document.createElement("div");
+    empty.className = "local-history-list-empty local-history-error";
+    empty.textContent = error.message || "无法读取本地会话";
+    elements.localHistoryList.appendChild(empty);
+    localHistoryEmpty("circle-alert", "无法读取本地记录", error.message || "请稍后重试。");
+  } finally {
+    if (generation === state.localHistoryGeneration) state.localHistoryLoading = false;
+  }
+}
+
+function renderLocalHistoryPreview(conversation) {
+  elements.localHistoryPreview.innerHTML = "";
+  const header = document.createElement("header");
+  header.className = "local-history-preview-heading";
+  const title = document.createElement("h3");
+  title.textContent = conversation.title || "未命名会话";
+  const badges = document.createElement("div");
+  badges.className = "local-history-badges";
+  for (const label of [conversation.sourceLabel, conversation.model, conversation.archived ? "已归档" : ""].filter(Boolean)) {
+    const badge = document.createElement("span");
+    badge.textContent = label;
+    badges.appendChild(badge);
+  }
+  const meta = document.createElement("p");
+  const date = conversation.updatedAt ? new Date(conversation.updatedAt).toLocaleString("zh-CN") : "时间未知";
+  meta.textContent = `${conversation.cwd || "未记录工作目录"} · ${date} · ${conversation.messageCount || 0} 条消息`;
+  meta.title = meta.textContent;
+  header.append(title, badges, meta);
+  elements.localHistoryPreview.appendChild(header);
+
+  const messages = document.createElement("div");
+  messages.className = "local-history-messages";
+  for (const message of conversation.messages || []) {
+    const article = document.createElement("section");
+    article.className = `local-history-message ${message.role || "assistant"}`;
+    const label = document.createElement("div");
+    label.className = "local-history-message-heading";
+    const role = message.role === "user" ? "你" : message.role === "reasoning" ? "推理摘要" : conversation.sourceLabel || "助手";
+    label.textContent = role;
+    if (message.timestamp) {
+      const time = document.createElement("time");
+      time.textContent = new Date(message.timestamp).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+      label.appendChild(time);
+    }
+    const body = document.createElement("div");
+    body.className = "local-history-message-body";
+    body.textContent = message.text || "";
+    article.append(label, body);
+    messages.appendChild(article);
+  }
+  if (conversation.truncated) {
+    const notice = document.createElement("div");
+    notice.className = "local-history-truncated";
+    notice.textContent = "此会话较长，当前显示开头和最近的消息。原始文件没有被修改。";
+    messages.prepend(notice);
+  }
+  if (!messages.children.length) {
+    const empty = document.createElement("div");
+    empty.className = "local-history-list-empty";
+    empty.textContent = "该文件中没有可显示的用户或助手消息。";
+    messages.appendChild(empty);
+  }
+  elements.localHistoryPreview.appendChild(messages);
+}
+
+async function openLocalHistoryConversation(conversation) {
+  state.localHistorySelectedId = conversation.id;
+  elements.localHistoryList.querySelectorAll(".local-history-item").forEach((item) => {
+    item.classList.toggle("active", item.dataset.conversationId === conversation.id);
+  });
+  const generation = ++state.localHistoryGeneration;
+  localHistoryEmpty("loader-circle", "正在打开会话", "正在从原始记录中生成只读预览。");
+  try {
+    const result = await api.readLocalHistory({ conversationId: conversation.id });
+    if (generation !== state.localHistoryGeneration) return;
+    renderLocalHistoryPreview(result);
+  } catch (error) {
+    if (generation !== state.localHistoryGeneration) return;
+    localHistoryEmpty("circle-alert", "无法打开会话", error.message || "本地文件可能已被移动。");
+  }
+}
+
+async function openLocalHistoryDialog() {
+  const generation = ++state.localHistoryGeneration;
+  elements.localHistoryOverlay.classList.remove("hidden");
+  elements.localHistorySearch.focus();
+  localHistoryEmpty("loader-circle", "正在查找本地记录", "只会读取受支持客户端的会话目录。");
+  try {
+    const sources = await api.localHistorySources();
+    if (generation !== state.localHistoryGeneration) return;
+    state.localHistorySources = sources;
+    const current = state.localHistorySources.find((source) => source.id === state.localHistorySourceId && source.available);
+    state.localHistorySourceId = current?.id || state.localHistorySources.find((source) => source.available)?.id || null;
+    renderLocalHistorySources();
+    if (state.localHistorySourceId) await loadLocalHistory();
+    else localHistoryEmpty("hard-drive", "没有发现本地记录", "当前支持 Codex 和 Claude Code 的本地 JSONL 会话。");
+  } catch (error) {
+    localHistoryEmpty("circle-alert", "无法读取本地记录", error.message || "请稍后重试。");
+  }
+}
+
+function closeLocalHistoryDialog() {
+  clearTimeout(elements.localHistorySearch._timer);
+  state.localHistoryGeneration += 1;
+  state.localHistoryLoading = false;
+  elements.localHistoryOverlay.classList.add("hidden");
+}
+
+const compactNumber = new Intl.NumberFormat("zh-CN", { notation: "compact", maximumFractionDigits: 1 });
+
+function providerUsageLabel(providerId) {
+  const provider = state.providers.find((item) => item.id === providerId);
+  return provider?.connectionLabel || provider?.label || providerId || "未知连接";
+}
+
+function renderUsage(usage) {
+  state.usage = usage;
+  const stats = [
+    [usage.requestCount || 0, "请求"],
+    [compactNumber.format(usage.totalTokens || 0), "Token"],
+    [`$${Number(usage.costUsd || 0).toFixed(6)}`, "估算成本"],
+    [`${Math.round(usage.averageDurationMs || 0)} ms`, "平均耗时"],
+    [usage.failedCount || 0, `失败 · 中断 ${usage.interruptedCount || 0}`],
+  ];
+  elements.usageStats.innerHTML = stats.map(([value, label]) => (
+    `<div class="usage-stat"><strong>${escapeHtml(String(value))}</strong><span>${escapeHtml(String(label))}</span></div>`
+  )).join("");
+  const daily = Array.isArray(usage.daily) ? usage.daily.slice(-14) : [];
+  const maximum = Math.max(1, ...daily.map((entry) => Number(entry.totalTokens) || 0));
+  elements.usageTrend.innerHTML = daily.length
+    ? daily.map((entry, index) => {
+      const tokens = Number(entry.totalTokens) || 0;
+      const height = tokens ? Math.max(6, Math.round(tokens / maximum * 100)) : 2;
+      const label = new Date(`${entry.day}T12:00:00`).toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" });
+      const showLabel = index === 0 || index === daily.length - 1 || index === Math.floor(daily.length / 2);
+      return `<span class="usage-trend-column" title="${escapeHtml(label)} · ${escapeHtml(compactNumber.format(tokens))} Token · $${Number(entry.costUsd || 0).toFixed(5)}"><i style="height:${height}%"></i><small>${showLabel ? escapeHtml(label) : ""}</small></span>`;
+    }).join("")
+    : '<div class="usage-empty">暂无趋势数据</div>';
+  $("#usage-log-count").textContent = `${usage.logs?.length || 0} / ${usage.requestCount || 0}`;
+  elements.usageLogList.replaceChildren();
+  if (!usage.logs?.length) {
+    elements.usageLogList.innerHTML = '<div class="usage-empty">暂无请求记录</div>';
+    return;
+  }
+  for (const log of usage.logs) {
+    const row = document.createElement("div");
+    row.className = "usage-log-row";
+    const statusLabel = log.status === "failed" ? "失败" : log.status === "interrupted" ? "已停止" : "完成";
+    row.innerHTML = [
+      `<span class="usage-log-provider"><strong>${escapeHtml(providerUsageLabel(log.providerId))}</strong><br>${escapeHtml(new Date(log.finishedAt).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }))}</span>`,
+      `<span title="${escapeHtml(log.model)}">${escapeHtml(log.model)}</span>`,
+      `<span class="usage-status ${escapeHtml(log.status)}">${statusLabel}</span>`,
+      `<span>${Math.round(log.durationMs || 0)} ms</span>`,
+      `<span class="usage-log-cost">${compactNumber.format(log.totalTokens || 0)} · $${Number(log.costUsd || 0).toFixed(5)}</span>`,
+    ].join("");
+    elements.usageLogList.appendChild(row);
+  }
+}
+
+function populateUsageProviders() {
+  const usageValue = elements.usageProviderFilter.value;
+  const pricingValue = elements.pricingProvider.value;
+  elements.usageProviderFilter.replaceChildren(new Option("全部连接", ""));
+  elements.pricingProvider.replaceChildren();
+  for (const provider of state.providers) {
+    const label = provider.connectionLabel || provider.label;
+    elements.usageProviderFilter.appendChild(new Option(label, provider.id));
+    elements.pricingProvider.appendChild(new Option(label, provider.id));
+  }
+  elements.usageProviderFilter.value = [...elements.usageProviderFilter.options].some((option) => option.value === usageValue)
+    ? usageValue
+    : "";
+  elements.pricingProvider.value = [...elements.pricingProvider.options].some((option) => option.value === pricingValue)
+    ? pricingValue
+    : state.provider || elements.pricingProvider.options[0]?.value || "";
+}
+
+function loadPricingFields(resetModel = false) {
+  const providerId = elements.pricingProvider.value;
+  const provider = state.providers.find((item) => item.id === providerId);
+  if (resetModel || !elements.pricingModel.value) elements.pricingModel.value = provider?.model || "";
+  const pricing = state.modelPricing[`${providerId}:${elements.pricingModel.value.trim()}`] || {};
+  $("#pricing-input").value = pricing.inputPerMillion ?? 0;
+  $("#pricing-cache").value = pricing.cachedInputPerMillion ?? pricing.inputPerMillion ?? 0;
+  $("#pricing-output").value = pricing.outputPerMillion ?? 0;
+}
+
+async function refreshUsage() {
+  $("#usage-refresh-button").disabled = true;
+  try {
+    renderUsage(await api.providerUsage({ providerId: elements.usageProviderFilter.value || null }));
+  } catch (error) {
+    showActionError(error);
+  } finally {
+    $("#usage-refresh-button").disabled = false;
+  }
+}
+
+async function openUsageDialog() {
+  elements.overlay.classList.add("hidden");
+  elements.usageOverlay.classList.remove("hidden");
+  populateUsageProviders();
+  try {
+    state.modelPricing = await api.modelPricing();
+  } catch (error) {
+    $("#pricing-status").textContent = error.message;
+  }
+  loadPricingFields(true);
+  refreshIcons();
+  await refreshUsage();
+}
+
+function closeUsageDialog() {
+  elements.usageOverlay.classList.add("hidden");
+  elements.overlay.classList.remove("hidden");
+}
+
+function monitoredProviders() {
+  return state.providers.filter((provider) => provider.type === "relay" || provider.id === "claude");
+}
+
+function healthStatus(provider) {
+  const health = state.providerHealth[provider.id] || null;
+  if (health?.status === "checking") return { key: "checking", label: "检测中" };
+  if (health?.openUntil > Date.now()) {
+    return { key: "open", label: `冷却中 · ${Math.max(1, Math.ceil((health.openUntil - Date.now()) / 1000))} 秒` };
+  }
+  if (health?.status === "healthy") return { key: "healthy", label: `${Math.max(0, Number(health.latencyMs) || 0)} ms` };
+  if (["degraded", "configuration-error", "error"].includes(health?.status)) {
+    return { key: health.status, label: health.status === "degraded" ? `不稳定 · ${health.failures || 1} 次失败` : "不可用" };
+  }
+  return { key: "idle", label: "尚未检测" };
+}
+
+function renderHealthMonitor() {
+  const providers = monitoredProviders();
+  elements.healthList.replaceChildren();
+  if (!providers.length) {
+    elements.healthList.innerHTML = '<div class="usage-empty">尚未添加可检测的模型连接</div>';
+  }
+  let healthy = 0;
+  let unavailable = 0;
+  for (const provider of providers) {
+    const status = healthStatus(provider);
+    if (status.key === "healthy") healthy += 1;
+    if (["open", "configuration-error", "error"].includes(status.key)) unavailable += 1;
+    const route = state.providerRoutes[provider.id] || null;
+    const fallbackLabels = (route?.fallbackProviderIds || []).map(providerUsageLabel).join(" → ");
+    const row = document.createElement("div");
+    row.className = `health-row health-${status.key}`;
+    if (state.providerHealth[provider.id]?.lastError) row.title = state.providerHealth[provider.id].lastError;
+    const visual = providerVisual(provider);
+    const copy = document.createElement("div");
+    copy.className = "health-copy";
+    const protocol = provider.id === "claude"
+      ? "Anthropic Messages"
+      : provider.protocol === "chat_completions" ? "Chat Completions" : "Responses";
+    copy.innerHTML = `<strong>${escapeHtml(provider.connectionLabel || provider.label)}</strong><span>${escapeHtml(protocol)} · ${escapeHtml(provider.model || "默认模型")}${fallbackLabels ? ` · 备用 ${escapeHtml(fallbackLabels)}` : ""}</span>`;
+    const stateNode = document.createElement("span");
+    stateNode.className = "health-state";
+    stateNode.innerHTML = `<i></i><span>${escapeHtml(status.label)}</span>`;
+    const test = document.createElement("button");
+    test.type = "button";
+    test.className = "health-test icon-button";
+    test.title = `检测 ${provider.connectionLabel || provider.label}`;
+    test.setAttribute("aria-label", test.title);
+    test.disabled = status.key === "checking";
+    test.innerHTML = '<span data-lucide="refresh-cw"></span>';
+    test.addEventListener("click", () => testProviderHealth(provider));
+    const icon = document.createElement("span");
+    icon.className = `provider-icon ${visual.className}`;
+    icon.innerHTML = visual.markup;
+    row.append(icon, copy, stateNode, test);
+    elements.healthList.appendChild(row);
+  }
+  $("#health-summary").textContent = `${providers.length} 个连接 · ${healthy} 正常${unavailable ? ` · ${unavailable} 不可用` : ""}`;
+  refreshIcons();
+}
+
+async function testProviderHealth(provider) {
+  state.providerHealth[provider.id] = { status: "checking", checkedAt: Date.now() };
+  renderHealthMonitor();
+  renderProviderOptions();
+  const startedAt = Date.now();
+  try {
+    if (provider.id === "claude") {
+      const catalog = await api.claudeModels({ baseUrl: provider.baseUrl, apiKey: "" });
+      if (catalog.warning) throw new Error(catalog.warning);
+    } else {
+      await api.probeProviderModels({ providerId: provider.id });
+    }
+    state.providerHealth[provider.id] = {
+      status: "healthy",
+      failures: 0,
+      openUntil: 0,
+      latencyMs: Math.max(0, Date.now() - startedAt),
+      checkedAt: Date.now(),
+      lastError: null,
+    };
+  } catch (error) {
+    state.providerHealth[provider.id] = {
+      status: "error",
+      failures: Number(state.providerHealth[provider.id]?.failures) || 0,
+      openUntil: 0,
+      latencyMs: Math.max(0, Date.now() - startedAt),
+      checkedAt: Date.now(),
+      lastError: String(error?.message || error),
+    };
+  }
+  renderHealthMonitor();
+  renderProviderOptions();
+}
+
+function openHealthDialog() {
+  elements.overlay.classList.add("hidden");
+  elements.healthOverlay.classList.remove("hidden");
+  $("#health-status").textContent = "";
+  renderHealthMonitor();
+}
+
+function closeHealthDialog() {
+  elements.healthOverlay.classList.add("hidden");
+  elements.overlay.classList.remove("hidden");
+}
+
+async function loadBackups() {
+  elements.backupList.innerHTML = '<div class="usage-empty">正在读取备份</div>';
+  try {
+    const backups = await api.listBackups();
+    elements.backupList.replaceChildren();
+    if (!backups.length) {
+      elements.backupList.innerHTML = '<div class="usage-empty">暂无备份</div>';
+      return;
+    }
+    for (const backup of backups) {
+      const row = document.createElement("div");
+      row.className = "backup-row";
+      const copy = document.createElement("span");
+      const title = document.createElement("strong");
+      title.textContent = new Date(backup.createdAt).toLocaleString("zh-CN");
+      const detail = document.createElement("small");
+      detail.textContent = `${backup.name} · ${Math.max(1, Math.round(backup.size / 1024))} KB`;
+      copy.append(title, detail);
+      const restore = document.createElement("button");
+      restore.type = "button";
+      restore.className = "backup-restore";
+      restore.textContent = "恢复";
+      restore.addEventListener("click", async () => {
+        if (!confirm(`恢复 ${title.textContent} 的配置备份？\n\n当前配置会先自动备份；所有连接将断开，需要重新连接。`)) return;
+        restore.disabled = true;
+        elements.backupStatus.textContent = "正在恢复...";
+        try {
+          await api.restoreBackup(backup.name);
+          setConnected(false);
+          resetAllRuns();
+          elements.backupStatus.textContent = "备份已恢复，请重新选择连接。";
+          await loadBackups();
+        } catch (error) {
+          elements.backupStatus.textContent = error.message;
+          restore.disabled = false;
+        }
+      });
+      row.append(copy, restore);
+      elements.backupList.appendChild(row);
+    }
+  } catch (error) {
+    elements.backupList.innerHTML = `<div class="usage-empty">${escapeHtml(error.message)}</div>`;
+  }
+}
+
+async function openBackupDialog() {
+  elements.overlay.classList.add("hidden");
+  elements.backupOverlay.classList.remove("hidden");
+  elements.backupStatus.textContent = "";
+  refreshIcons();
+  await loadBackups();
+}
+
+function closeBackupDialog() {
+  elements.backupOverlay.classList.add("hidden");
+  elements.overlay.classList.remove("hidden");
+}
+
+function renderSyncStatus(snapshot) {
+  state.syncBackend = snapshot.backend === "webdav" ? "webdav" : "directory";
+  document.querySelectorAll("[data-sync-backend]").forEach((button) => button.classList.toggle("active", button.dataset.syncBackend === state.syncBackend));
+  $("#sync-directory-fields").classList.toggle("hidden", state.syncBackend !== "directory");
+  elements.syncWebdavForm.classList.toggle("hidden", state.syncBackend !== "webdav");
+  elements.syncDirectoryInput.value = snapshot.directory || "";
+  elements.syncWebdavForm.elements.url.value = snapshot.webdavUrl || "";
+  elements.syncWebdavForm.elements.username.value = "";
+  elements.syncWebdavForm.elements.password.value = "";
+  elements.syncWebdavForm.elements.username.placeholder = snapshot.hasWebdavCredentials ? "凭据已加密保存" : "WebDAV 用户名";
+  elements.syncWebdavForm.elements.password.placeholder = snapshot.hasWebdavCredentials ? "凭据已加密保存" : "WebDAV 密码";
+  $("#sync-pull-label").textContent = state.syncBackend === "webdav" ? "使用 WebDAV" : "使用同步目录";
+  elements.syncAutoInput.checked = Boolean(snapshot.autoSync);
+  const configured = state.syncBackend === "webdav" ? snapshot.webdavUrl : snapshot.directory;
+  $("#sync-summary").innerHTML = configured
+    ? `<strong>${snapshot.remoteExists ? "同步文件可用" : "等待首次同步"}</strong><span>${snapshot.lastSyncedAt ? `上次同步 ${escapeHtml(timeAgo(Math.floor(snapshot.lastSyncedAt / 1000)))}` : "尚未同步"}</span>`
+    : `<strong>未配置${state.syncBackend === "webdav" ? " WebDAV" : "同步目录"}</strong><span>${state.syncBackend === "webdav" ? "凭据仅加密保存在本机" : "可选择网盘或局域网同步文件夹"}</span>`;
+  elements.syncHistory.replaceChildren();
+  if (!snapshot.history?.length) {
+    elements.syncHistory.innerHTML = '<div class="usage-empty">暂无同步记录</div>';
+    return;
+  }
+  for (const entry of snapshot.history) {
+    const row = document.createElement("div");
+    row.className = `sync-history-row sync-${entry.status}`;
+    const icon = entry.status === "conflict" ? "triangle-alert" : entry.direction === "pull" ? "download" : entry.direction === "push" ? "upload" : "check";
+    row.innerHTML = `<span class="sync-history-icon"><span data-lucide="${icon}"></span></span><span><strong>${escapeHtml(entry.message || "同步完成")}</strong><small>${escapeHtml(new Date(entry.at).toLocaleString("zh-CN"))}</small></span>`;
+    elements.syncHistory.appendChild(row);
+  }
+  refreshIcons();
+}
+
+async function loadSyncStatus() {
+  const snapshot = await api.syncStatus();
+  renderSyncStatus(snapshot);
+  return snapshot;
+}
+
+async function openSyncDialog() {
+  elements.overlay.classList.add("hidden");
+  elements.syncOverlay.classList.remove("hidden");
+  elements.syncStatus.textContent = "";
+  refreshIcons();
+  try {
+    await loadSyncStatus();
+  } catch (error) {
+    elements.syncStatus.textContent = error.message;
+  }
+}
+
+function closeSyncDialog() {
+  elements.syncOverlay.classList.add("hidden");
+  elements.overlay.classList.remove("hidden");
+}
+
+async function openAppSettingsDialog() {
+  elements.overlay.classList.add("hidden");
+  elements.appSettingsOverlay.classList.remove("hidden");
+  $("#app-settings-status").textContent = "";
+  refreshIcons();
+  try {
+    const settings = await api.appSettings();
+    elements.appSettingsForm.elements.launchAtLogin.checked = Boolean(settings.launchAtLogin);
+    elements.appSettingsForm.elements.closeToTray.checked = settings.closeToTray !== false;
+    $("#app-version").textContent = `v${settings.version || "0.1.0"}`;
+    $("#update-status").textContent = "通过私有 GitHub 仓库安全检查，不会覆盖未提交改动";
+    $("#update-status").dataset.state = "idle";
+  } catch (error) {
+    $("#app-settings-status").textContent = error.message;
+  }
+}
+
+function closeAppSettingsDialog() {
+  elements.appSettingsOverlay.classList.add("hidden");
+  elements.overlay.classList.remove("hidden");
+}
+
+const deepLinkImportLabels = {
+  provider: { title: "导入模型供应商", description: "确认后继续填写 API Key，链接本身不会保存密钥。", icon: "network" },
+  mcp: { title: "导入 MCP 服务", description: "仅导入连接结构；环境变量密钥需要随后在本机填写。", icon: "server-cog" },
+  prompt: { title: "导入 Prompt 模板", description: "模板会保存到 Share Master 私有扩展中心。", icon: "text-cursor-input" },
+  skill: { title: "从 GitHub 安装 Skill", description: "确认后下载公开仓库，并执行路径与文件安全检查。", icon: "package-plus" },
+};
+
+function importPreviewRows(importType, config) {
+  if (importType === "provider") return [["名称", config.label], ["Base URL", config.baseUrl], ["默认模型", config.model], ["协议", config.protocol]];
+  if (importType === "prompt") return [["命令", `/${config.name}`], ["说明", config.description || "无"], ["模板内容", config.content]];
+  if (importType === "skill") return [["GitHub 仓库", config.source], ["安装位置", "Share Master 私有 Skill 库"]];
+  return [
+    ["名称", config.name], ["传输方式", config.transport],
+    [config.transport === "stdio" ? "启动命令" : "服务 URL", config.transport === "stdio" ? config.command : config.url],
+    ["参数", config.args?.length ? config.args.join(" ") : "无"],
+    ["待填写环境变量", config.envKeys?.length ? config.envKeys.join(", ") : "无"],
+  ];
+}
+
+function openDeepLinkImportPreview(payload = {}) {
+  const meta = deepLinkImportLabels[payload.importType];
+  if (!meta || !payload.config) return;
+  state.pendingDeepLinkImport = { importType: payload.importType, config: payload.config };
+  $("#import-preview-title").textContent = meta.title;
+  $("#import-preview-description").textContent = meta.description;
+  $("#import-preview-status").textContent = "";
+  const logo = elements.importPreviewOverlay.querySelector(".import-preview-logo");
+  logo.innerHTML = `<span data-lucide="${meta.icon}"></span>`;
+  elements.importPreviewDetails.replaceChildren(...importPreviewRows(payload.importType, payload.config).map(([label, value]) => {
+    const row = document.createElement("div");
+    row.className = "import-preview-row";
+    const term = document.createElement("span");
+    term.textContent = label;
+    const detail = document.createElement(label === "模板内容" ? "pre" : "strong");
+    detail.textContent = String(value || "");
+    row.append(term, detail);
+    return row;
+  }));
+  elements.importPreviewOverlay.classList.remove("hidden");
+  refreshIcons();
+}
+
+function closeDeepLinkImportPreview() {
+  elements.importPreviewOverlay.classList.add("hidden");
+  state.pendingDeepLinkImport = null;
+}
+
+async function confirmDeepLinkImport() {
+  const request = state.pendingDeepLinkImport;
+  if (!request) return;
+  const button = $("#import-preview-confirm-button");
+  button.disabled = true;
+  $("#import-preview-status").textContent = request.importType === "skill" ? "正在下载并检查..." : "正在导入...";
+  try {
+    const result = await api.confirmDeepLinkImport(request);
+    closeDeepLinkImportPreview();
+    if (request.importType === "provider") {
+      openRelayDialog(null, result.config);
+      $("#connection-error").textContent = "请填写 API Key 后完成导入。";
+      return;
+    }
+    if (request.importType === "mcp") {
+      await loadExtensions();
+      openExtensionsDialog("mcp");
+      showDiagnostic(result.requiresSecrets ? "MCP 已导入，请在环境变量区域填写密钥。" : "MCP 已导入。", false);
+      return;
+    }
+    if (request.importType === "prompt") {
+      await loadExtensions();
+      openExtensionsDialog("prompts");
+      showDiagnostic("Prompt 模板已导入。", false);
+      return;
+    }
+    await loadExtensions();
+    openExtensionsDialog("skills");
+    showDiagnostic("Skill 已完成安全检查并安装。", false);
+  } catch (error) {
+    $("#import-preview-status").textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function runConfigurationSync(mode) {
+  const controls = [$("#sync-now-button"), $("#sync-push-button"), $("#sync-pull-button")];
+  controls.forEach((button) => { button.disabled = true; });
+  elements.syncStatus.textContent = "正在同步...";
+  try {
+    const snapshot = await api.syncNow(mode);
+    renderSyncStatus(snapshot);
+    elements.syncStatus.textContent = snapshot.result?.message || "同步完成。";
+  } catch (error) {
+    elements.syncStatus.textContent = error.message;
+  } finally {
+    controls.forEach((button) => { button.disabled = false; });
+  }
+}
+
 function syncProjectRootControls() {
   $("#project-root-clear").classList.toggle("hidden", !elements.projectRootInput.value);
 }
@@ -2736,6 +4180,44 @@ function populateTaskProviders(selectedId = "") {
   elements.taskProviderSelect.value = selectedId || "";
 }
 
+function populateTaskModels(selectedModel = "") {
+  const list = $("#task-model-options");
+  list.replaceChildren();
+  const providerId = elements.taskProviderSelect.value;
+  const provider = state.providers.find((item) => item.id === providerId) || null;
+  const models = providerId && providerId !== state.provider
+    ? [provider?.model, ...(provider?.discoveredModels || [])]
+    : state.modelCatalog.map((item) => item.model || item.id);
+  for (const model of [...new Set(models.filter(Boolean))]) list.appendChild(new Option(model, model));
+  elements.taskModelInput.value = selectedModel || "";
+}
+
+function renderTaskHistory(task) {
+  const history = Array.isArray(task?.runHistory) ? task.runHistory : [];
+  $("#task-history").classList.toggle("hidden", !task);
+  $("#task-history-summary").textContent = history.length ? `最近 ${history.length} 次` : "暂无记录";
+  const list = $("#task-history-list");
+  list.replaceChildren();
+  if (!history.length) {
+    const empty = document.createElement("div");
+    empty.className = "task-history-empty";
+    empty.textContent = "此任务还没有运行记录";
+    list.appendChild(empty);
+    return;
+  }
+  for (const run of history.slice(0, 6)) {
+    const row = document.createElement("div");
+    row.className = `task-history-row ${run.status || "failed"}`;
+    const icon = run.status === "completed" ? "circle-check" : run.status === "running" ? "loader-circle" : "circle-x";
+    const label = run.status === "completed"
+      ? `${run.manual ? "手动运行" : "计划运行"}完成`
+      : run.status === "running" ? `${run.manual ? "手动运行" : "计划运行"}中`
+      : run.error || "运行失败";
+    row.innerHTML = `<span data-lucide="${icon}"></span><span title="${escapeHtml(label)}">${escapeHtml(label)}</span><time>${new Date(run.startedAt).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })}</time>`;
+    list.appendChild(row);
+  }
+}
+
 function openTaskDialog(task = null) {
   state.editingTask = task;
   elements.taskForm.reset();
@@ -2748,12 +4230,43 @@ function openTaskDialog(task = null) {
   elements.taskEnabledInput.checked = task?.enabled !== false;
   populateTaskProjects(task?.projectId || state.activeProject?.id || "");
   populateTaskProviders(task?.providerId || state.provider || "");
+  populateTaskModels(task?.model || "");
+  elements.taskApprovalSelect.value = task?.approvalMode || "auto";
+  elements.taskNotifyInput.checked = task?.notifyOnCompletion !== false;
+  elements.taskRetryInput.checked = task?.retryOnFailure !== false;
+  $("#task-timezone-label").textContent = `时区：${task?.timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Shanghai"}`;
   $("#task-title").textContent = task ? "编辑已安排任务" : "安排任务";
   $("#task-submit-label").textContent = task ? "保存" : "安排";
+  $("#task-run-now-button").classList.toggle("hidden", !task);
+  $("#task-run-now-button").disabled = Boolean(task && state.runningTaskIds.has(task.id));
+  renderTaskHistory(task);
   elements.taskError.textContent = "";
   elements.taskOverlay.classList.remove("hidden");
   elements.taskNameInput.focus();
   refreshIcons();
+}
+
+async function runScheduledTaskNow(task, button) {
+  button.disabled = true;
+  elements.taskError.textContent = "正在启动任务...";
+  try {
+    const result = await api.runScheduledTaskNow(task.id);
+    const index = state.scheduledTasks.findIndex((item) => item.id === task.id);
+    if (index >= 0 && result.task) state.scheduledTasks[index] = result.task;
+    state.runningTaskIds.add(task.id);
+    renderScheduledTasks();
+    if (!elements.taskOverlay.classList.contains("hidden")) {
+      renderTaskHistory(result.task || task);
+      $("#task-run-now-button").disabled = true;
+      elements.taskError.textContent = "任务已启动，将在后台继续运行。";
+    } else {
+      showDiagnostic(`“${task.title}”已在后台启动。`, false);
+    }
+  } catch (error) {
+    button.disabled = false;
+    elements.taskError.textContent = error.message;
+    showActionError(error);
+  }
 }
 
 function closeTaskDialog() {
@@ -2809,13 +4322,333 @@ $("#official-login-button").addEventListener("click", async (event) => {
     renderAccountPanel();
   }
 });
-$("#add-connection-button").addEventListener("click", () => {
+function renderProviderPresetCatalog(catalog = []) {
+  state.providerPresets = Object.fromEntries(catalog.map((preset) => [preset.id, preset]));
+  const select = $("#provider-preset");
+  const groups = new Map();
+  for (const preset of catalog) {
+    const group = preset.group || "其他";
+    if (!groups.has(group)) groups.set(group, []);
+    groups.get(group).push(preset);
+  }
+  select.replaceChildren(...[...groups].map(([label, presets]) => {
+    const optgroup = document.createElement("optgroup");
+    optgroup.label = label;
+    optgroup.replaceChildren(...presets.map((preset) => new Option(preset.label, preset.id)));
+    return optgroup;
+  }));
+  select.value = state.providerPresets.deepseek ? "deepseek" : catalog[0]?.id || "";
+}
+
+function applyProviderPreset(overwrite = true) {
+  const form = $("#relay-form");
+  const preset = state.providerPresets[$("#provider-preset").value] || state.providerPresets.custom;
+  if (!preset) return;
+  if (overwrite) {
+    form.elements.label.value = preset.label;
+    form.elements.baseUrl.value = preset.baseUrl;
+    form.elements.model.value = preset.model;
+  }
+  form.elements.protocol.value = preset.protocol;
+  $("#provider-protocol-note").textContent = preset.note;
+  syncProviderRouteControls();
+  if (overwrite) {
+    state.probedProviderModels = [];
+    renderProviderModelOptions();
+    $("#provider-model-status").textContent = "";
+  }
+}
+
+function renderProviderModelOptions() {
+  const list = $("#provider-model-options");
+  list.replaceChildren(...state.probedProviderModels.map((model) => {
+    const option = document.createElement("option");
+    option.value = model;
+    return option;
+  }));
+}
+
+function syncProviderRouteControls(route = null) {
+  const form = $("#relay-form");
+  const currentId = state.editingRelay?.id || form.elements.id.value || null;
+  const enabledForProtocol = form.elements.protocol.value === "chat_completions";
+  const fallback = $("#provider-fallback");
+  if (route) state.routeFallbackDraft = [...new Set(route.fallbackProviderIds || [])];
+  const candidates = state.providers.filter((provider) => (
+    provider.type === "relay"
+    && provider.id !== currentId
+    && provider.protocol === "chat_completions"
+  ));
+  const candidateIds = new Set(candidates.map((provider) => provider.id));
+  state.routeFallbackDraft = state.routeFallbackDraft.filter((id) => candidateIds.has(id));
+  const available = candidates.filter((provider) => !state.routeFallbackDraft.includes(provider.id));
+  fallback.replaceChildren(new Option("选择连接加入队列", ""), ...available.map((provider) => (
+    new Option(provider.connectionLabel || provider.label, provider.id)
+  )));
+  fallback.value = "";
+  renderProviderFallbackChain(candidates);
+  const routeAvailable = enabledForProtocol && (candidates.length > 0 || state.routeFallbackDraft.length > 0);
+  const controls = [
+    $("#provider-failover-enabled"),
+    $("#provider-failure-threshold"),
+    $("#provider-cooldown-seconds"),
+  ];
+  for (const control of controls) control.disabled = !routeAvailable;
+  fallback.disabled = !enabledForProtocol || available.length === 0;
+  $("#provider-route-settings").classList.toggle("route-disabled", !routeAvailable);
+  if (!routeAvailable || state.routeFallbackDraft.length === 0) $("#provider-failover-enabled").checked = false;
+}
+
+function moveFallbackProvider(providerId, offset) {
+  const index = state.routeFallbackDraft.indexOf(providerId);
+  const target = index + offset;
+  if (index < 0 || target < 0 || target >= state.routeFallbackDraft.length) return;
+  [state.routeFallbackDraft[index], state.routeFallbackDraft[target]] = [state.routeFallbackDraft[target], state.routeFallbackDraft[index]];
+  syncProviderRouteControls();
+}
+
+function renderProviderFallbackChain(candidates = []) {
+  const container = $("#provider-fallback-chain");
+  const byId = new Map(candidates.map((provider) => [provider.id, provider]));
+  if (!state.routeFallbackDraft.length) {
+    container.innerHTML = '<span class="provider-fallback-empty">尚未添加备用连接</span>';
+    return;
+  }
+  container.replaceChildren(...state.routeFallbackDraft.map((providerId, index) => {
+    const provider = byId.get(providerId);
+    const row = document.createElement("div");
+    row.className = "provider-fallback-row";
+    row.draggable = true;
+    row.dataset.providerId = providerId;
+    row.innerHTML = `<span class="fallback-grip" title="拖拽排序"><span data-lucide="grip-vertical"></span></span><span class="fallback-order">${index + 1}</span><strong>${escapeHtml(provider?.connectionLabel || provider?.label || providerId)}</strong><button class="icon-button fallback-up" type="button" title="上移" aria-label="上移" ${index === 0 ? "disabled" : ""}><span data-lucide="chevron-up"></span></button><button class="icon-button fallback-down" type="button" title="下移" aria-label="下移" ${index === state.routeFallbackDraft.length - 1 ? "disabled" : ""}><span data-lucide="chevron-down"></span></button><button class="icon-button danger-icon fallback-remove" type="button" title="移除" aria-label="移除"><span data-lucide="x"></span></button>`;
+    row.querySelector(".fallback-up").addEventListener("click", () => moveFallbackProvider(providerId, -1));
+    row.querySelector(".fallback-down").addEventListener("click", () => moveFallbackProvider(providerId, 1));
+    row.querySelector(".fallback-remove").addEventListener("click", () => {
+      state.routeFallbackDraft = state.routeFallbackDraft.filter((id) => id !== providerId);
+      syncProviderRouteControls();
+    });
+    row.addEventListener("dragstart", () => { state.draggingFallbackId = providerId; });
+    row.addEventListener("dragend", () => { state.draggingFallbackId = null; });
+    row.addEventListener("dragover", (event) => event.preventDefault());
+    row.addEventListener("drop", (event) => {
+      event.preventDefault();
+      const from = state.routeFallbackDraft.indexOf(state.draggingFallbackId);
+      const to = state.routeFallbackDraft.indexOf(providerId);
+      if (from < 0 || to < 0 || from === to) return;
+      const [moved] = state.routeFallbackDraft.splice(from, 1);
+      state.routeFallbackDraft.splice(to, 0, moved);
+      syncProviderRouteControls();
+    });
+    return row;
+  }));
+  refreshIcons();
+}
+
+function localProviderStatus(candidate) {
+  if (candidate.duplicate) return "已存在于 Share Master";
+  if (!candidate.hasCredential) return "未找到可导入的 API Key";
+  if (candidate.kind === "claude") return "将更新 Share Master 的 Claude Code 连接";
+  return "可安全导入";
+}
+
+function renderLocalProviderCandidates() {
+  const validIds = new Set(state.localProviderCandidates
+    .filter((candidate) => candidate.importable && !candidate.duplicate)
+    .map((candidate) => candidate.id));
+  state.selectedLocalProviderIds = new Set([...state.selectedLocalProviderIds].filter((id) => validIds.has(id)));
+  elements.localProviderList.innerHTML = "";
+  if (state.localProviderLoading) {
+    elements.localProviderList.innerHTML = '<div class="local-provider-empty"><span data-lucide="loader-circle"></span><strong>正在扫描本机配置</strong><small>只读取已知配置位置，不会遍历或修改其他文件。</small></div>';
+    elements.localProviderImportButton.disabled = true;
+    refreshIcons();
+    return;
+  }
+  if (!state.localProviderCandidates.length) {
+    elements.localProviderList.innerHTML = '<div class="local-provider-empty"><span data-lucide="search-x"></span><strong>没有发现可识别的模型配置</strong><small>你仍可通过“添加连接”手动填写 Base URL、模型和 API Key。</small></div>';
+    elements.localProviderImportButton.disabled = true;
+    refreshIcons();
+    return;
+  }
+  const fragment = document.createDocumentFragment();
+  for (const candidate of state.localProviderCandidates) {
+    const selectable = candidate.importable && !candidate.duplicate;
+    const row = document.createElement("label");
+    row.className = `local-provider-row${selectable ? "" : " disabled"}`;
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = state.selectedLocalProviderIds.has(candidate.id);
+    checkbox.disabled = !selectable;
+    checkbox.setAttribute("aria-label", `选择 ${candidate.label}`);
+    checkbox.addEventListener("change", () => {
+      if (checkbox.checked) {
+        if (candidate.kind === "claude") {
+          for (const other of state.localProviderCandidates) {
+            if (other.kind === "claude") state.selectedLocalProviderIds.delete(other.id);
+          }
+        }
+        state.selectedLocalProviderIds.add(candidate.id);
+      } else {
+        state.selectedLocalProviderIds.delete(candidate.id);
+      }
+      renderLocalProviderCandidates();
+    });
+    const visual = document.createElement("span");
+    visual.className = `local-provider-icon ${candidate.kind === "claude" ? "claude" : candidate.preset || "custom"}`;
+    visual.textContent = candidate.kind === "claude" ? "C" : candidate.preset === "deepseek" ? "DS" : candidate.preset === "qwen" ? "QW" : "AI";
+    const copy = document.createElement("span");
+    copy.className = "local-provider-copy";
+    const title = document.createElement("span");
+    title.className = "local-provider-title-row";
+    title.innerHTML = `<strong>${escapeHtml(candidate.label)}</strong><em class="local-provider-badge ${candidate.duplicate ? "duplicate" : candidate.hasCredential ? "ready" : "missing"}">${escapeHtml(localProviderStatus(candidate))}</em>`;
+    const detail = document.createElement("small");
+    detail.textContent = `${candidate.source} · ${candidate.model} · ${candidate.baseUrl}`;
+    const protocol = document.createElement("small");
+    protocol.className = "local-provider-protocol";
+    protocol.textContent = candidate.kind === "claude"
+      ? "Claude Messages / Claude Code"
+      : candidate.protocol === "responses" ? "OpenAI Responses / Codex 代理" : "OpenAI Chat Completions";
+    copy.append(title, detail, protocol);
+    row.append(checkbox, visual, copy);
+    fragment.appendChild(row);
+  }
+  elements.localProviderList.appendChild(fragment);
+  const selectedCount = state.selectedLocalProviderIds.size;
+  elements.localProviderImportButton.disabled = selectedCount === 0;
+  elements.localProviderImportButton.lastChild.textContent = selectedCount ? `导入所选配置 (${selectedCount})` : "导入所选配置";
+}
+
+async function loadLocalProviderCandidates() {
+  const generation = ++state.localProviderGeneration;
+  state.localProviderLoading = true;
+  elements.localProviderStatus.classList.add("neutral-status");
+  elements.localProviderStatus.textContent = "";
+  elements.localProviderSummary.textContent = "正在检查已知配置位置...";
+  renderLocalProviderCandidates();
+  try {
+    const result = await api.discoverLocalProviders();
+    if (generation !== state.localProviderGeneration) return;
+    state.localProviderCandidates = result.candidates || [];
+    state.selectedLocalProviderIds = new Set();
+    const available = state.localProviderCandidates.filter((candidate) => candidate.importable && !candidate.duplicate).length;
+    elements.localProviderSummary.textContent = `扫描 ${result.sources?.length || 0} 个来源 · 发现 ${state.localProviderCandidates.length} 项 · ${available} 项可导入`;
+    elements.localProviderStatus.textContent = (result.warnings || []).join(" ");
+  } catch (error) {
+    if (generation !== state.localProviderGeneration) return;
+    state.localProviderCandidates = [];
+    elements.localProviderSummary.textContent = "扫描失败";
+    elements.localProviderStatus.classList.remove("neutral-status");
+    elements.localProviderStatus.textContent = error.message;
+  } finally {
+    if (generation === state.localProviderGeneration) {
+      state.localProviderLoading = false;
+      renderLocalProviderCandidates();
+    }
+  }
+}
+
+function openLocalProviderDialog() {
+  elements.overlay.classList.add("hidden");
+  elements.localProviderOverlay.classList.remove("hidden");
+  loadLocalProviderCandidates();
+  refreshIcons();
+}
+
+function closeLocalProviderDialog() {
+  state.localProviderGeneration += 1;
+  state.localProviderLoading = false;
+  elements.localProviderOverlay.classList.add("hidden");
+  elements.overlay.classList.remove("hidden");
+}
+
+async function importSelectedLocalProviders() {
+  const candidateIds = [...state.selectedLocalProviderIds];
+  if (!candidateIds.length) return;
+  const button = elements.localProviderImportButton;
+  button.disabled = true;
+  elements.localProviderStatus.textContent = "正在加密保存到 Share Master...";
+  try {
+    const response = await api.importLocalProviders(candidateIds);
+    state.providers = response.providers || state.providers;
+    renderProviderOptions();
+    const imported = response.results.filter((result) => result.status === "imported");
+    const duplicates = response.results.filter((result) => result.status === "duplicate");
+    const errors = response.results.filter((result) => result.status === "error");
+    await loadLocalProviderCandidates();
+    const summary = [
+      imported.length ? `已导入 ${imported.length} 项` : "",
+      duplicates.length ? `${duplicates.length} 项已存在` : "",
+      errors.length ? `${errors.length} 项失败：${errors.map((result) => result.error).join("；")}` : "",
+    ].filter(Boolean).join(" · ");
+    elements.localProviderStatus.textContent = summary || "没有需要导入的配置。";
+    elements.localProviderStatus.classList.toggle("neutral-status", errors.length === 0);
+    if (imported.length) showDiagnostic(`${summary}。原配置未作任何修改。`, false);
+  } catch (error) {
+    elements.localProviderStatus.textContent = error.message;
+    elements.localProviderStatus.classList.remove("neutral-status");
+  } finally {
+    button.disabled = state.selectedLocalProviderIds.size === 0;
+  }
+}
+
+function openRelayDialog(provider = null, draft = null) {
+  const form = $("#relay-form");
+  form.reset();
+  state.editingRelay = provider;
+  state.routeFallbackDraft = [];
+  state.probedProviderModels = [...(provider?.discoveredModels || [])];
+  if (provider) {
+    form.elements.id.value = provider.id;
+    form.elements.preset.value = provider.preset || "custom";
+    form.elements.label.value = provider.label || "";
+    form.elements.baseUrl.value = provider.baseUrl || "";
+    form.elements.model.value = provider.model || "";
+    form.elements.protocol.value = provider.protocol || "chat_completions";
+    form.elements.apiKey.required = false;
+    form.elements.apiKey.placeholder = "留空则继续使用已加密保存的密钥";
+  } else {
+    form.elements.preset.value = state.providerPresets.deepseek ? "deepseek" : Object.keys(state.providerPresets)[0] || "";
+    form.elements.apiKey.required = true;
+    form.elements.apiKey.placeholder = "仅加密保存在本机";
+    applyProviderPreset(true);
+    if (draft) {
+      form.elements.preset.value = state.providerPresets[draft.preset] ? draft.preset : "custom";
+      form.elements.label.value = draft.label || "";
+      form.elements.baseUrl.value = draft.baseUrl || "";
+      form.elements.model.value = draft.model || "";
+      form.elements.protocol.value = draft.protocol || "chat_completions";
+      applyProviderPreset(false);
+    }
+  }
+  const route = provider ? state.providerRoutes[provider.id] || null : null;
+  $("#provider-failover-enabled").checked = Boolean(route?.enabled);
+  $("#provider-failure-threshold").value = route?.failureThreshold || 2;
+  $("#provider-cooldown-seconds").value = Math.round((route?.cooldownMs || 60000) / 1000);
+  syncProviderRouteControls(route);
+  renderProviderModelOptions();
+  $("#connection-title").textContent = provider ? "编辑模型供应商" : "添加连接";
+  $("#provider-submit-label").textContent = provider ? "保存供应商" : "添加供应商";
+  $("#provider-model-status").textContent = state.probedProviderModels.length
+    ? `已保存 ${state.probedProviderModels.length} 个模型`
+    : "";
+  $("#connection-error").textContent = "";
   elements.overlay.classList.add("hidden");
   $("#connection-overlay").classList.remove("hidden");
+  refreshIcons();
+}
+
+$("#add-connection-button").addEventListener("click", () => openRelayDialog());
+$("#local-provider-discovery-button").addEventListener("click", openLocalProviderDialog);
+$("#local-provider-close-button").addEventListener("click", closeLocalProviderDialog);
+$("#local-provider-refresh-button").addEventListener("click", loadLocalProviderCandidates);
+elements.localProviderImportButton.addEventListener("click", importSelectedLocalProviders);
+elements.localProviderOverlay.addEventListener("click", (event) => {
+  if (event.target === elements.localProviderOverlay) closeLocalProviderDialog();
 });
 $("#close-connection-button").addEventListener("click", () => {
   $("#connection-overlay").classList.add("hidden");
   elements.overlay.classList.remove("hidden");
+  state.editingRelay = null;
+  state.routeFallbackDraft = [];
 });
 $("#credential-close-button").addEventListener("click", closeCredentialDialog);
 $("#claude-close-button").addEventListener("click", closeClaudeDialog);
@@ -2826,7 +4659,21 @@ $("#schedule-task-button").addEventListener("click", () => {
   if (state.threadView !== "scheduled") setThreadView("scheduled");
   openTaskDialog();
 });
+$("#local-history-button").addEventListener("click", openLocalHistoryDialog);
+$("#local-history-close-button").addEventListener("click", closeLocalHistoryDialog);
+$("#local-history-refresh-button").addEventListener("click", loadLocalHistory);
+elements.localHistorySearch.addEventListener("input", () => {
+  clearTimeout(elements.localHistorySearch._timer);
+  elements.localHistorySearch._timer = setTimeout(loadLocalHistory, 180);
+});
+elements.localHistoryOverlay.addEventListener("click", (event) => {
+  if (event.target === elements.localHistoryOverlay) closeLocalHistoryDialog();
+});
 $("#task-close-button").addEventListener("click", closeTaskDialog);
+$("#task-run-now-button").addEventListener("click", () => {
+  if (state.editingTask) runScheduledTaskNow(state.editingTask, $("#task-run-now-button"));
+});
+elements.taskProviderSelect.addEventListener("change", () => populateTaskModels(elements.taskModelInput.value));
 $("#project-root-choose").addEventListener("click", async () => {
   try {
     const root = await api.chooseWorkspace(elements.projectRootInput.value || state.workspace);
@@ -2880,6 +4727,10 @@ elements.taskForm.addEventListener("submit", async (event) => {
     elements.taskError.textContent = "请选择有效的执行时间。";
     return;
   }
+  if (!state.editingTask && scheduledAt < Date.now() - 60000) {
+    elements.taskError.textContent = "执行时间不能早于当前时间。";
+    return;
+  }
   const project = state.savedProjects.find((item) => item.id === data.projectId) || null;
   button.disabled = true;
   elements.taskError.textContent = state.editingTask ? "正在保存..." : "正在安排...";
@@ -2894,6 +4745,11 @@ elements.taskForm.addEventListener("submit", async (event) => {
       providerId: data.providerId || null,
       projectId: project?.id || null,
       workspace: project?.root || state.editingTask?.workspace || state.workspace,
+      model: data.model || null,
+      approvalMode: data.approvalMode,
+      timeZone: state.editingTask?.timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Shanghai",
+      notifyOnCompletion: elements.taskNotifyInput.checked,
+      retryOnFailure: elements.taskRetryInput.checked,
     });
     const index = state.scheduledTasks.findIndex((item) => item.id === task.id);
     if (index >= 0) state.scheduledTasks[index] = task;
@@ -2954,18 +4810,89 @@ document.querySelectorAll("[data-connection-tab]").forEach((button) => button.ad
   $("#relay-form").classList.toggle("hidden", button.dataset.connectionTab !== "relay");
   $("#account-form").classList.toggle("hidden", button.dataset.connectionTab !== "account");
 }));
+$("#provider-preset").addEventListener("change", () => applyProviderPreset(true));
+$("#provider-fallback").addEventListener("change", (event) => {
+  const providerId = event.currentTarget.value;
+  if (providerId && !state.routeFallbackDraft.includes(providerId)) state.routeFallbackDraft.push(providerId);
+  syncProviderRouteControls();
+});
+$("#relay-form").elements.protocol.addEventListener("change", (event) => {
+  $("#provider-protocol-note").textContent = event.currentTarget.value === "responses"
+    ? state.providerPresets.responses?.note || "OpenAI Responses 兼容接口。"
+    : state.providerPresets[$("#provider-preset").value]?.note || state.providerPresets.custom?.note || "OpenAI 兼容接口。";
+  syncProviderRouteControls();
+});
+$("#provider-load-models").addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  const form = $("#relay-form");
+  const status = $("#provider-model-status");
+  button.disabled = true;
+  status.textContent = "正在测试连接...";
+  $("#connection-error").textContent = "";
+  try {
+    const result = await api.probeProviderModels({
+      providerId: state.editingRelay?.id || null,
+      baseUrl: form.elements.baseUrl.value,
+      apiKey: form.elements.apiKey.value,
+    });
+    state.probedProviderModels = result.models;
+    renderProviderModelOptions();
+    const currentModel = form.elements.model.value.trim();
+    if (!result.models.includes(currentModel)) form.elements.model.value = result.models[0];
+    status.textContent = `连接成功 · ${result.latencyMs} ms · ${result.models.length} 个模型`;
+  } catch (error) {
+    state.probedProviderModels = [];
+    renderProviderModelOptions();
+    status.textContent = "";
+    $("#connection-error").textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
 $("#relay-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
   const data = Object.fromEntries(new FormData(form));
+  data.discoveredModels = [...state.probedProviderModels];
+  const button = form.querySelector("button[type=submit]");
+  button.disabled = true;
+  $("#connection-error").textContent = "";
   try {
-    const provider = await api.addRelay(data);
+    const wasEditing = Boolean(state.editingRelay);
+    const provider = state.editingRelay
+      ? await api.updateRelay(data)
+      : await api.addRelay(data);
+    if (!wasEditing) {
+      state.editingRelay = provider;
+      form.elements.id.value = provider.id;
+      form.elements.apiKey.required = false;
+      form.elements.apiKey.placeholder = "留空则继续使用已加密保存的密钥";
+    }
+    const route = await api.saveProviderRoute({
+      providerId: provider.id,
+      enabled: form.elements.failoverEnabled.checked,
+      fallbackProviderIds: [...state.routeFallbackDraft],
+      failureThreshold: form.elements.failureThreshold.value,
+      cooldownMs: Number(form.elements.cooldownSeconds.value) * 1000,
+    });
+    state.providerRoutes[provider.id] = route;
     upsertProvider(provider);
     renderProviderOptions();
     form.reset();
+    form.elements.id.value = "";
+    form.elements.apiKey.required = true;
+    form.elements.apiKey.placeholder = "仅加密保存在本机";
+    state.editingRelay = null;
+    state.routeFallbackDraft = [];
+    state.probedProviderModels = [];
+    $("#connection-error").textContent = "";
     $("#connection-overlay").classList.add("hidden");
     await connect(provider.id);
-  } catch (error) { $("#connection-error").textContent = error.message; }
+  } catch (error) {
+    $("#connection-error").textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
 });
 $("#account-form").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -2988,6 +4915,349 @@ $("#provider-switch").addEventListener("click", () => {
 });
 $("#record-home-button").addEventListener("click", openRecordHomeDialog);
 $("#record-home-close-button").addEventListener("click", closeRecordHomeDialog);
+$("#health-button").addEventListener("click", openHealthDialog);
+$("#health-close-button").addEventListener("click", closeHealthDialog);
+$("#health-done-button").addEventListener("click", closeHealthDialog);
+$("#health-test-all-button").addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  $("#health-status").textContent = "正在检测...";
+  await Promise.all(monitoredProviders().map((provider) => testProviderHealth(provider)));
+  $("#health-status").textContent = "检测完成";
+  button.disabled = false;
+});
+elements.healthOverlay.addEventListener("click", (event) => {
+  if (event.target === elements.healthOverlay) closeHealthDialog();
+});
+$("#extensions-button").addEventListener("click", () => openExtensionsDialog());
+$("#extensions-close-button").addEventListener("click", closeExtensionsDialog);
+$("#extensions-done-button").addEventListener("click", closeExtensionsDialog);
+elements.extensionsOverlay.addEventListener("click", (event) => {
+  if (event.target === elements.extensionsOverlay) closeExtensionsDialog();
+});
+document.querySelectorAll("[data-extension-tab]").forEach((button) => {
+  button.addEventListener("click", () => switchExtensionTab(button.dataset.extensionTab));
+});
+elements.extensionsSkillSearch.addEventListener("input", () => renderManagedSkills(elements.extensionsSkillSearch.value));
+$("#extensions-refresh-skills").addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  elements.extensionsStatus.textContent = "正在刷新私有 Skill 镜像...";
+  try {
+    const response = await api.refreshSkills();
+    applyExtensionSnapshot(response);
+    if (state.connected && !["claude", "openai-compatible"].includes(state.providerEngine)) await loadSkills(true);
+    elements.extensionsStatus.textContent = `刷新完成：${response.result?.activated || 0} 个已启用`;
+  } catch (error) {
+    elements.extensionsStatus.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+$("#skill-install-button").addEventListener("click", openSkillInstallDialog);
+$("#skill-install-close-button").addEventListener("click", closeSkillInstallDialog);
+document.querySelectorAll("[data-skill-install-kind]").forEach((button) => button.addEventListener("click", () => setSkillInstallKind(button.dataset.skillInstallKind)));
+$("#skill-install-browse").addEventListener("click", async () => {
+  try {
+    const selected = state.skillInstallKind === "zip" ? await api.chooseSkillZip() : await api.chooseSkillFolder();
+    if (selected) $("#skill-install-source").value = selected;
+  } catch (error) {
+    $("#skill-install-status").textContent = error.message;
+  }
+});
+elements.skillInstallForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = event.currentTarget.querySelector("button[type=submit]");
+  button.disabled = true;
+  $("#skill-install-status").textContent = "正在检查并安装...";
+  try {
+    const response = await api.installSkill({ kind: state.skillInstallKind, source: $("#skill-install-source").value });
+    applyExtensionSnapshot(response);
+    closeSkillInstallDialog();
+    elements.extensionsStatus.textContent = `已安装 ${response.installed.map((item) => item.name).join("、")}`;
+    if (state.connected && !["claude", "openai-compatible"].includes(state.providerEngine)) await loadSkills(true);
+  } catch (error) {
+    $("#skill-install-status").textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+elements.skillInstallOverlay.addEventListener("click", (event) => {
+  if (event.target === elements.skillInstallOverlay) closeSkillInstallDialog();
+});
+$("#prompt-new-button").addEventListener("click", resetPromptEditor);
+document.querySelectorAll("[data-prompt-mode]").forEach((button) => button.addEventListener("click", () => setPromptEditorMode(button.dataset.promptMode)));
+elements.promptForm.elements.content.addEventListener("input", () => {
+  if (state.promptEditorMode === "preview") setPromptEditorMode("preview");
+});
+elements.promptForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = event.currentTarget.querySelector("button[type=submit]");
+  button.disabled = true;
+  $("#prompt-error").textContent = "";
+  try {
+    const template = await api.savePrompt(Object.fromEntries(new FormData(event.currentTarget)));
+    await loadExtensions();
+    selectPrompt(template);
+    $("#prompt-error").textContent = "已保存";
+  } catch (error) {
+    $("#prompt-error").textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+$("#prompt-delete-button").addEventListener("click", async () => {
+  const template = state.promptTemplates.find((item) => item.id === state.editingPromptId);
+  if (!template || !confirm(`删除 Prompt “/${template.name}”？`)) return;
+  try {
+    await api.removePrompt(template.id);
+    await loadExtensions();
+    resetPromptEditor();
+  } catch (error) {
+    $("#prompt-error").textContent = error.message;
+  }
+});
+$("#mcp-new-button").addEventListener("click", resetMcpEditor);
+$("#mcp-transport").addEventListener("change", updateMcpTransportFields);
+elements.mcpForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = event.currentTarget.querySelector("button[type=submit]");
+  button.disabled = true;
+  setMcpStatus("");
+  try {
+    const values = Object.fromEntries(new FormData(event.currentTarget));
+    const server = await api.saveMcp({
+      ...values,
+      enabled: event.currentTarget.elements.enabled.checked,
+      args: String(values.args || "").split(/\r?\n/).map((item) => item.trim()).filter(Boolean),
+      env: mcpEnvironmentInput(values.env),
+    });
+    await loadExtensions();
+    selectMcp(server);
+    setMcpStatus(state.connected && !["claude", "openai-compatible"].includes(state.providerEngine)
+      ? "已保存，下次重新连接时生效"
+      : "已保存");
+  } catch (error) {
+    setMcpStatus(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+});
+$("#mcp-delete-button").addEventListener("click", async () => {
+  const server = state.mcpServers.find((item) => item.id === state.editingMcpId);
+  if (!server || !confirm(`删除 MCP “${server.name}”？加密环境变量也会一并删除。`)) return;
+  try {
+    await api.removeMcp(server.id);
+    await loadExtensions();
+    resetMcpEditor();
+    elements.extensionsStatus.textContent = state.connected && !["claude", "openai-compatible"].includes(state.providerEngine)
+      ? "MCP 已删除，下次重新连接时生效"
+      : "MCP 已删除";
+  } catch (error) {
+    setMcpStatus(error.message, true);
+  }
+});
+$("#mcp-test-button").addEventListener("click", async (event) => {
+  if (!state.editingMcpId) return;
+  const button = event.currentTarget;
+  button.disabled = true;
+  setMcpStatus("正在检测...");
+  try {
+    const result = await api.testMcp(state.editingMcpId);
+    setMcpStatus(`${result.detail} · ${result.latencyMs} ms`);
+  } catch (error) {
+    setMcpStatus(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+});
+$("#usage-button").addEventListener("click", openUsageDialog);
+$("#usage-close-button").addEventListener("click", closeUsageDialog);
+$("#usage-done-button").addEventListener("click", closeUsageDialog);
+$("#usage-refresh-button").addEventListener("click", refreshUsage);
+elements.usageProviderFilter.addEventListener("change", refreshUsage);
+elements.pricingProvider.addEventListener("change", () => loadPricingFields(true));
+elements.pricingModel.addEventListener("change", () => loadPricingFields(false));
+elements.pricingForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = event.currentTarget.querySelector("button[type=submit]");
+  button.disabled = true;
+  $("#pricing-status").textContent = "";
+  try {
+    const providerId = elements.pricingProvider.value;
+    const model = elements.pricingModel.value.trim();
+    const pricing = await api.saveModelPricing({
+      providerId,
+      model,
+      inputPerMillion: $("#pricing-input").value,
+      cachedInputPerMillion: $("#pricing-cache").value,
+      outputPerMillion: $("#pricing-output").value,
+    });
+    state.modelPricing[`${providerId}:${model}`] = pricing;
+    $("#pricing-status").textContent = "价格已保存，后续请求将自动估算成本。";
+    await refreshUsage();
+  } catch (error) {
+    $("#pricing-status").textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+$("#usage-clear-button").addEventListener("click", async () => {
+  const providerId = elements.usageProviderFilter.value || null;
+  const scope = providerId ? providerUsageLabel(providerId) : "全部连接";
+  if (!confirm(`清空${scope}的本地请求日志？\n\n聊天记录和模型配置不会被删除。`)) return;
+  try {
+    await api.clearProviderUsage({ providerId });
+    await refreshUsage();
+  } catch (error) {
+    showActionError(error);
+  }
+});
+elements.usageOverlay.addEventListener("click", (event) => {
+  if (event.target === elements.usageOverlay) closeUsageDialog();
+});
+$("#config-export-button").addEventListener("click", async () => {
+  try {
+    const result = await api.exportConfiguration();
+    if (!result.canceled) showDiagnostic("配置已导出；文件不包含 API Key。", false);
+  } catch (error) {
+    showActionError(error);
+  }
+});
+$("#config-import-button").addEventListener("click", async () => {
+  try {
+    const result = await api.importConfiguration();
+    if (result.canceled) return;
+    showDiagnostic(`已导入配置：新增 ${result.providersAdded} 个连接、更新 ${result.providersUpdated} 个连接、新增 ${result.projectsAdded} 个 Project、${result.promptsImported || 0} 个 Prompt、${result.mcpServersImported || 0} 个 MCP；API Key 和 MCP 密钥需要单独配置。`, false);
+  } catch (error) {
+    showActionError(error);
+  }
+});
+$("#backup-button").addEventListener("click", openBackupDialog);
+$("#backup-close-button").addEventListener("click", closeBackupDialog);
+$("#backup-done-button").addEventListener("click", closeBackupDialog);
+$("#backup-create-button").addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  elements.backupStatus.textContent = "正在备份...";
+  try {
+    await api.createBackup();
+    elements.backupStatus.textContent = "备份已创建。";
+    await loadBackups();
+  } catch (error) {
+    elements.backupStatus.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+elements.backupOverlay.addEventListener("click", (event) => {
+  if (event.target === elements.backupOverlay) closeBackupDialog();
+});
+$("#sync-button").addEventListener("click", openSyncDialog);
+$("#sync-close-button").addEventListener("click", closeSyncDialog);
+$("#sync-done-button").addEventListener("click", closeSyncDialog);
+$("#sync-directory-choose").addEventListener("click", async () => {
+  try {
+    const selected = await api.chooseSyncDirectory(elements.syncDirectoryInput.value);
+    if (!selected) return;
+    const snapshot = await api.configureSync({ directory: selected, autoSync: elements.syncAutoInput.checked });
+    renderSyncStatus(snapshot);
+    elements.syncStatus.textContent = "同步目录已保存。";
+  } catch (error) {
+    elements.syncStatus.textContent = error.message;
+  }
+});
+document.querySelectorAll("[data-sync-backend]").forEach((button) => button.addEventListener("click", () => {
+  state.syncBackend = button.dataset.syncBackend;
+  document.querySelectorAll("[data-sync-backend]").forEach((item) => item.classList.toggle("active", item === button));
+  $("#sync-directory-fields").classList.toggle("hidden", state.syncBackend !== "directory");
+  elements.syncWebdavForm.classList.toggle("hidden", state.syncBackend !== "webdav");
+  $("#sync-pull-label").textContent = state.syncBackend === "webdav" ? "使用 WebDAV" : "使用同步目录";
+  refreshIcons();
+}));
+elements.syncWebdavForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = event.currentTarget.querySelector("button[type=submit]");
+  button.disabled = true;
+  try {
+    const snapshot = await api.configureWebdavSync({
+      url: event.currentTarget.elements.url.value,
+      username: event.currentTarget.elements.username.value,
+      password: event.currentTarget.elements.password.value,
+      autoSync: elements.syncAutoInput.checked,
+    });
+    renderSyncStatus(snapshot);
+    elements.syncStatus.textContent = "WebDAV 连接已加密保存。";
+  } catch (error) {
+    elements.syncStatus.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+elements.syncAutoInput.addEventListener("change", async () => {
+  try {
+    const snapshot = state.syncBackend === "webdav"
+      ? await api.configureWebdavSync({ url: elements.syncWebdavForm.elements.url.value, autoSync: elements.syncAutoInput.checked })
+      : await api.configureSync({ directory: elements.syncDirectoryInput.value, autoSync: elements.syncAutoInput.checked });
+    renderSyncStatus(snapshot);
+  } catch (error) {
+    elements.syncAutoInput.checked = false;
+    elements.syncStatus.textContent = error.message;
+  }
+});
+$("#sync-now-button").addEventListener("click", () => runConfigurationSync("auto"));
+$("#sync-push-button").addEventListener("click", () => runConfigurationSync("push"));
+$("#sync-pull-button").addEventListener("click", () => runConfigurationSync("pull"));
+elements.syncOverlay.addEventListener("click", (event) => {
+  if (event.target === elements.syncOverlay) closeSyncDialog();
+});
+$("#app-settings-button").addEventListener("click", openAppSettingsDialog);
+$("#app-settings-close-button").addEventListener("click", closeAppSettingsDialog);
+elements.appSettingsOverlay.addEventListener("click", (event) => {
+  if (event.target === elements.appSettingsOverlay) closeAppSettingsDialog();
+});
+elements.appSettingsForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = event.currentTarget.querySelector("button[type=submit]");
+  button.disabled = true;
+  try {
+    await api.saveAppSettings({
+      launchAtLogin: event.currentTarget.elements.launchAtLogin.checked,
+      closeToTray: event.currentTarget.elements.closeToTray.checked,
+    });
+    $("#app-settings-status").textContent = "设置已保存。";
+  } catch (error) {
+    $("#app-settings-status").textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
+});
+$("#check-update-button").addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  const status = $("#update-status");
+  button.disabled = true;
+  status.textContent = "正在连接私有 GitHub 仓库...";
+  status.dataset.state = "checking";
+  try {
+    const result = await api.checkForUpdates();
+    status.textContent = result.message;
+    status.dataset.state = result.status;
+    if (result.currentRevision && result.remoteRevision) {
+      status.title = `本机 ${result.currentRevision} · 远端 ${result.remoteRevision}`;
+    }
+  } catch (error) {
+    status.textContent = error.message;
+    status.dataset.state = "error";
+  } finally {
+    button.disabled = false;
+  }
+});
+$("#import-preview-close-button").addEventListener("click", closeDeepLinkImportPreview);
+$("#import-preview-cancel-button").addEventListener("click", closeDeepLinkImportPreview);
+$("#import-preview-confirm-button").addEventListener("click", confirmDeepLinkImport);
+elements.importPreviewOverlay.addEventListener("click", (event) => {
+  if (event.target === elements.importPreviewOverlay) closeDeepLinkImportPreview();
+});
 $("#record-home-choose").addEventListener("click", async () => {
   try {
     const selected = await api.chooseRecordHome(elements.recordHomeInput.value || state.recordHome);
@@ -3025,6 +5295,11 @@ document.addEventListener("keydown", (event) => {
   if (!elements.renameOverlay.classList.contains("hidden")) closeRenameDialog(null);
   else if (!elements.projectOverlay.classList.contains("hidden")) closeProjectDialog();
   else if (!elements.claudeOverlay.classList.contains("hidden")) closeClaudeDialog();
+  else if (!elements.backupOverlay.classList.contains("hidden")) closeBackupDialog();
+  else if (!elements.extensionsOverlay.classList.contains("hidden")) closeExtensionsDialog();
+  else if (!elements.healthOverlay.classList.contains("hidden")) closeHealthDialog();
+  else if (!elements.usageOverlay.classList.contains("hidden")) closeUsageDialog();
+  else if (!elements.localHistoryOverlay.classList.contains("hidden")) closeLocalHistoryDialog();
   else if (!elements.recordHomeOverlay.classList.contains("hidden")) closeRecordHomeDialog();
   else if (!elements.credentialOverlay.classList.contains("hidden")) closeCredentialDialog();
   else if (!$("#connection-overlay").classList.contains("hidden")) {
@@ -3043,6 +5318,13 @@ $("#new-window-button").addEventListener("click", () => {
     projectRoot: state.activeProject?.root || null,
     workspace: state.workspace,
   }).catch(showActionError);
+});
+$("#theme-button").addEventListener("click", () => {
+  const order = ["system", "light", "dark"];
+  applyTheme(order[(order.indexOf(state.theme) + 1) % order.length]);
+});
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+  if (state.theme === "system") applyTheme("system", false);
 });
 $("#add-project-button").addEventListener("click", () => openProjectDialog());
 $("#sidebar-toggle").addEventListener("click", () => document.body.classList.toggle("sidebar-collapsed"));
@@ -3063,7 +5345,7 @@ $("#workspace-button").addEventListener("click", async () => {
     showActionError(error);
   }
 });
-elements.search.addEventListener("input", () => { clearTimeout(elements.search._timer); elements.search._timer = setTimeout(() => applyThreadFilter(), 120); });
+elements.search.addEventListener("input", scheduleThreadSearch);
 elements.chat.addEventListener("click", (event) => {
   const link = event.target.closest("a");
   if (!link) return;
@@ -3177,10 +5459,15 @@ elements.input.addEventListener("keydown", (event) => {
       : null;
     event.preventDefault();
     if (first) first.click();
-    else sendMessage();
+    else sendMessage(event.altKey && state.running ? "queue" : "auto");
   }
 });
-elements.send.addEventListener("click", sendMessage);
+elements.send.addEventListener("click", () => sendMessage("auto"));
+elements.queue.addEventListener("click", () => {
+  const threadId = state.activeThread?.id;
+  if (!state.running && threadId && (state.messageQueues.get(threadId) || []).length) startNextQueuedMessage(threadId);
+  else sendMessage("queue");
+});
 elements.stop.addEventListener("click", requestTurnInterrupt);
 elements.menu.querySelectorAll("button").forEach((button) => button.addEventListener("click", () => threadMenuAction(button.dataset.action)));
 document.addEventListener("click", (event) => { if (!event.target.closest("#thread-menu") && !event.target.closest(".thread-more")) elements.menu.classList.add("hidden"); });
@@ -3211,6 +5498,7 @@ document.addEventListener("keydown", (event) => {
     elements.approvalModeMenu.classList.add("hidden");
     closeSkillMenu();
     if (!elements.taskOverlay.classList.contains("hidden")) closeTaskDialog();
+    else if (!elements.localHistoryOverlay.classList.contains("hidden")) closeLocalHistoryDialog();
     else if (!elements.projectOverlay.classList.contains("hidden")) closeProjectDialog();
     else if (!elements.renameOverlay.classList.contains("hidden")) closeRenameDialog(null);
   }
@@ -3246,6 +5534,16 @@ api.onDisconnected(() => {
   elements.approval.classList.add("hidden");
 });
 api.onStoreChanged(applyStoreSnapshot);
+api.onExtensionsChanged((snapshot) => applyExtensionSnapshot(snapshot));
+api.onNavigate((payload = {}) => {
+  if (payload.action === "new-chat") newChat();
+  if (payload.action === "extensions") openExtensionsDialog(payload.tab || "skills");
+  if (payload.action === "import-preview") openDeepLinkImportPreview(payload);
+  if (payload.view && ["active", "archived", "scheduled", "removed"].includes(payload.view)) {
+    elements.overlay.classList.add("hidden");
+    setThreadView(payload.view);
+  }
+});
 
 setInterval(() => {
   updateThreadViewControls();
@@ -3256,18 +5554,25 @@ setInterval(() => {
   try {
     const bootstrap = await api.bootstrap();
     state.providers = bootstrap.providers;
+    renderProviderPresetCatalog(bootstrap.providerPresets || []);
     state.savedProjects = bootstrap.projects || [];
     state.projectThreads = bootstrap.projectThreads || {};
     state.hiddenProjectRoots = bootstrap.hiddenProjectRoots || [];
     state.threadSettings = bootstrap.threadSettings || {};
+    state.providerRoutes = bootstrap.providerRoutes || {};
     state.threadAliases = bootstrap.threadAliases || {};
     state.hiddenThreadIds = new Set(bootstrap.hiddenThreadIds || []);
     state.deletedThreadIds = new Set(bootstrap.deletedThreadIds || []);
     state.localArchivedThreadIds = new Set(bootstrap.localArchivedThreadIds || []);
     state.pendingDeletions = bootstrap.pendingDeletions || [];
     state.scheduledTasks = bootstrap.scheduledTasks || [];
+    state.messageQueues = restoredMessageQueues(bootstrap.messageQueues);
+    state.promptTemplates = bootstrap.promptTemplates || [];
+    state.mcpServers = bootstrap.mcpServers || [];
     state.runningTaskIds = new Set(bootstrap.runningTaskIds || []);
     state.recordHome = bootstrap.recordHome || bootstrap.codexHome || state.recordHome;
+    state.workspace = bootstrap.defaultWorkspace || state.workspace;
+    await loadExtensions();
     const params = new URLSearchParams(location.search);
     const projectId = params.get("projectId");
     const projectRoot = params.get("project");
@@ -3283,6 +5588,7 @@ setInterval(() => {
       state.workspace = requestedWorkspace;
     }
     renderProviderOptions();
+    applyTheme(state.theme, false);
     syncProjects();
     updateWorkspace();
     if (projectId || projectRoot) newChat();

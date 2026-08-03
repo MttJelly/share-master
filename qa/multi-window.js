@@ -8,6 +8,14 @@ const { CODEX_HOME } = require("../src/codex-server");
 const root = path.resolve(__dirname, "..");
 const outputDirectory = path.join(__dirname, "multi-window-artifacts");
 const profileDirectory = path.join(__dirname, ".electron-qa-profile");
+const storeDirectory = fs.mkdtempSync(path.join(__dirname, ".multi-window-store-"));
+const conversationDirectory = path.join(storeDirectory, "conversations");
+const emptySkillDirectory = path.join(storeDirectory, "empty-skills");
+fs.mkdirSync(path.join(conversationDirectory, "openai-compatible-conversations"), { recursive: true });
+fs.mkdirSync(emptySkillDirectory, { recursive: true });
+const sourceAuth = path.join(CODEX_HOME, "auth.json");
+if (fs.existsSync(sourceAuth)) fs.copyFileSync(sourceAuth, path.join(conversationDirectory, "auth.json"));
+process.on("exit", () => fs.rmSync(storeDirectory, { recursive: true, force: true }));
 
 function jsonlFiles(directory) {
   if (!fs.existsSync(directory)) return [];
@@ -41,6 +49,9 @@ const result = spawnSync(electron, [
     CODEX_DECK_QA_PROVIDER: "official",
     CODEX_DECK_QA_MULTI_PROVIDER: "1",
     CODEX_DECK_QA_OUTPUT_DIR: outputDirectory,
+    SHARE_MASTER_STORE_ROOT: storeDirectory,
+    SHARE_MASTER_SKILL_SOURCES: emptySkillDirectory,
+    CODEX_DECK_QA_HEXUAN_TOKEN: "qa-placeholder-not-a-secret",
   },
 });
 

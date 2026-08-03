@@ -7,8 +7,8 @@ const electron = require("electron");
 const { CODEX_HOME } = require("../src/codex-server");
 
 const root = path.resolve(__dirname, "..");
-const profile = path.join(__dirname, ".thread-actions-profile");
-const store = path.join(__dirname, ".thread-actions-store");
+const profile = fs.mkdtempSync(path.join(__dirname, ".thread-actions-profile-"));
+const store = fs.mkdtempSync(path.join(__dirname, ".thread-actions-store-"));
 const screenshot = path.join(__dirname, "multi-window-artifacts", "thread-actions.png");
 
 function jsonlRecords(directory) {
@@ -33,12 +33,18 @@ const before = {
   archived: jsonlRecords(path.join(CODEX_HOME, "archived_sessions")),
 };
 
-fs.rmSync(store, { recursive: true, force: true });
+const threadFixtureSource = before.active[0]?.file || before.archived[0]?.file;
+if (!threadFixtureSource) throw new Error("Thread actions QA requires one existing read-only conversation fixture.");
+const threadFixtureTarget = path.join(store, "conversations", "sessions", "qa", path.basename(threadFixtureSource));
+fs.mkdirSync(path.dirname(threadFixtureTarget), { recursive: true });
+fs.copyFileSync(threadFixtureSource, threadFixtureTarget);
+const processLog = path.join(store, "thread-actions-process.log");
+const processLogHandle = fs.openSync(processLog, "w");
 const result = spawnSync(electron, [`--user-data-dir=${profile}`, root], {
   cwd: root,
-  encoding: "utf8",
   timeout: 45000,
   windowsHide: true,
+  stdio: ["ignore", processLogHandle, processLogHandle],
   env: {
     ...process.env,
     SHARE_MASTER_STORE_ROOT: store,
@@ -50,12 +56,14 @@ const result = spawnSync(electron, [`--user-data-dir=${profile}`, root], {
     CODEX_DECK_QA_HEIGHT: "720",
   },
 });
+fs.closeSync(processLogHandle);
+const processOutput = fs.readFileSync(processLog, "utf8");
 
 try {
   if (result.error) throw result.error;
-  if (result.status !== 0) throw new Error(result.stderr || result.stdout || `Electron exited with ${result.status}.`);
-  const line = result.stdout.split(/\r?\n/).find((value) => value.startsWith('{"title":'));
-  if (!line) throw new Error(`Thread actions QA result was not found.\n${result.stdout}\n${result.stderr}`);
+  if (result.status !== 0) throw new Error(processOutput || `Electron exited with ${result.status}.`);
+  const line = processOutput.split(/\r?\n/).find((value) => value.startsWith('{"title":'));
+  if (!line) throw new Error(`Thread actions QA result was not found.\n${processOutput}`);
   const summary = JSON.parse(line);
   assert.ok(summary.threadActions);
   assert.equal(summary.threadActions.fatal, undefined);
@@ -96,5 +104,10 @@ try {
     screenshot,
   }));
 } finally {
-  fs.rmSync(store, { recursive: true, force: true });
+  try {
+    fs.rmSync(store, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+    fs.rmSync(profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+  } catch (error) {
+    console.error(`[qa-cleanup] ${error.message}`);
+  }
 }

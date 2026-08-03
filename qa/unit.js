@@ -13,16 +13,32 @@ process.env.SHARE_MASTER_STORE_ROOT = providerStoreTestRoot;
 const {
   ProviderStore,
   DEFAULT_CONVERSATION_HOME,
+  nextScheduledAt,
+  providerPresetCatalog,
   reasoningProfile,
   seedOfficialCredentials,
 } = require("../src/provider-store");
 const { ClaudeServer, claudePermissionArgs } = require("../src/claude-server");
+const {
+  OpenAICompatibleServer,
+  chatCompletionsEndpoint,
+  parseCodexThreadFile,
+  parseSseBlock,
+} = require("../src/openai-compatible-server");
 const { explicitBoolean, fetchRelayBalance } = require("../src/relay-balance");
 const { fetchClaudeModels, fetchClaudeModelsSafely } = require("../src/claude-models");
 const { fetchOpenAIModels, modelsEndpoint } = require("../src/openai-models");
 const { executeScheduledTask, finalizeScheduledTask } = require("../src/scheduled-task-runner");
 const { syncConversationMirror } = require("../src/conversation-mirror");
-const { syncSkillRoots } = require("../src/skill-mirror");
+const { installSkillSource, listManagedSkills, syncManagedSkills, syncSkillRoots } = require("../src/skill-mirror");
+const { parseShareMasterLink, shareMasterLinkFromArgs } = require("../src/deep-link");
+const { createLocalHistoryReader } = require("../src/local-conversation-history");
+const { createLocalProviderDiscovery, parseCodexConfig } = require("../src/local-provider-discovery");
+const {
+  buildContinuationPrompt,
+  mergeLogicalThread,
+  remapBranchMessage,
+} = require("../src/conversation-branches");
 
 function testOfficialCliArguments() {
   assert.equal(BASE_PROVIDERS.official.args.includes("--ignore-user-config"), false);
@@ -113,6 +129,91 @@ async function testConversationMirror() {
   }
 }
 
+function testPrivateConfigurationSync() {
+  const store = new ProviderStore();
+  const syncRoot = fs.mkdtempSync(path.join(os.tmpdir(), "share-master-sync-unit-"));
+  try {
+    assert.throws(() => store.configureSync({ directory: path.join(providerStoreTestRoot, "sync") }), /不能位于/);
+    const configured = store.configureSync({ directory: syncRoot, autoSync: true });
+    assert.equal(configured.directory, syncRoot);
+    assert.equal(configured.autoSync, true);
+
+    const pushed = store.syncConfiguration("auto");
+    assert.equal(pushed.conflict, false);
+    assert.equal(pushed.result.direction, "push");
+    const syncFile = path.join(syncRoot, "share-master-sync.json");
+    const remote = JSON.parse(fs.readFileSync(syncFile, "utf8"));
+    assert.equal(remote.containsCredentials, false);
+    assert.equal(JSON.stringify(remote).includes("encryptedCredentials"), false);
+
+    remote.projects.push({ label: "Remote Sync Project", root: null });
+    fs.writeFileSync(syncFile, `${JSON.stringify(remote, null, 2)}\n`, "utf8");
+    const pulled = store.syncConfiguration("auto");
+    assert.equal(pulled.result.direction, "pull");
+    assert.equal(store.listProjects().some((project) => project.label === "Remote Sync Project"), true);
+
+    store.addProject({ label: "Local Sync Conflict" });
+    const changedRemote = JSON.parse(fs.readFileSync(syncFile, "utf8"));
+    changedRemote.projects.push({ label: "Remote Sync Conflict", root: null });
+    fs.writeFileSync(syncFile, `${JSON.stringify(changedRemote, null, 2)}\n`, "utf8");
+    const conflict = store.syncConfiguration("auto");
+    assert.equal(conflict.conflict, true);
+    assert.equal(conflict.result.status, "conflict");
+    const resolved = store.syncConfiguration("push");
+    assert.equal(resolved.result.direction, "push");
+  } finally {
+    fs.rmSync(syncRoot, { recursive: true, force: true });
+  }
+}
+
+async function testWebdavConfigurationSync() {
+  const store = new ProviderStore();
+  const metadataFile = path.join(providerStoreTestRoot, "providers.json");
+  const metadata = JSON.parse(fs.readFileSync(metadataFile, "utf8"));
+  metadata.syncSettings = {
+    backend: "webdav",
+    webdavUrl: "https://dav.example.test/share-master/",
+    autoSync: false,
+    lastSyncedHash: null,
+    lastSyncedAt: null,
+    lastRemoteExists: false,
+  };
+  fs.writeFileSync(metadataFile, `${JSON.stringify(metadata, null, 2)}\n`, "utf8");
+  store.webdavCredentials = () => ({ username: "qa-user", password: "qa-pass" });
+  let remoteText = null;
+  const requests = [];
+  const fakeFetch = async (url, options) => {
+    requests.push({ url, method: options.method, authorization: options.headers.Authorization });
+    if (options.method === "GET") {
+      return remoteText === null
+        ? new Response(null, { status: 404 })
+        : new Response(remoteText, { status: 200, headers: { "Content-Type": "application/json" } });
+    }
+    remoteText = options.body;
+    return new Response(null, { status: 204 });
+  };
+  const pushed = await store.syncConfigured("auto", fakeFetch);
+  assert.equal(pushed.result.direction, "push");
+  assert.equal(requests[0].url, "https://dav.example.test/share-master/share-master-sync.json");
+  assert.match(requests[0].authorization, /^Basic /);
+  assert.equal(requests.some((entry) => entry.authorization.includes("qa-pass")), false);
+
+  const remote = JSON.parse(remoteText);
+  remote.projects.push({ label: "WebDAV Remote Project", root: null });
+  remoteText = `${JSON.stringify(remote, null, 2)}\n`;
+  const pulled = await store.syncConfigured("auto", fakeFetch);
+  assert.equal(pulled.result.direction, "pull");
+  assert.equal(store.listProjects().some((project) => project.label === "WebDAV Remote Project"), true);
+
+  store.addProject({ label: "WebDAV Local Conflict" });
+  const changedRemote = JSON.parse(remoteText);
+  changedRemote.projects.push({ label: "WebDAV Remote Conflict", root: null });
+  remoteText = `${JSON.stringify(changedRemote, null, 2)}\n`;
+  const conflict = await store.syncConfigured("auto", fakeFetch);
+  assert.equal(conflict.conflict, true);
+  assert.equal(conflict.result.status, "conflict");
+}
+
 async function testSkillMirror() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "share-master-skill-unit-"));
   const firstSource = path.join(root, "first");
@@ -148,9 +249,117 @@ async function testSkillMirror() {
     const unchanged = await syncSkillRoots([firstSource, secondSource], target);
     assert.equal(unchanged.copied, 0);
     assert.equal(unchanged.skipped, 2);
+    const importSource = path.join(root, "repository", "packages", "gamma");
+    const installedSource = path.join(root, "installed-sources");
+    fs.mkdirSync(importSource, { recursive: true });
+    fs.writeFileSync(path.join(importSource, "SKILL.md"), "---\ndescription: Gamma import\n---\n", "utf8");
+    fs.writeFileSync(path.join(importSource, "helper.js"), "module.exports = true;\n", "utf8");
+    const installed = await installSkillSource(path.join(root, "repository"), installedSource, "QA repository");
+    assert.deepEqual(installed.map((item) => item.name), ["gamma"]);
+    assert.equal(installed[0].files, 2);
+    assert.equal(fs.readFileSync(path.join(installedSource, "gamma", "SKILL.md"), "utf8").includes("Gamma import"), true);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+}
+
+async function testManagedSkillActivation() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "share-master-managed-skill-unit-"));
+  const source = path.join(root, "source");
+  const library = path.join(root, "private-library");
+  const active = path.join(root, "active");
+  try {
+    fs.mkdirSync(path.join(source, "alpha"), { recursive: true });
+    fs.mkdirSync(path.join(source, "beta"), { recursive: true });
+    fs.writeFileSync(path.join(source, "alpha", "SKILL.md"), "---\ndescription: Alpha workflow\n---\n# Alpha\n", "utf8");
+    fs.writeFileSync(path.join(source, "beta", "SKILL.md"), "# Beta workflow\n", "utf8");
+    const first = await syncManagedSkills([source], library, active, ["beta"]);
+    assert.equal(first.activated, 1);
+    assert.equal(fs.existsSync(path.join(active, "alpha", "SKILL.md")), true);
+    assert.equal(fs.existsSync(path.join(active, "beta")), false);
+    const catalog = await listManagedSkills(library, ["beta"]);
+    assert.deepEqual(catalog.map((skill) => [skill.name, skill.enabled]), [["alpha", true], ["beta", false]]);
+    assert.equal(catalog[0].description, "Alpha workflow");
+    await syncManagedSkills([source], library, active, ["alpha"]);
+    assert.equal(fs.existsSync(path.join(active, "alpha")), false);
+    assert.equal(fs.existsSync(path.join(active, "beta", "SKILL.md")), true);
+    assert.equal(fs.readFileSync(path.join(source, "alpha", "SKILL.md"), "utf8").includes("Alpha workflow"), true);
+    const unavailable = await syncManagedSkills([path.join(root, "temporarily-unavailable")], library, active, ["alpha"]);
+    assert.deepEqual(unavailable.names, ["alpha", "beta"]);
+    assert.equal(fs.existsSync(path.join(active, "beta", "SKILL.md")), true);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+function testPrivateExtensionsStore() {
+  const store = new ProviderStore();
+  const skill = store.setSkillEnabled("nature-writing", false);
+  assert.deepEqual(skill, { name: "nature-writing", enabled: false });
+  assert.deepEqual(store.disabledSkills(), ["nature-writing"]);
+  store.setSkillEnabled("NATURE-WRITING", true);
+  assert.deepEqual(store.disabledSkills(), []);
+
+  const prompt = store.savePromptTemplate({ name: "review-code", description: "Review code", content: "Review this code." });
+  assert.equal(store.promptTemplates().some((item) => item.id === prompt.id), true);
+  assert.throws(() => store.savePromptTemplate({ name: "REVIEW-CODE", content: "Duplicate" }), /不能重名/);
+  const updated = store.savePromptTemplate({ ...prompt, name: "review-changes", content: "Review these changes." });
+  assert.equal(updated.name, "review-changes");
+  store.removePromptTemplate(prompt.id);
+  assert.equal(store.promptTemplates().some((item) => item.id === prompt.id), false);
+
+  const mcp = store.saveMcpServer({ name: "Local tools", transport: "stdio", command: "node", args: ["server.js"], env: {}, enabled: true });
+  assert.equal(mcp.command, "node");
+  assert.equal(mcp.hasSecrets, false);
+  assert.throws(() => store.saveMcpServer({ name: "LOCAL TOOLS", transport: "stdio", command: "node", env: {} }), /不能重名/);
+  assert.throws(() => store.saveMcpServer({ name: "Remote", transport: "http", url: "file:///tmp/mcp", env: {} }), /有效且不含凭据/);
+  const configuredProvider = store.resolve("official");
+  assert.equal(configuredProvider.args.includes(`mcp_servers.${mcp.id}.command=${JSON.stringify("node")}`), true);
+  assert.equal(configuredProvider.args.includes(`mcp_servers.${mcp.id}.args=${JSON.stringify(["server.js"])}`), true);
+  store.removeMcpServer(mcp.id);
+  assert.equal(store.mcpServers().length, 0);
+}
+
+function testDeepLinks() {
+  assert.deepEqual(parseShareMasterLink("share-master://extensions?tab=mcp"), { action: "extensions", tab: "mcp" });
+  assert.deepEqual(parseShareMasterLink("share-master://scheduled"), { action: "scheduled" });
+  assert.deepEqual(parseShareMasterLink("share-master://new?provider=relay_123&projectId=project_456"), {
+    action: "new", provider: "relay_123", thread: null, projectId: "project_456", workspace: null,
+  });
+  assert.deepEqual(parseShareMasterLink("share-master://open?thread=thread_123&workspace=F%3A%5Ccodepro"), {
+    action: "open", provider: null, thread: "thread_123", projectId: null, workspace: "F:\\codepro",
+  });
+  assert.equal(parseShareMasterLink("https://example.com/open"), null);
+  assert.equal(parseShareMasterLink("share-master://unknown"), null);
+  assert.equal(parseShareMasterLink(`share-master://open?thread=${"x".repeat(300)}`)?.thread, null);
+  assert.equal(shareMasterLinkFromArgs(["electron.exe", ".", "share-master://scheduled"]), "share-master://scheduled");
+  assert.deepEqual(parseShareMasterLink("share-master://import?type=provider&label=Lab%20API&baseUrl=https%3A%2F%2Fapi.example.test%2Fv1&model=lab-model&preset=custom"), {
+    action: "import",
+    importType: "provider",
+    config: {
+      label: "Lab API", baseUrl: "https://api.example.test/v1", model: "lab-model",
+      preset: "custom", protocol: "chat_completions",
+    },
+  });
+  const promptData = Buffer.from(JSON.stringify({
+    type: "prompt", name: "review", description: "Review changes", content: "Review this:\n{{content}}",
+  })).toString("base64url");
+  assert.equal(parseShareMasterLink(`share-master://import?data=${promptData}`).config.content.includes("\n"), true);
+  const mcpData = Buffer.from(JSON.stringify({
+    type: "mcp", name: "Local MCP", transport: "stdio", command: "node", args: ["server.js"], envKeys: ["ACCESS_TOKEN"],
+  })).toString("base64url");
+  assert.deepEqual(parseShareMasterLink(`share-master://import?data=${mcpData}`).config.envKeys, ["ACCESS_TOKEN"]);
+  assert.equal(parseShareMasterLink("share-master://import?type=skill&source=https%3A%2F%2Fgithub.com%2Fexample%2Fskills").config.source, "https://github.com/example/skills");
+  assert.equal(parseShareMasterLink("share-master://import?type=provider&label=Unsafe&baseUrl=https%3A%2F%2Fexample.test%2Fv1&model=x&apiKey=secret"), null);
+  assert.equal(parseShareMasterLink("share-master://import?type=skill&source=https%3A%2F%2Fexample.com%2Fskills"), null);
+}
+
+function testProviderPresetCatalog() {
+  const presets = providerPresetCatalog();
+  assert.ok(presets.length >= 50);
+  assert.equal(new Set(presets.map((preset) => preset.id)).size, presets.length);
+  assert.equal(presets.every((preset) => preset.label && preset.group && preset.protocol && preset.note), true);
+  assert.equal(presets.find((preset) => preset.id === "deepseek").baseUrl, "https://api.deepseek.com/v1");
 }
 
 async function testThreadPagination() {
@@ -195,6 +404,16 @@ async function testClientUserMessageId() {
     { type: "skill", name: "nature-writing", path: "F:\\skills\\nature-writing\\SKILL.md" },
     { type: "localImage", path: "F:\\images\\figure.png", detail: "high" },
     { type: "text", text: "draft this" },
+  ]);
+  await server.steerTurn("thread", "turn-active", "focus on the failing test", {
+    imageInputs: [{ path: "F:\\images\\error.png", detail: "auto" }],
+  });
+  assert.equal(captured[2].method, "turn/steer");
+  assert.equal(captured[2].params.threadId, "thread");
+  assert.equal(captured[2].params.expectedTurnId, "turn-active");
+  assert.deepEqual(captured[2].params.input, [
+    { type: "localImage", path: "F:\\images\\error.png", detail: "auto" },
+    { type: "text", text: "focus on the failing test" },
   ]);
 }
 
@@ -383,6 +602,186 @@ function testLocalThreadManagement() {
   assert.throws(() => store.hideThread("local-thread"), /永久移出/);
 }
 
+function testThreadBranchMapping() {
+  const store = new ProviderStore();
+  const branch = store.saveThreadBranch("logical-thread", "deepseek-provider", "deepseek-branch", {
+    engine: "openai-compatible",
+    sourceEngine: "codex",
+    firstUserText: "continue here",
+    seeded: true,
+    createdAt: 1000,
+  });
+  assert.equal(branch.threadId, "deepseek-branch");
+  assert.equal(branch.sourceEngine, "codex");
+  assert.equal(branch.seeded, true);
+  assert.equal(store.threadBranch("logical-thread", "deepseek-provider").threadId, "deepseek-branch");
+  assert.equal(store.logicalThreadIdForBranch("deepseek-provider", "deepseek-branch"), "logical-thread");
+  assert.equal(store.logicalThreadIdForAnyBranch("deepseek-branch"), "logical-thread");
+  assert.deepEqual(store.branchThreadIds(), ["deepseek-branch"]);
+  const timeline = store.recordLogicalTurn("logical-thread", {
+    turnId: "turn-1",
+    nativeThreadId: "deepseek-branch",
+    providerId: "deepseek-provider",
+    engine: "openai-compatible",
+    startedAt: 1234,
+  });
+  assert.equal(timeline.length, 1);
+  assert.equal(store.threadTimeline("logical-thread")[0].turnId, "turn-1");
+  store.deleteThreadNow("logical-thread");
+  assert.equal(store.threadBranches()["logical-thread"], undefined);
+  assert.deepEqual(store.threadTimeline("logical-thread"), []);
+}
+
+function testProviderUsageAndPricing() {
+  const store = new ProviderStore();
+  store.saveModelPricing({
+    providerId: "usage-provider",
+    model: "usage-model",
+    inputPerMillion: 2,
+    cachedInputPerMillion: 1,
+    outputPerMillion: 4,
+  });
+  const entry = store.recordProviderRequest({
+    providerId: "usage-provider",
+    engine: "openai-compatible",
+    model: "usage-model",
+    logicalThreadId: "usage-thread",
+    turnId: "usage-turn",
+    startedAt: 1000,
+    finishedAt: 1600,
+    durationMs: 600,
+    status: "completed",
+    inputTokens: 1000,
+    cachedInputTokens: 200,
+    outputTokens: 500,
+  });
+  assert.equal(entry.totalTokens, 1500);
+  assert.equal(entry.costUsd, 0.0038);
+  store.recordProviderRequest({ ...entry, durationMs: 9999 });
+  const usage = store.providerUsage("usage-provider");
+  assert.equal(usage.requestCount, 1);
+  assert.equal(usage.totalTokens, 1500);
+  assert.equal(usage.averageDurationMs, 600);
+  assert.equal(usage.costUsd, 0.0038);
+  assert.equal(usage.daily.length, 14);
+  assert.equal(store.clearProviderRequestLogs("usage-provider").removed, 1);
+  assert.equal(store.providerUsage("usage-provider").requestCount, 0);
+}
+
+function testConfigurationImportExportAndBackup() {
+  const store = new ProviderStore();
+  assert.equal(store.appSettings().closeToTray, true);
+  assert.equal(store.saveAppSettings({ closeToTray: false }).closeToTray, false);
+  store.saveAppSettings({ closeToTray: true });
+  const bundle = {
+    schema: "share-master-config",
+    version: 1,
+    relays: [{
+      label: "Imported Provider",
+      baseUrl: "https://imported.example/v1",
+      model: "imported-model",
+      protocol: "chat_completions",
+      preset: "custom",
+      discoveredModels: ["imported-model", "imported-model-2"],
+    }, {
+      label: "Imported Fallback",
+      baseUrl: "https://fallback.example/v1",
+      model: "fallback-model",
+      protocol: "chat_completions",
+      preset: "custom",
+      discoveredModels: ["fallback-model"],
+    }],
+    projects: [{ label: "Imported Project", root: "F:\\imported" }],
+    pricing: [{
+      providerLabel: "Imported Provider",
+      providerBaseUrl: "https://imported.example/v1",
+      model: "imported-model",
+      inputPerMillion: 1,
+      cachedInputPerMillion: 0.5,
+      outputPerMillion: 3,
+    }],
+    routes: [{
+      providerLabel: "Imported Provider",
+      providerBaseUrl: "https://imported.example/v1",
+      enabled: true,
+      fallbackProviders: [{ label: "Imported Fallback", baseUrl: "https://fallback.example/v1" }],
+      failureThreshold: 3,
+      cooldownMs: 45000,
+    }],
+  };
+  const imported = store.importConfiguration(bundle);
+  assert.equal(imported.providersAdded, 2);
+  assert.equal(imported.projectsAdded, 1);
+  assert.equal(imported.routesImported, 1);
+  const exported = store.exportConfiguration();
+  assert.equal(exported.containsCredentials, false);
+  assert.equal(JSON.stringify(exported).includes("apiKey"), false);
+  assert.equal(exported.relays.some((relay) => relay.label === "Imported Provider"), true);
+  assert.equal(exported.routes.length, 1);
+  assert.equal(exported.routes[0].fallbackProviders[0].label, "Imported Fallback");
+  assert.equal(store.importConfiguration(bundle).providersUpdated, 2);
+  const importedProvider = store.list().find((provider) => provider.label === "Imported Provider");
+  const importedFallback = store.list().find((provider) => provider.label === "Imported Fallback");
+  const reordered = store.reorderProviders([importedFallback.id, importedProvider.id]);
+  assert.deepEqual(reordered.slice(0, 2).map((provider) => provider.id), [importedFallback.id, importedProvider.id]);
+  store.renameThreadLocal("backup-fixture-thread", "Before backup");
+  const backup = store.createRotatingBackup(10, 0);
+  assert.equal(backup.created, true);
+  store.renameThreadLocal("backup-fixture-thread", "After backup");
+  assert.equal(store.threadAliases()["backup-fixture-thread"], "After backup");
+  assert.equal(store.restoreConfigurationBackup(backup.name).restored, true);
+  assert.equal(store.threadAliases()["backup-fixture-thread"], "Before backup");
+  assert.ok(store.listConfigurationBackups().length >= 1);
+}
+
+function testCrossModelConversationMerge() {
+  const user = (id, text) => ({ id, type: "userMessage", content: [{ type: "text", text }] });
+  const agent = (id, text) => ({ id, type: "agentMessage", text });
+  const base = {
+    id: "logical-thread",
+    modelProvider: "official",
+    updatedAt: 20,
+    turns: [
+      { id: "base-old", items: [user("u1", "old question"), agent("a1", "old answer")] },
+      { id: "base-late", items: [user("u3", "back to Codex"), agent("a3", "Codex again")] },
+    ],
+  };
+  const branch = {
+    id: "deepseek-branch",
+    modelProvider: "deepseek-provider",
+    updatedAt: 15,
+    turns: [{
+      id: "branch-first",
+      items: [user("u2", "large hidden seed\nactual question"), agent("a2", "DeepSeek answer")],
+    }],
+  };
+  const merged = mergeLogicalThread(base, [{
+    providerId: "deepseek-provider",
+    thread: branch,
+    label: "DeepSeek",
+    metadata: {
+      threadId: branch.id,
+      firstUserText: "actual question",
+      createdAt: 10,
+      updatedAt: 15000,
+    },
+  }], [
+    { nativeThreadId: branch.id, turnId: "branch-first", startedAt: 100 },
+    { nativeThreadId: base.id, turnId: "base-late", startedAt: 200 },
+  ]);
+  assert.equal(merged.id, base.id);
+  assert.deepEqual(merged.turns.map((turn) => turn.id), ["base-old", "branch-first", "base-late"]);
+  assert.equal(merged.turns[1].items[0].content[0].text, "actual question");
+  assert.equal(merged.turns[1].items[1].sourceLabel, "DeepSeek");
+  assert.match(buildContinuationPrompt(merged, "next question"), /<shared_conversation>[\s\S]*next question/);
+  const mapped = remapBranchMessage({
+    method: "item/completed",
+    params: { threadId: branch.id, item: user("u2", "hidden seed") },
+  }, branch.id, base.id, { firstUserText: "actual question" });
+  assert.equal(mapped.params.threadId, base.id);
+  assert.equal(mapped.params.item.content[0].text, "actual question");
+}
+
 function testScheduledTasks() {
   const store = new ProviderStore();
   assert.throws(() => store.saveScheduledTask({
@@ -418,6 +817,54 @@ function testScheduledTasks() {
   assert.equal(store.setScheduledTaskEnabled(daily.id, false).enabled, false);
   assert.equal(store.removeScheduledTask(daily.id).id, daily.id);
   assert.throws(() => store.removeScheduledTask(daily.id), /不存在/);
+}
+
+function testScheduledTaskCalendarAndRetries() {
+  const friday = new Date(2026, 6, 31, 9, 30, 0, 0);
+  const monday = new Date(nextScheduledAt(friday.getTime(), "weekdays", friday.getTime()));
+  assert.equal(monday.getDay(), 1);
+  assert.equal(monday.getHours(), 9);
+  assert.equal(monday.getMinutes(), 30);
+
+  const january31 = new Date(2026, 0, 31, 8, 15, 0, 0);
+  const february = new Date(nextScheduledAt(january31.getTime(), "monthly", january31.getTime(), 31));
+  assert.equal(february.getMonth(), 1);
+  assert.equal(february.getDate(), 28);
+  const march = new Date(nextScheduledAt(february.getTime(), "monthly", february.getTime(), 31));
+  assert.equal(march.getMonth(), 2);
+  assert.equal(march.getDate(), 31);
+
+  const store = new ProviderStore();
+  const scheduledAt = new Date(2026, 0, 31, 8, 15, 0, 0).getTime();
+  const monthly = store.saveScheduledTask({
+    title: "Month end",
+    prompt: "Run at month end",
+    scheduledAt,
+    repeat: "monthly",
+  });
+  assert.equal(monthly.scheduleAnchorDay, 31);
+  const manualRun = store.beginScheduledTaskRun(monthly.id, true, scheduledAt - 1000);
+  const manualResult = store.completeScheduledTask(monthly.id, "manual-thread", scheduledAt - 500, {
+    runId: manualRun.id,
+    manual: true,
+  });
+  assert.equal(manualResult.scheduledAt, scheduledAt);
+  assert.equal(manualResult.runHistory[0].status, "completed");
+  assert.equal(manualResult.runHistory[0].manual, true);
+
+  let failure = monthly;
+  const failureTimes = [1000, 2000, 3000, 4000];
+  const retryDelays = [300000, 900000, 3600000];
+  for (let index = 0; index < failureTimes.length; index += 1) {
+    failure = store.failScheduledTask(monthly.id, `failure-${index + 1}`, failureTimes[index]);
+    if (index < retryDelays.length) {
+      assert.equal(failure.retryAt, failureTimes[index] + retryDelays[index]);
+      assert.equal(failure.enabled, true);
+    }
+  }
+  assert.equal(failure.retryAt, null);
+  assert.equal(failure.consecutiveFailures, 4);
+  assert.ok(failure.scheduledAt > failureTimes.at(-1));
 }
 
 async function testScheduledTaskExecution() {
@@ -522,6 +969,339 @@ async function testClaudeThreadDeletion() {
     const server = new ClaudeServer({ claudeConfigDir: root, model: "fable" });
     await server.deleteThread("delete-me");
     assert.equal(fs.existsSync(file), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+async function testOpenAICompatibleStreaming() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "share-master-compatible-unit-"));
+  const image = path.join(root, "fixture.png");
+  const requests = [];
+  const fetchImpl = async (url, options) => {
+    requests.push({ url, options, body: JSON.parse(options.body) });
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"reasoning_content":"先分析"}}]}\n\n'));
+        controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"你好"}}]}\n\n'));
+        controller.enqueue(encoder.encode('data: {"choices":[],"usage":{"prompt_tokens":12,"completion_tokens":7,"total_tokens":19}}\n\n'));
+        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+        controller.close();
+      },
+    });
+    return new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } });
+  };
+  try {
+    fs.writeFileSync(image, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    const server = new OpenAICompatibleServer({
+      id: "deepseek-unit",
+      label: "DeepSeek unit",
+      baseUrl: "https://api.deepseek.com/v1/",
+      model: "deepseek-chat",
+      apiKey: "encrypted-store-value",
+      codexHome: root,
+    }, fetchImpl);
+    await server.start();
+    const created = await server.startThread("F:\\codepro", "deepseek-chat");
+    const completed = new Promise((resolve) => {
+      server.on("notification", (message) => {
+        if (message.method === "turn/completed") resolve(message);
+      });
+    });
+    await server.startTurn(created.thread.id, "测试消息", "F:\\codepro", "client-message", {});
+    const completion = await completed;
+    assert.equal(completion.params.turn.status, "completed");
+    assert.equal(completion.params.turn.usage.total_tokens, 19);
+    assert.equal(requests[0].url, "https://api.deepseek.com/v1/chat/completions");
+    assert.equal(requests[0].options.headers.Authorization, "Bearer encrypted-store-value");
+    assert.deepEqual(requests[0].body.messages, [{ role: "user", content: "测试消息" }]);
+    const read = await server.readThread(created.thread.id);
+    assert.equal(read.thread.turns[0].items.find((item) => item.type === "agentMessage").text, "你好");
+    assert.equal(read.thread.turns[0].items.find((item) => item.type === "reasoning").summary[0].text, "先分析");
+    const secondCompleted = new Promise((resolve) => {
+      const listener = (message) => {
+        if (message.method !== "turn/completed") return;
+        server.off("notification", listener);
+        resolve(message);
+      };
+      server.on("notification", listener);
+    });
+    await server.startTurn(created.thread.id, "第二条", "F:\\codepro", null, {
+      imageInputs: [{ path: image, detail: "auto" }],
+    });
+    await secondCompleted;
+    assert.equal(requests[1].body.messages.length, 3);
+    assert.deepEqual(requests[1].body.messages.slice(0, 2), [
+      { role: "user", content: "测试消息" },
+      { role: "assistant", content: "你好" },
+    ]);
+    assert.equal(requests[1].body.messages[2].content[0].text, "第二条");
+    assert.match(requests[1].body.messages[2].content[1].image_url.url, /^data:image\/png;base64,/);
+    assert.equal((await server.listThreads()).data[0].id, created.thread.id);
+    assert.equal((await server.listModels()).data[0].id, "deepseek-chat");
+    assert.equal(parseSseBlock('data: {"value":1}').value, 1);
+    assert.equal(chatCompletionsEndpoint("https://example.com/v1/chat/completions"), "https://example.com/v1/chat/completions");
+    server.stop();
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+async function testOpenAICompatibleFailover() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "share-master-compatible-failover-"));
+  const jsonResponse = (content, status = 200) => new Response(JSON.stringify(
+    status === 200
+      ? { choices: [{ message: { content } }], usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 } }
+      : { error: { message: content } },
+  ), { status, headers: { "content-type": "application/json" } });
+  const runTurn = async (server, threadId, prompt) => {
+    const completed = new Promise((resolve) => {
+      const listener = (message) => {
+        if (message.method !== "turn/completed") return;
+        server.off("notification", listener);
+        resolve(message.params.turn);
+      };
+      server.on("notification", listener);
+    });
+    await server.startTurn(threadId, prompt, "F:\\codepro");
+    return completed;
+  };
+  try {
+    const calls = [];
+    let primaryAttempts = 0;
+    const server = new OpenAICompatibleServer({
+      id: "primary-unit",
+      label: "Primary unit",
+      baseUrl: "https://primary.example/v1",
+      model: "primary-model",
+      apiKey: "primary-key",
+      codexHome: root,
+      fallbackProviders: [{
+        id: "fallback-unit",
+        label: "Fallback unit",
+        baseUrl: "https://fallback.example/v1",
+        model: "fallback-model",
+        apiKey: "fallback-key",
+      }],
+      failover: { failureThreshold: 2, cooldownMs: 5000 },
+    }, async (url) => {
+      calls.push(url);
+      if (url.startsWith("https://primary.example")) {
+        primaryAttempts += 1;
+        return primaryAttempts <= 2
+          ? jsonResponse("temporary outage", 500)
+          : jsonResponse("primary restored");
+      }
+      return jsonResponse("fallback answer");
+    });
+    await server.start();
+    const threadId = (await server.startThread("F:\\codepro", "primary-model")).thread.id;
+    assert.equal((await runTurn(server, threadId, "first")).providerId, "fallback-unit");
+    assert.equal(server.providerHealth.get("primary-unit").status, "degraded");
+    assert.equal((await runTurn(server, threadId, "second")).providerId, "fallback-unit");
+    assert.ok(server.providerHealth.get("primary-unit").openUntil > Date.now());
+    assert.equal((await runTurn(server, threadId, "third")).providerId, "fallback-unit");
+    assert.deepEqual(calls.map((url) => new URL(url).hostname), [
+      "primary.example", "fallback.example",
+      "primary.example", "fallback.example",
+      "fallback.example",
+    ]);
+    server.providerHealth.get("primary-unit").openUntil = Date.now() - 1;
+    const recovered = await runTurn(server, threadId, "fourth");
+    assert.equal(recovered.providerId, "primary-unit");
+    assert.equal(recovered.model, "primary-model");
+    assert.equal(server.providerHealth.get("primary-unit").failures, 0);
+    assert.equal(server.providerHealth.get("primary-unit").status, "healthy");
+    server.stop();
+
+    let fallbackCalls = 0;
+    const authServer = new OpenAICompatibleServer({
+      id: "auth-primary",
+      label: "Auth primary",
+      baseUrl: "https://auth.example/v1",
+      model: "auth-model",
+      apiKey: "bad-key",
+      codexHome: root,
+      fallbackProviders: [{
+        id: "auth-fallback",
+        label: "Auth fallback",
+        baseUrl: "https://auth-fallback.example/v1",
+        model: "fallback-model",
+        apiKey: "fallback-key",
+      }],
+      failover: { failureThreshold: 1, cooldownMs: 5000 },
+    }, async (url) => {
+      if (url.startsWith("https://auth-fallback.example")) fallbackCalls += 1;
+      return url.startsWith("https://auth.example")
+        ? jsonResponse("invalid API key", 401)
+        : jsonResponse("must not be used");
+    });
+    await authServer.start();
+    const authThread = (await authServer.startThread("F:\\codepro", "auth-model")).thread.id;
+    const authCompletion = await runTurn(authServer, authThread, "auth failure");
+    assert.equal(authCompletion.status, "failed");
+    assert.equal(fallbackCalls, 0);
+    assert.equal(authServer.providerHealth.get("auth-primary").failures, 0);
+    assert.equal(authServer.providerHealth.get("auth-primary").status, "configuration-error");
+    authServer.stop();
+
+    let partialFallbackCalls = 0;
+    const partialServer = new OpenAICompatibleServer({
+      id: "partial-primary",
+      label: "Partial primary",
+      baseUrl: "https://partial.example/v1",
+      model: "partial-model",
+      apiKey: "partial-key",
+      codexHome: root,
+      fallbackProviders: [{
+        id: "partial-fallback",
+        label: "Partial fallback",
+        baseUrl: "https://partial-fallback.example/v1",
+        model: "fallback-model",
+        apiKey: "fallback-key",
+      }],
+      failover: { failureThreshold: 1, cooldownMs: 5000 },
+    }, async (url) => {
+      if (url.startsWith("https://partial-fallback.example")) {
+        partialFallbackCalls += 1;
+        return jsonResponse("duplicate answer");
+      }
+      const encoder = new TextEncoder();
+      let sent = false;
+      return new Response(new ReadableStream({
+        pull(controller) {
+          if (!sent) {
+            sent = true;
+            controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"partial"}}]}\n\n'));
+          } else {
+            controller.error(new TypeError("stream disconnected"));
+          }
+        },
+      }), { status: 200, headers: { "content-type": "text/event-stream" } });
+    });
+    await partialServer.start();
+    const partialThread = (await partialServer.startThread("F:\\codepro", "partial-model")).thread.id;
+    const partialCompletion = await runTurn(partialServer, partialThread, "partial failure");
+    assert.equal(partialCompletion.status, "failed");
+    assert.equal(partialFallbackCalls, 0);
+    const partialRead = await partialServer.readThread(partialThread);
+    assert.equal(partialRead.thread.turns[0].items.find((item) => item.type === "agentMessage").text, "partial");
+    partialServer.stop();
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+async function testOpenAICompatibleInterrupt() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "share-master-compatible-interrupt-"));
+  try {
+    const fetchImpl = (_url, options) => new Promise((_resolve, reject) => {
+      options.signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+    });
+    const server = new OpenAICompatibleServer({
+      id: "qwen-unit",
+      label: "Qwen unit",
+      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      model: "qwen-plus",
+      apiKey: "local-key",
+      codexHome: root,
+    }, fetchImpl);
+    await server.start();
+    const created = await server.startThread("F:\\codepro", "qwen-plus");
+    const completed = new Promise((resolve) => {
+      server.on("notification", (message) => {
+        if (message.method === "turn/completed") resolve(message.params.turn);
+      });
+    });
+    const started = await server.startTurn(created.thread.id, "停止测试", "F:\\codepro");
+    await server.request("turn/interrupt", { threadId: created.thread.id, turnId: started.turn.id });
+    assert.equal((await completed).status, "interrupted");
+    server.stop();
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+async function testOpenAICompatibleSharedCodexHistory() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "share-master-compatible-history-"));
+  const threadId = "019f0000-1111-7222-8333-444455556666";
+  const source = path.join(root, "sessions", "2026", "08", "01", `rollout-${threadId}.jsonl`);
+  const requests = [];
+  try {
+    fs.mkdirSync(path.dirname(source), { recursive: true });
+    const original = [
+      JSON.stringify({
+        timestamp: "2026-08-01T10:00:00.000Z",
+        type: "session_meta",
+        payload: {
+          id: threadId,
+          timestamp: "2026-08-01T10:00:00.000Z",
+          cwd: "F:\\codepro",
+          model_provider: "openai",
+        },
+      }),
+      JSON.stringify({
+        timestamp: "2026-08-01T10:00:01.000Z",
+        type: "event_msg",
+        payload: { type: "user_message", message: "原来的问题" },
+      }),
+      JSON.stringify({
+        timestamp: "2026-08-01T10:00:02.000Z",
+        type: "event_msg",
+        payload: { type: "agent_message", message: "中间进度", phase: "commentary" },
+      }),
+      JSON.stringify({
+        timestamp: "2026-08-01T10:00:03.000Z",
+        type: "event_msg",
+        payload: { type: "agent_message", message: "原来的回答", phase: "final_answer" },
+      }),
+      "",
+    ].join("\n");
+    fs.writeFileSync(source, original, "utf8");
+    const parsed = parseCodexThreadFile(source);
+    assert.equal(parsed.id, threadId);
+    assert.equal(parsed.turns.length, 1);
+    assert.equal(parsed.turns[0].items.length, 3);
+    assert.equal(parsed.turns[0].items[1].sourceLabel, "Codex 历史");
+    assert.equal(parsed._syncedFromCodex, true);
+
+    const server = new OpenAICompatibleServer({
+      id: "deepseek-history",
+      label: "DeepSeek history",
+      baseUrl: "https://api.deepseek.com/v1",
+      model: "deepseek-v4-flash",
+      apiKey: "local-key",
+      codexHome: root,
+    }, async (_url, options) => {
+      requests.push(JSON.parse(options.body));
+      return new Response(JSON.stringify({ choices: [{ message: { content: "DeepSeek 接续回答" } }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    await server.start();
+    const listed = await server.listThreads();
+    assert.equal(listed.data[0].id, threadId);
+    assert.equal(listed.data[0]._syncedFromCodex, true);
+    const resumed = await server.resumeThread(threadId);
+    assert.equal(resumed.thread.turns[0].items[0].content[0].text, "原来的问题");
+    assert.equal(fs.existsSync(server.threadFile(threadId)), false);
+
+    const completed = new Promise((resolve) => {
+      server.on("notification", (message) => {
+        if (message.method === "turn/completed") resolve(message);
+      });
+    });
+    await server.startTurn(threadId, "用 DeepSeek 继续", "F:\\codepro");
+    await completed;
+    assert.equal(fs.existsSync(server.threadFile(threadId)), true);
+    assert.equal(fs.readFileSync(source, "utf8"), original);
+    assert.deepEqual(requests[0].messages.map((message) => message.role), [
+      "user", "assistant", "assistant", "user",
+    ]);
+    assert.equal(requests[0].messages.at(-1).content, "用 DeepSeek 继续");
+    server.stop();
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -749,13 +1529,184 @@ async function testClaudeStreamingThreadParse() {
   }
 }
 
+async function testLocalConversationHistoryReader() {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "share-master-local-history-"));
+  try {
+    const codexSessions = path.join(home, ".codex", "sessions", "2026", "08", "02");
+    const codexArchived = path.join(home, ".codex", "archived_sessions");
+    const claudeProjects = path.join(home, ".claude", "projects", "fixture-project");
+    fs.mkdirSync(codexSessions, { recursive: true });
+    fs.mkdirSync(codexArchived, { recursive: true });
+    fs.mkdirSync(claudeProjects, { recursive: true });
+    const codexFile = path.join(codexSessions, "codex-fixture.jsonl");
+    const archivedFile = path.join(codexArchived, "codex-archived.jsonl");
+    const claudeFile = path.join(claudeProjects, "claude-fixture.jsonl");
+    const codexContents = [
+      JSON.stringify({ timestamp: "2026-08-02T01:00:00.000Z", type: "session_meta", payload: { id: "codex-session", cwd: "F:\\codepro", model_provider: "openai" } }),
+      JSON.stringify({ timestamp: "2026-08-02T01:00:01.000Z", type: "turn_context", payload: { model: "gpt-fixture" } }),
+      JSON.stringify({ timestamp: "2026-08-02T01:00:02.000Z", type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "<permissions instructions>hidden context</permissions instructions>" }] } }),
+      JSON.stringify({ timestamp: "2026-08-02T01:00:03.000Z", type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "修复本地记录浏览器" }] } }),
+      JSON.stringify({ timestamp: "2026-08-02T01:00:04.000Z", type: "response_item", payload: { type: "reasoning", summary: [{ type: "summary_text", text: "检查只读边界" }] } }),
+      JSON.stringify({ timestamp: "2026-08-02T01:00:05.000Z", type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "已经完成" }] } }),
+      "",
+    ].join("\n");
+    fs.writeFileSync(codexFile, codexContents, "utf8");
+    fs.writeFileSync(archivedFile, [
+      JSON.stringify({ timestamp: "2026-07-01T01:00:00.000Z", type: "session_meta", payload: { id: "archived-session", cwd: "F:\\archive" } }),
+      JSON.stringify({ timestamp: "2026-07-01T01:00:01.000Z", type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "归档会话" }] } }),
+      "",
+    ].join("\n"), "utf8");
+    fs.writeFileSync(claudeFile, [
+      JSON.stringify({ type: "ai-title", aiTitle: "Claude 本地会话", sessionId: "claude-session", timestamp: "2026-08-02T02:00:00.000Z" }),
+      JSON.stringify({ type: "user", sessionId: "claude-session", cwd: "F:\\claude-project", timestamp: "2026-08-02T02:00:01.000Z", message: { role: "user", content: "读取 Claude 记录" } }),
+      JSON.stringify({ type: "assistant", sessionId: "claude-session", timestamp: "2026-08-02T02:00:02.000Z", message: { role: "assistant", model: "claude-fixture", content: [{ type: "text", text: "只读预览完成" }, { type: "tool_use", name: "ignored" }] } }),
+      "",
+    ].join("\n"), "utf8");
+
+    const reader = createLocalHistoryReader({ homeDirectory: home });
+    const sources = await reader.sources();
+    assert.deepEqual(sources.map((source) => [source.id, source.available]), [["codex", true], ["claude", true]]);
+    const codex = await reader.list({ sourceId: "codex" });
+    assert.equal(codex.total, 2);
+    assert.equal(codex.conversations.some((conversation) => conversation.archived), true);
+    const active = codex.conversations.find((conversation) => !conversation.archived);
+    assert.equal(active.title, "修复本地记录浏览器");
+    assert.equal(active.model, "gpt-fixture");
+    const codexPreview = await reader.read({ conversationId: active.id });
+    assert.deepEqual(codexPreview.messages.map((message) => message.role), ["user", "reasoning", "assistant"]);
+    assert.equal(codexPreview.messages.some((message) => message.text.includes("hidden context")), false);
+    assert.equal(fs.readFileSync(codexFile, "utf8"), codexContents);
+
+    const claude = await reader.list({ sourceId: "claude", search: "Claude 本地" });
+    assert.equal(claude.total, 1);
+    const claudePreview = await reader.read({ conversationId: claude.conversations[0].id });
+    assert.equal(claudePreview.title, "Claude 本地会话");
+    assert.equal(claudePreview.model, "claude-fixture");
+    assert.deepEqual(claudePreview.messages.map((message) => message.text), ["读取 Claude 记录", "只读预览完成"]);
+
+    const forged = Buffer.from(JSON.stringify({ sourceId: "codex", relativePath: "..\\outside.jsonl" }), "utf8").toString("base64url");
+    await assert.rejects(() => reader.read({ conversationId: forged }), /不允许读取/);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+}
+
+function testLocalProviderDiscovery() {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "share-master-local-providers-"));
+  const codexHome = path.join(home, ".codex");
+  const claudeHome = path.join(home, ".claude");
+  const relayKey = "unit-relay-secret";
+  const claudeKey = "unit-claude-secret";
+  const codexConfig = [
+    'model_provider = "fixture"',
+    'model = "fixture-model"',
+    '',
+    '[model_providers.fixture]',
+    'name = "Fixture Relay"',
+    'base_url = "https://relay.example.test/v1" # keep this comment out of the URL',
+    'env_key = "FIXTURE_API_KEY"',
+    'wire_api = "responses"',
+    '',
+  ].join("\n");
+  const claudeSettings = {
+    env: {
+      ANTHROPIC_BASE_URL: "https://claude.example.test/v1",
+      ANTHROPIC_AUTH_TOKEN: claudeKey,
+      ANTHROPIC_MODEL: "claude-fixture",
+    },
+  };
+  const providers = [];
+  const imported = [];
+  const fakeStore = {
+    list: () => providers.map((provider) => ({ ...provider })),
+    addRelay: (input) => {
+      imported.push({ kind: "relay", ...input });
+      const provider = { id: `relay-${providers.length}`, type: "relay", hasStoredKey: true, ...input };
+      delete provider.apiKey;
+      providers.push(provider);
+      return provider;
+    },
+    saveProviderKey: (id, apiKey) => imported.push({ kind: "key", id, apiKey }),
+    saveClaudeSettings: (input) => {
+      const provider = { id: "claude", type: "claude", protocol: "claude_messages", ...input };
+      providers.push(provider);
+      return provider;
+    },
+  };
+  try {
+    fs.mkdirSync(codexHome, { recursive: true });
+    fs.mkdirSync(claudeHome, { recursive: true });
+    fs.writeFileSync(path.join(codexHome, "config.toml"), codexConfig, "utf8");
+    fs.writeFileSync(path.join(claudeHome, "settings.json"), JSON.stringify(claudeSettings), "utf8");
+    const parsed = parseCodexConfig(codexConfig);
+    assert.equal(parsed.providers.fixture.base_url, "https://relay.example.test/v1");
+    assert.equal(parsed.topLevel.model, "fixture-model");
+
+    const discovery = createLocalProviderDiscovery({
+      homeDirectory: home,
+      environment: { FIXTURE_API_KEY: relayKey },
+      providerStore: fakeStore,
+    });
+    const result = discovery.discover();
+    assert.equal(result.candidates.length, 2);
+    assert.equal(result.candidates.every((candidate) => !Object.hasOwn(candidate, "apiKey")), true);
+    assert.equal(JSON.stringify(result).includes(relayKey), false);
+    assert.equal(JSON.stringify(result).includes(claudeKey), false);
+    const relay = result.candidates.find((candidate) => candidate.kind === "relay");
+    const claude = result.candidates.find((candidate) => candidate.kind === "claude");
+    assert.equal(relay.importable, true);
+    assert.equal(claude.importable, true);
+    assert.equal(discovery.importCandidate(relay.id).status, "imported");
+    assert.equal(imported.find((entry) => entry.kind === "relay").apiKey, relayKey);
+    assert.equal(discovery.importCandidate(relay.id).status, "duplicate");
+    assert.equal(discovery.importCandidate(claude.id).status, "imported");
+    assert.equal(imported.some((entry) => entry.kind === "key" && entry.apiKey === claudeKey), true);
+    assert.equal(fs.readFileSync(path.join(codexHome, "config.toml"), "utf8"), codexConfig);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(claudeHome, "settings.json"), "utf8")), claudeSettings);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+}
+
+function testPersistedMessageQueues() {
+  const store = new ProviderStore();
+  const threadId = `queue-unit-${Date.now()}`;
+  const saved = store.saveMessageQueue(threadId, [{
+    text: "恢复后发送这条消息",
+    displayText: "恢复后发送这条消息",
+    imageInputs: [{ path: "F:\\codepro\\fixture.png", detail: "original" }],
+    skillInputs: [{ name: "fixture", path: "F:\\skills\\fixture\\SKILL.md" }],
+    cwd: "F:\\codepro",
+    clientUserMessageId: "client-fixture",
+    providerId: "deepseek-fixture",
+    model: "deepseek-chat",
+    effort: "high",
+    approvalMode: "auto",
+    apiKey: "must-not-persist",
+  }]);
+  assert.equal(saved.length, 1);
+  assert.equal(saved[0].imageInputs[0].detail, "auto");
+  assert.equal(Object.hasOwn(saved[0], "apiKey"), false);
+  const restored = new ProviderStore().messageQueues();
+  assert.equal(restored[threadId][0].text, "恢复后发送这条消息");
+  assert.equal(JSON.stringify(restored).includes("must-not-persist"), false);
+  assert.deepEqual(store.saveMessageQueue(threadId, []), []);
+  assert.equal(Object.hasOwn(store.messageQueues(), threadId), false);
+}
+
 Promise.resolve()
   .then(testOfficialCliArguments)
   .then(testDiagnosticNormalization)
   .then(testOfficialCredentialSeeding)
   .then(testIsolatedStoreDefaults)
   .then(testConversationMirror)
+  .then(testPrivateConfigurationSync)
+  .then(testWebdavConfigurationSync)
   .then(testSkillMirror)
+  .then(testManagedSkillActivation)
+  .then(testPrivateExtensionsStore)
+  .then(testDeepLinks)
+  .then(testProviderPresetCatalog)
   .then(testThreadPagination)
   .then(testRepeatedPaginationCursor)
   .then(testClientUserMessageId)
@@ -768,7 +1719,12 @@ Promise.resolve()
   .then(testLegacyDeletionMigration)
   .then(testDeferredThreadDeletion)
   .then(testLocalThreadManagement)
+  .then(testThreadBranchMapping)
+  .then(testProviderUsageAndPricing)
+  .then(testConfigurationImportExportAndBackup)
+  .then(testCrossModelConversationMerge)
   .then(testScheduledTasks)
+  .then(testScheduledTaskCalendarAndRetries)
   .then(testScheduledTaskExecution)
   .then(testNewApiBalance)
   .then(testUnsupportedBalance)
@@ -779,8 +1735,15 @@ Promise.resolve()
   .then(testProjectDeletion)
   .then(testClaudeMergedHistoryAndImport)
   .then(testClaudeStreamingThreadParse)
+  .then(testLocalConversationHistoryReader)
+  .then(testLocalProviderDiscovery)
+  .then(testPersistedMessageQueues)
   .then(testClaudeThreadDeletion)
-  .then(() => console.log(JSON.stringify({ ok: true, tests: 30 })))
+  .then(testOpenAICompatibleStreaming)
+  .then(testOpenAICompatibleFailover)
+  .then(testOpenAICompatibleInterrupt)
+  .then(testOpenAICompatibleSharedCodexHistory)
+  .then(() => console.log(JSON.stringify({ ok: true, tests: 47 })))
   .catch((error) => {
     console.error(error.stack || error.message);
     process.exitCode = 1;

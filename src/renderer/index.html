@@ -8,15 +8,17 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <div id="app" class="app-shell">
+    <div id="app" class="app-shell vue-pending">
+      <!-- VUE_TEMPLATE_START -->
       <header class="titlebar">
         <div class="titlebar-brand">
           <button id="sidebar-toggle" class="icon-button" title="切换侧栏" aria-label="切换侧栏"><span data-lucide="panel-left"></span></button>
-          <span class="wordmark">SHARE MASTER</span>
+          <span class="wordmark"><span class="wordmark-symbol">S</span><span>Share Master</span></span>
         </div>
         <div id="window-thread-title" class="window-thread-title">未选择会话</div>
         <div class="titlebar-actions">
-          <button id="workspace-button" class="toolbar-button" title="选择工作目录"><span data-lucide="folder"></span><span id="workspace-label">F:\codepro</span></button>
+          <button id="workspace-button" class="toolbar-button" title="选择工作目录"><span data-lucide="folder"></span><span id="workspace-label">选择工作目录</span></button>
+          <button id="theme-button" class="icon-button" title="主题：跟随系统" aria-label="切换主题"><span data-lucide="monitor"></span></button>
           <button id="new-window-button" class="icon-button" title="新建窗口" aria-label="新建窗口"><span data-lucide="panels-top-left"></span></button>
         </div>
       </header>
@@ -30,7 +32,7 @@
           </label>
         </div>
         <div class="sidebar-section-label project-heading">
-          <span>Projects</span>
+          <span>项目</span>
           <button id="add-project-button" class="section-icon-button" title="添加 Project" aria-label="添加 Project"><span data-lucide="folder-plus"></span></button>
         </div>
         <nav id="project-list" class="project-list" aria-label="Projects"></nav>
@@ -38,6 +40,7 @@
           <span>聊天记录</span>
           <span class="sidebar-heading-actions">
             <span id="thread-count">0</span>
+            <button id="local-history-button" class="section-icon-button" title="浏览 Codex、Claude 本地记录" aria-label="浏览本地记录"><span data-lucide="hard-drive"></span></button>
             <button id="schedule-task-button" class="section-icon-button" title="安排任务" aria-label="安排任务"><span data-lucide="calendar-plus"></span></button>
           </span>
         </div>
@@ -59,17 +62,18 @@
 
       <main class="workspace">
         <div id="status-toast" class="status-toast hidden" role="status" aria-live="polite"></div>
+        <attachment-drop-overlay></attachment-drop-overlay>
         <section id="empty-state" class="empty-state">
           <div class="empty-symbol"><span data-lucide="terminal-square"></span></div>
-          <h1 id="empty-title">开始一个工作会话</h1>
-          <p id="empty-subtitle">选择左侧记录，或直接描述你要完成的事情。</p>
+          <h1 id="empty-title">新会话</h1>
+          <p id="empty-subtitle">Share Master</p>
         </section>
         <section id="chat-view" class="chat-view hidden" aria-live="polite"></section>
 
         <footer class="composer-wrap">
           <div id="approval-banner" class="approval-banner hidden"></div>
           <div class="composer">
-            <div id="attachment-list" class="attachment-list hidden" aria-label="待发送图片"></div>
+            <attachment-tray></attachment-tray>
             <textarea id="composer-input" rows="1" placeholder="给 Codex 发送消息" disabled></textarea>
             <div id="skill-menu" class="skill-menu hidden" role="menu" aria-label="Skills">
               <input id="skill-search" type="search" placeholder="搜索 Skills" autocomplete="off" />
@@ -98,7 +102,7 @@
             </div>
             <div class="composer-footer">
               <div class="session-controls">
-                <button id="attach-button" class="skill-button" type="button" title="添加图片" aria-label="添加图片" disabled>
+                <button id="attach-button" class="skill-button" type="button" title="添加图片附件" aria-label="添加图片附件" disabled>
                   <span data-lucide="paperclip"></span>
                 </button>
                 <button id="skill-button" class="skill-button" type="button" title="Skills" aria-label="Skills" aria-haspopup="menu" aria-expanded="false" disabled>
@@ -120,14 +124,15 @@
                 </button>
                 <span id="connection-badge"><span class="status-dot"></span>未连接</span>
               </div>
-              <button id="send-button" class="send-button" title="发送" aria-label="发送" disabled><span data-lucide="arrow-up"></span></button>
-              <button id="stop-button" class="stop-button hidden" title="停止" aria-label="停止"><span data-lucide="square"></span></button>
+              <div class="composer-submit" aria-label="消息操作">
+                <button id="send-button" class="send-button" title="发送" aria-label="发送" disabled><span data-lucide="arrow-up"></span></button>
+                <button id="queue-button" class="queue-button hidden" title="排队发送" aria-label="排队发送" disabled><span data-lucide="list-plus"></span></button>
+                <button id="stop-button" class="stop-button hidden" title="停止" aria-label="停止"><span data-lucide="square"></span></button>
+              </div>
             </div>
           </div>
         </footer>
       </main>
-    </div>
-
     <div id="provider-overlay" class="overlay">
       <section class="provider-dialog" role="dialog" aria-modal="true" aria-labelledby="provider-title">
         <div class="dialog-heading">
@@ -140,10 +145,42 @@
         <div class="dialog-actions">
           <div class="dialog-action-group">
             <button id="add-connection-button" class="text-button"><span data-lucide="plus"></span>添加连接</button>
+            <button id="local-provider-discovery-button" class="text-button"><span data-lucide="scan-search"></span>发现本机配置</button>
             <button id="official-login-button" class="text-button"><span data-lucide="log-in"></span>登录默认官方账号</button>
             <button id="record-home-button" class="text-button"><span data-lucide="database"></span>记录位置</button>
+            <button id="health-button" class="text-button"><span data-lucide="activity"></span>连接监控</button>
+            <button id="extensions-button" class="text-button"><span data-lucide="blocks"></span>扩展中心</button>
+            <button id="usage-button" class="text-button"><span data-lucide="chart-no-axes-combined"></span>用量与成本</button>
+            <button id="config-import-button" class="text-button"><span data-lucide="file-up"></span>导入</button>
+            <button id="config-export-button" class="text-button"><span data-lucide="file-down"></span>导出</button>
+            <button id="backup-button" class="text-button"><span data-lucide="archive-restore"></span>备份</button>
+            <button id="sync-button" class="text-button"><span data-lucide="cloud-cog"></span>同步</button>
+            <button id="app-settings-button" class="text-button"><span data-lucide="settings-2"></span>应用设置</button>
           </div>
           <span id="provider-error" class="provider-error"></span>
+        </div>
+      </section>
+    </div>
+
+    <div id="local-provider-overlay" class="overlay hidden">
+      <section class="provider-dialog local-provider-dialog" role="dialog" aria-modal="true" aria-labelledby="local-provider-title">
+        <div class="dialog-heading">
+          <span class="dialog-logo"><span data-lucide="scan-search"></span></span>
+          <div><h2 id="local-provider-title">发现本机模型配置</h2><p>只读扫描 Codex、Claude Code、CCSwitch 和环境变量。</p></div>
+          <button id="local-provider-close-button" class="icon-button dialog-close" type="button" title="关闭" aria-label="关闭"><span data-lucide="x"></span></button>
+        </div>
+        <div class="local-provider-privacy">
+          <span data-lucide="shield-check"></span>
+          <div><strong>原配置保持不变</strong><small>API Key 不会发送到界面；确认导入后，仅加密写入 Share Master 自己的安全存储。</small></div>
+        </div>
+        <div class="local-provider-toolbar">
+          <span id="local-provider-summary">尚未扫描</span>
+          <button id="local-provider-refresh-button" class="text-button" type="button"><span data-lucide="refresh-cw"></span>重新扫描</button>
+        </div>
+        <div id="local-provider-list" class="local-provider-list" aria-live="polite"></div>
+        <div class="dialog-actions local-provider-actions">
+          <span id="local-provider-status" class="provider-error neutral-status"></span>
+          <button id="local-provider-import-button" class="primary-command" type="button" disabled><span data-lucide="download"></span>导入所选配置</button>
         </div>
       </section>
     </div>
@@ -152,20 +189,34 @@
       <section class="provider-dialog connection-dialog" role="dialog" aria-modal="true" aria-labelledby="connection-title">
         <div class="dialog-heading">
           <span class="dialog-logo"><span data-lucide="plug"></span></span>
-          <div><h2 id="connection-title">添加连接</h2><p>添加中转站，或创建独立的官方账号登录。</p></div>
+          <div><h2 id="connection-title">添加连接</h2><p>添加模型供应商，或创建独立的官方账号登录。</p></div>
           <button id="close-connection-button" class="icon-button dialog-close" title="关闭"><span data-lucide="x"></span></button>
         </div>
         <div class="segmented-control" role="tablist">
-          <button class="active" data-connection-tab="relay">中转站</button>
+          <button class="active" data-connection-tab="relay">模型 API</button>
           <button data-connection-tab="account">GPT 账号</button>
         </div>
         <form id="relay-form" class="connection-form">
-          <label><span>显示名称</span><input name="label" required placeholder="例如：实验室中转站" /></label>
+          <input name="id" type="hidden" />
+          <label><span>供应商预设</span><select id="provider-preset" name="preset"><option value="">正在读取预设...</option></select></label>
+          <label><span>显示名称</span><input name="label" required placeholder="例如：实验室模型 API" /></label>
           <label><span>Base URL</span><input name="baseUrl" type="url" required placeholder="https://example.com/v1" /></label>
-          <label><span>模型</span><input name="model" required placeholder="gpt-5.4" /></label>
-          <label><span>API 协议</span><select name="protocol" disabled><option value="responses">OpenAI Responses API（Codex 当前要求）</option></select></label>
+          <label><span>默认模型</span><input name="model" list="provider-model-options" required placeholder="测试连接后选择模型" /><datalist id="provider-model-options"></datalist></label>
+          <label><span>API 协议</span><select name="protocol"><option value="chat_completions">OpenAI Chat Completions</option><option value="responses">OpenAI Responses（Codex 代理）</option></select></label>
           <label><span>API Key</span><input name="apiKey" type="password" required autocomplete="new-password" placeholder="仅加密保存在本机" /></label>
-          <div class="form-actions"><span id="connection-error" class="provider-error"></span><button class="primary-command" type="submit"><span data-lucide="plus"></span>添加中转站</button></div>
+          <div class="model-load-row provider-model-load-row">
+            <button id="provider-load-models" class="text-button" type="button"><span data-lucide="list-restart"></span>测试连接并读取模型</button>
+            <span id="provider-model-status" class="provider-error" aria-live="polite"></span>
+          </div>
+          <div id="provider-route-settings" class="provider-route-settings">
+            <label class="toggle-row route-toggle"><input id="provider-failover-enabled" name="failoverEnabled" type="checkbox" /><span>自动故障转移</span></label>
+            <label><span>添加备用连接</span><select id="provider-fallback" name="fallbackProviderId"><option value="">选择连接加入队列</option></select></label>
+            <label><span>熔断阈值</span><input id="provider-failure-threshold" name="failureThreshold" type="number" min="1" max="10" value="2" /></label>
+            <label><span>冷却秒数</span><input id="provider-cooldown-seconds" name="cooldownSeconds" type="number" min="5" max="3600" value="60" /></label>
+            <div id="provider-fallback-chain" class="provider-fallback-chain" aria-label="备用连接顺序"></div>
+          </div>
+          <p id="provider-protocol-note" class="form-note">直接调用 DeepSeek 的聊天接口；支持流式回复、中断和本地会话，不包含 Codex 本地工具。</p>
+          <div class="form-actions"><span id="connection-error" class="provider-error"></span><button class="primary-command" type="submit"><span data-lucide="check"></span><span id="provider-submit-label">添加供应商</span></button></div>
         </form>
         <form id="account-form" class="connection-form hidden">
           <label><span>账号名称</span><input name="label" required placeholder="例如：个人账号 / 实验室账号" /></label>
@@ -210,6 +261,266 @@
           <p class="form-note">Codex 会话保存在该目录；Claude 会话保存在其 <code>claude</code> 子目录。切换后需重新连接当前账号。</p>
           <div class="form-actions"><span id="record-home-error" class="provider-error"></span><button class="primary-command" type="submit"><span data-lucide="check"></span>应用</button></div>
         </form>
+      </section>
+    </div>
+
+    <div id="usage-overlay" class="overlay hidden">
+      <section class="provider-dialog usage-dialog" role="dialog" aria-modal="true" aria-labelledby="usage-title">
+        <div class="dialog-heading">
+          <span class="dialog-logo usage-logo"><span data-lucide="chart-no-axes-combined"></span></span>
+          <div><h2 id="usage-title">用量与成本</h2><p>本机请求统计，不记录消息正文或凭据。</p></div>
+          <button id="usage-close-button" class="icon-button dialog-close" type="button" title="关闭" aria-label="关闭"><span data-lucide="x"></span></button>
+        </div>
+        <div class="usage-toolbar">
+          <label><span>连接</span><select id="usage-provider-filter"><option value="">全部连接</option></select></label>
+          <button id="usage-refresh-button" class="secondary-command" type="button"><span data-lucide="refresh-cw"></span>刷新</button>
+        </div>
+        <div id="usage-stats" class="usage-stats" aria-live="polite"></div>
+        <section class="usage-trend-section">
+          <div class="usage-section-heading"><strong>近 14 天趋势</strong><span>Token / 天</span></div>
+          <div id="usage-trend" class="usage-trend" aria-label="近 14 天 Token 用量趋势"></div>
+        </section>
+        <div class="usage-log-section">
+          <div class="usage-section-heading"><strong>最近请求</strong><span id="usage-log-count">0</span></div>
+          <div id="usage-log-list" class="usage-log-list"></div>
+        </div>
+        <form id="pricing-form" class="pricing-form">
+          <div class="usage-section-heading"><strong>模型价格</strong><span>USD / 100 万 Token</span></div>
+          <div class="pricing-grid">
+            <label><span>连接</span><select id="pricing-provider" required></select></label>
+            <label><span>模型</span><input id="pricing-model" required placeholder="model-id" /></label>
+            <label><span>输入</span><input id="pricing-input" type="number" min="0" step="0.000001" value="0" required /></label>
+            <label><span>缓存输入</span><input id="pricing-cache" type="number" min="0" step="0.000001" value="0" required /></label>
+            <label><span>输出</span><input id="pricing-output" type="number" min="0" step="0.000001" value="0" required /></label>
+            <button class="primary-command" type="submit"><span data-lucide="save"></span>保存价格</button>
+          </div>
+          <span id="pricing-status" class="provider-error" aria-live="polite"></span>
+        </form>
+        <div class="dialog-actions usage-actions">
+          <button id="usage-clear-button" class="text-button danger-text" type="button"><span data-lucide="trash-2"></span>清空日志</button>
+          <button id="usage-done-button" class="secondary-command" type="button">完成</button>
+        </div>
+      </section>
+    </div>
+
+    <div id="local-history-overlay" class="overlay hidden">
+      <section class="provider-dialog local-history-dialog" role="dialog" aria-modal="true" aria-labelledby="local-history-title">
+        <div class="dialog-heading">
+          <span class="dialog-logo local-history-logo"><span data-lucide="hard-drive"></span></span>
+          <div><h2 id="local-history-title">本地聊天记录</h2><p>只读浏览 Codex、Claude Code 保存在本机的会话，不修改原始文件。</p></div>
+          <button id="local-history-close-button" class="icon-button dialog-close" type="button" title="关闭" aria-label="关闭"><span data-lucide="x"></span></button>
+        </div>
+        <div class="local-history-toolbar">
+          <label class="local-history-search"><span data-lucide="search"></span><input id="local-history-search" type="search" placeholder="搜索标题、目录或模型" autocomplete="off" /></label>
+          <span id="local-history-summary" class="local-history-summary">尚未读取</span>
+          <button id="local-history-refresh-button" class="secondary-command" type="button"><span data-lucide="refresh-cw"></span>刷新</button>
+        </div>
+        <div class="local-history-browser">
+          <nav id="local-history-sources" class="local-history-sources" aria-label="本地记录来源"></nav>
+          <section class="local-history-index" aria-label="本地会话列表">
+            <div id="local-history-list" class="local-history-list"></div>
+          </section>
+          <article id="local-history-preview" class="local-history-preview" aria-live="polite">
+            <div class="local-history-empty"><span data-lucide="messages-square"></span><strong>选择一条本地会话</strong><span>消息只会显示在此窗口中，不会导入或改写。</span></div>
+          </article>
+        </div>
+      </section>
+    </div>
+
+    <div id="health-overlay" class="overlay hidden">
+      <section class="provider-dialog health-dialog" role="dialog" aria-modal="true" aria-labelledby="health-title">
+        <div class="dialog-heading">
+          <span class="dialog-logo health-logo"><span data-lucide="activity"></span></span>
+          <div><h2 id="health-title">连接监控</h2><p>连接可用性、响应延迟与自动故障转移状态。</p></div>
+          <button id="health-close-button" class="icon-button dialog-close" type="button" title="关闭" aria-label="关闭"><span data-lucide="x"></span></button>
+        </div>
+        <div class="health-toolbar">
+          <div><strong>模型连接</strong><span id="health-summary">尚未检测</span></div>
+          <button id="health-test-all-button" class="secondary-command" type="button"><span data-lucide="refresh-cw"></span>全部检测</button>
+        </div>
+        <div id="health-list" class="health-list" aria-live="polite"></div>
+        <div class="dialog-actions"><span id="health-status" class="provider-error"></span><button id="health-done-button" class="secondary-command" type="button">完成</button></div>
+      </section>
+    </div>
+
+    <div id="backup-overlay" class="overlay hidden">
+      <section class="provider-dialog backup-dialog" role="dialog" aria-modal="true" aria-labelledby="backup-title">
+        <div class="dialog-heading">
+          <span class="dialog-logo backup-logo"><span data-lucide="archive-restore"></span></span>
+          <div><h2 id="backup-title">配置备份</h2><p>本机加密凭据随备份保存，仅能在当前 Windows 安全上下文中解密。</p></div>
+          <button id="backup-close-button" class="icon-button dialog-close" type="button" title="关闭" aria-label="关闭"><span data-lucide="x"></span></button>
+        </div>
+        <div class="backup-toolbar">
+          <button id="backup-create-button" class="primary-command" type="button"><span data-lucide="archive"></span>立即备份</button>
+          <span id="backup-status" class="provider-error" aria-live="polite"></span>
+        </div>
+        <div class="backup-list-heading"><strong>轮换备份</strong><span>最多保留 10 份</span></div>
+        <div id="backup-list" class="backup-list"></div>
+        <div class="dialog-actions"><span></span><button id="backup-done-button" class="secondary-command" type="button">完成</button></div>
+      </section>
+    </div>
+
+    <div id="sync-overlay" class="overlay hidden">
+      <section class="provider-dialog sync-dialog" role="dialog" aria-modal="true" aria-labelledby="sync-title">
+        <div class="dialog-heading">
+          <span class="dialog-logo sync-logo"><span data-lucide="cloud-cog"></span></span>
+          <div><h2 id="sync-title">配置同步</h2><p>通过自选目录同步 Share Master 配置，不包含 API Key 或 MCP 密钥。</p></div>
+          <button id="sync-close-button" class="icon-button dialog-close" type="button" title="关闭" aria-label="关闭"><span data-lucide="x"></span></button>
+        </div>
+        <div class="sync-backend-tabs" role="tablist" aria-label="同步方式">
+          <button class="active" type="button" data-sync-backend="directory"><span data-lucide="folder-sync"></span>同步目录</button>
+          <button type="button" data-sync-backend="webdav"><span data-lucide="cloud"></span>WebDAV</button>
+        </div>
+        <div class="sync-settings">
+          <div id="sync-directory-fields">
+            <label><span>同步目录</span><div class="sync-path-row"><input id="sync-directory-input" readonly placeholder="尚未选择同步目录" /><button id="sync-directory-choose" class="secondary-command" type="button"><span data-lucide="folder-open"></span>选择</button></div></label>
+          </div>
+          <form id="sync-webdav-form" class="sync-webdav-fields hidden">
+            <label class="sync-webdav-url"><span>WebDAV 目录 URL</span><input name="url" type="url" required placeholder="https://dav.example.com/share-master/" /></label>
+            <label><span>用户名</span><input name="username" autocomplete="username" placeholder="已保存时可留空" /></label>
+            <label><span>密码</span><input name="password" type="password" autocomplete="new-password" placeholder="已保存时可留空" /></label>
+            <button class="secondary-command" type="submit"><span data-lucide="save"></span>保存连接</button>
+          </form>
+          <label class="toggle-row"><input id="sync-auto-input" type="checkbox" /><span>启动时自动检查配置更新</span></label>
+        </div>
+        <div class="sync-summary" id="sync-summary" aria-live="polite"></div>
+        <div class="sync-actions">
+          <button id="sync-now-button" class="primary-command" type="button"><span data-lucide="refresh-cw"></span>立即同步</button>
+          <button id="sync-push-button" class="secondary-command" type="button"><span data-lucide="upload"></span>保留本机</button>
+          <button id="sync-pull-button" class="secondary-command" type="button"><span data-lucide="download"></span><span id="sync-pull-label">使用同步目录</span></button>
+          <span id="sync-status" class="provider-error"></span>
+        </div>
+        <div class="backup-list-heading"><strong>同步历史</strong><span>最近 20 次</span></div>
+        <div id="sync-history" class="sync-history"></div>
+        <div class="dialog-actions"><span></span><button id="sync-done-button" class="secondary-command" type="button">完成</button></div>
+      </section>
+    </div>
+
+    <div id="extensions-overlay" class="overlay hidden">
+      <section class="provider-dialog extensions-dialog" role="dialog" aria-modal="true" aria-labelledby="extensions-title">
+        <div class="dialog-heading">
+          <span class="dialog-logo extensions-logo"><span data-lucide="blocks"></span></span>
+          <div><h2 id="extensions-title">扩展中心</h2><p>Share Master 私有 Skills、Prompt 模板与 MCP 连接。</p></div>
+          <button id="extensions-close-button" class="icon-button dialog-close" type="button" title="关闭" aria-label="关闭"><span data-lucide="x"></span></button>
+        </div>
+        <div class="extensions-tabs" role="tablist">
+          <button class="active" type="button" data-extension-tab="skills"><span data-lucide="wand-sparkles"></span>Skills <small id="extensions-skill-count">0</small></button>
+          <button type="button" data-extension-tab="prompts"><span data-lucide="text-cursor-input"></span>Prompts <small id="extensions-prompt-count">0</small></button>
+          <button type="button" data-extension-tab="mcp"><span data-lucide="server-cog"></span>MCP <small id="extensions-mcp-count">0</small></button>
+        </div>
+        <section id="extensions-skills-panel" class="extensions-panel">
+          <div class="extensions-toolbar">
+            <label class="extensions-search"><span data-lucide="search"></span><input id="extensions-skill-search" type="search" placeholder="搜索名称、说明或来源" /></label>
+            <button id="skill-install-button" class="secondary-command" type="button"><span data-lucide="package-plus"></span>安装</button>
+            <button id="extensions-refresh-skills" class="secondary-command" type="button"><span data-lucide="refresh-cw"></span>刷新镜像</button>
+          </div>
+          <div id="extensions-skill-list" class="extensions-list" aria-live="polite"></div>
+        </section>
+        <section id="extensions-prompts-panel" class="extensions-panel hidden">
+          <div class="extensions-split">
+            <div class="extensions-index">
+              <div class="extensions-index-heading"><strong>本地模板</strong><button id="prompt-new-button" class="icon-button" type="button" title="新建 Prompt" aria-label="新建 Prompt"><span data-lucide="plus"></span></button></div>
+              <div id="extensions-prompt-list" class="extensions-list"></div>
+            </div>
+            <form id="prompt-form" class="extensions-editor">
+              <input name="id" type="hidden" />
+              <div class="extensions-editor-heading"><div><strong id="prompt-editor-title">新建 Prompt</strong><span>保存后可通过 / 命令插入</span></div><div class="prompt-editor-heading-actions"><div class="prompt-mode-switch" role="tablist" aria-label="Prompt 视图"><button class="active" type="button" data-prompt-mode="edit"><span data-lucide="pencil-line"></span>编辑</button><button type="button" data-prompt-mode="preview"><span data-lucide="eye"></span>预览</button></div><button id="prompt-delete-button" class="icon-button danger-icon hidden" type="button" title="删除 Prompt" aria-label="删除 Prompt"><span data-lucide="trash-2"></span></button></div></div>
+              <label><span>命令名称</span><div class="command-input"><span>/</span><input name="name" required maxlength="80" placeholder="review-code" /></div></label>
+              <label><span>说明</span><input name="description" maxlength="240" placeholder="简短描述模板用途" /></label>
+              <label id="prompt-content-field" class="extensions-grow"><span>模板内容</span><textarea name="content" required maxlength="20000" placeholder="输入发送给模型的模板内容"></textarea><div id="prompt-markdown-preview" class="prompt-markdown-preview markdown-body" aria-live="polite"></div></label>
+              <div class="extensions-form-actions"><span id="prompt-error" class="provider-error"></span><button class="primary-command" type="submit"><span data-lucide="save"></span>保存</button></div>
+            </form>
+          </div>
+        </section>
+        <section id="extensions-mcp-panel" class="extensions-panel hidden">
+          <div class="extensions-split">
+            <div class="extensions-index">
+              <div class="extensions-index-heading"><strong>MCP 服务</strong><button id="mcp-new-button" class="icon-button" type="button" title="添加 MCP" aria-label="添加 MCP"><span data-lucide="plus"></span></button></div>
+              <div id="extensions-mcp-list" class="extensions-list"></div>
+            </div>
+            <form id="mcp-form" class="extensions-editor">
+              <input name="id" type="hidden" />
+              <div class="extensions-editor-heading"><div><strong id="mcp-editor-title">添加 MCP</strong><span>配置仅保存在 Share Master</span></div><button id="mcp-delete-button" class="icon-button danger-icon hidden" type="button" title="删除 MCP" aria-label="删除 MCP"><span data-lucide="trash-2"></span></button></div>
+              <div class="extensions-form-grid">
+                <label><span>名称</span><input name="name" required maxlength="100" placeholder="filesystem" /></label>
+                <label><span>传输方式</span><select id="mcp-transport" name="transport"><option value="stdio">stdio</option><option value="http">Streamable HTTP</option><option value="sse">SSE</option></select></label>
+              </div>
+              <label id="mcp-command-field"><span>启动命令</span><input name="command" placeholder="npx" /></label>
+              <label id="mcp-args-field"><span>参数（每行一项）</span><textarea name="args" class="compact-textarea" placeholder="-y&#10;@modelcontextprotocol/server-filesystem"></textarea></label>
+              <label id="mcp-url-field" class="hidden"><span>服务 URL</span><input name="url" type="url" placeholder="https://example.com/mcp" /></label>
+              <label><span>加密环境变量（KEY=VALUE，每行一项）</span><textarea name="env" class="compact-textarea" autocomplete="off" placeholder="ACCESS_TOKEN=..."></textarea></label>
+              <label class="toggle-row"><input name="enabled" type="checkbox" checked /><span>启用此 MCP</span></label>
+              <div class="extensions-form-actions"><span id="mcp-error" class="provider-error"></span><button id="mcp-test-button" class="secondary-command hidden" type="button"><span data-lucide="activity"></span>检测</button><button class="primary-command" type="submit"><span data-lucide="save"></span>保存</button></div>
+            </form>
+          </div>
+        </section>
+        <div class="dialog-actions extensions-footer"><span id="extensions-status" class="provider-error"></span><button id="extensions-done-button" class="secondary-command" type="button">完成</button></div>
+      </section>
+    </div>
+
+    <div id="skill-install-overlay" class="overlay hidden">
+      <section class="provider-dialog skill-install-dialog" role="dialog" aria-modal="true" aria-labelledby="skill-install-title">
+        <div class="dialog-heading">
+          <span class="dialog-logo skill-install-logo"><span data-lucide="package-plus"></span></span>
+          <div><h2 id="skill-install-title">安装 Skill</h2><p>导入到 Share Master 私有 Skill 源。</p></div>
+          <button id="skill-install-close-button" class="icon-button dialog-close" type="button" title="关闭" aria-label="关闭"><span data-lucide="x"></span></button>
+        </div>
+        <form id="skill-install-form" class="skill-install-form">
+          <div class="segmented-control skill-install-tabs" role="tablist">
+            <button class="active" type="button" data-skill-install-kind="folder">文件夹</button>
+            <button type="button" data-skill-install-kind="zip">ZIP</button>
+            <button type="button" data-skill-install-kind="github">GitHub</button>
+          </div>
+          <label><span id="skill-install-source-label">Skill 文件夹</span><div class="sync-path-row"><input id="skill-install-source" required readonly placeholder="选择包含 SKILL.md 的文件夹" /><button id="skill-install-browse" class="secondary-command" type="button"><span data-lucide="folder-open"></span>选择</button></div></label>
+          <p class="form-note">支持单个 Skill 或包含多个 Skill 的仓库；安装前会检查路径、符号链接、文件数量和体积。</p>
+          <div class="form-actions"><span id="skill-install-status" class="provider-error"></span><button class="primary-command" type="submit"><span data-lucide="package-check"></span>安装</button></div>
+        </form>
+      </section>
+    </div>
+
+    <div id="app-settings-overlay" class="overlay hidden">
+      <section class="provider-dialog app-settings-dialog" role="dialog" aria-modal="true" aria-labelledby="app-settings-title">
+        <div class="dialog-heading">
+          <span class="dialog-logo app-settings-logo"><span data-lucide="settings-2"></span></span>
+          <div><h2 id="app-settings-title">应用设置</h2><p>Share Master 的启动与窗口行为。</p></div>
+          <button id="app-settings-close-button" class="icon-button dialog-close" type="button" title="关闭" aria-label="关闭"><span data-lucide="x"></span></button>
+        </div>
+        <form id="app-settings-form" class="app-settings-form">
+          <label class="settings-toggle-row">
+            <span class="settings-toggle-icon"><span data-lucide="power"></span></span>
+            <span><strong>Windows 登录时启动</strong><small>通过 Share Master 启动脚本打开私有数据目录</small></span>
+            <input name="launchAtLogin" type="checkbox" />
+          </label>
+          <label class="settings-toggle-row">
+            <span class="settings-toggle-icon"><span data-lucide="panel-top-close"></span></span>
+            <span><strong>关闭窗口后留在托盘</strong><small>后台会话和已安排任务继续运行</small></span>
+            <input name="closeToTray" type="checkbox" checked />
+          </label>
+          <section class="update-panel" aria-labelledby="update-panel-title">
+            <span class="settings-toggle-icon update-icon"><span data-lucide="git-compare-arrows"></span></span>
+            <span class="update-copy"><strong id="update-panel-title">应用更新</strong><small id="update-status">通过私有 GitHub 仓库安全检查，不会覆盖未提交改动</small></span>
+            <button id="check-update-button" class="secondary-command" type="button"><span data-lucide="refresh-cw"></span>检查更新</button>
+            <span id="app-version" class="version-badge">v0.1.0</span>
+          </section>
+          <div class="form-actions"><span id="app-settings-status" class="provider-error"></span><button class="primary-command" type="submit"><span data-lucide="save"></span>保存设置</button></div>
+        </form>
+      </section>
+    </div>
+
+    <div id="deep-link-import-overlay" class="overlay hidden">
+      <section class="provider-dialog import-preview-dialog" role="dialog" aria-modal="true" aria-labelledby="import-preview-title">
+        <div class="dialog-heading">
+          <span class="dialog-logo import-preview-logo"><span data-lucide="scan-eye"></span></span>
+          <div><h2 id="import-preview-title">检查导入内容</h2><p id="import-preview-description">确认后才会写入 Share Master 私有配置。</p></div>
+          <button id="import-preview-close-button" class="icon-button dialog-close" type="button" title="取消" aria-label="取消"><span data-lucide="x"></span></button>
+        </div>
+        <div id="import-preview-details" class="import-preview-details"></div>
+        <div class="import-safety-note"><span data-lucide="shield-check"></span><span><strong>敏感信息不会从链接导入</strong><small>API Key、Token、密码和凭据字段会被直接拒绝。</small></span></div>
+        <div class="dialog-actions import-preview-actions">
+          <span id="import-preview-status" class="provider-error"></span>
+          <button id="import-preview-cancel-button" class="secondary-command" type="button">取消</button>
+          <button id="import-preview-confirm-button" class="primary-command" type="button"><span data-lucide="check"></span>确认导入</button>
+        </div>
       </section>
     </div>
 
@@ -276,15 +587,28 @@
             <label><span>任务内容</span><textarea id="task-prompt-input" name="prompt" required maxlength="20000" rows="5" placeholder="输入到期后发送给模型的内容"></textarea></label>
             <div class="task-form-grid">
               <label><span>执行时间</span><input id="task-time-input" name="scheduledAt" type="datetime-local" required /></label>
-              <label><span>重复</span><select id="task-repeat-select" name="repeat"><option value="once">仅一次</option><option value="daily">每天</option><option value="weekly">每周</option></select></label>
+              <label><span>重复</span><select id="task-repeat-select" name="repeat"><option value="once">仅一次</option><option value="hourly">每小时</option><option value="daily">每天</option><option value="weekdays">每个工作日</option><option value="weekly">每周</option><option value="monthly">每月</option></select></label>
             </div>
+            <div class="task-timezone"><span data-lucide="globe-2"></span><span id="task-timezone-label">本地时区</span></div>
             <div class="task-form-grid">
               <label><span>Project</span><select id="task-project-select" name="projectId"><option value="">不指定 Project</option></select></label>
               <label><span>连接</span><select id="task-provider-select" name="providerId"><option value="">执行时使用任一连接</option></select></label>
             </div>
-            <label class="toggle-row"><input id="task-enabled-input" name="enabled" type="checkbox" checked /><span>启用此任务</span></label>
+            <div class="task-form-grid">
+              <label><span>模型（可选）</span><input id="task-model-input" name="model" list="task-model-options" placeholder="使用连接的默认模型" /><datalist id="task-model-options"></datalist></label>
+              <label><span>执行权限</span><select id="task-approval-select" name="approvalMode"><option value="auto">自动执行</option><option value="ask">遇到操作时询问</option><option value="full">完全访问</option></select></label>
+            </div>
+            <div class="task-toggle-list">
+              <label class="toggle-row"><input id="task-enabled-input" name="enabled" type="checkbox" checked /><span>启用此任务</span></label>
+              <label class="toggle-row"><input id="task-notify-input" name="notifyOnCompletion" type="checkbox" checked /><span>完成或失败时通知</span></label>
+              <label class="toggle-row"><input id="task-retry-input" name="retryOnFailure" type="checkbox" checked /><span>失败后自动重试</span></label>
+            </div>
+            <section id="task-history" class="task-history hidden" aria-label="运行记录">
+              <div class="task-history-heading"><strong>运行记录</strong><span id="task-history-summary"></span></div>
+              <div id="task-history-list" class="task-history-list"></div>
+            </section>
           </div>
-          <div class="form-actions"><span id="task-error" class="provider-error"></span><button class="primary-command" type="submit"><span data-lucide="calendar-check"></span><span id="task-submit-label">安排</span></button></div>
+          <div class="form-actions"><span id="task-error" class="provider-error"></span><button id="task-run-now-button" class="secondary-command hidden" type="button"><span data-lucide="play"></span>立即运行</button><button class="primary-command" type="submit"><span data-lucide="calendar-check"></span><span id="task-submit-label">安排</span></button></div>
         </form>
       </section>
     </div>
@@ -292,13 +616,16 @@
     <div id="thread-menu" class="context-menu hidden">
       <button data-action="archive"><span data-lucide="archive"></span>归档</button>
       <button data-action="rename"><span data-lucide="pencil"></span>重命名</button>
+      <button class="hidden" data-action="clear-queue"><span data-lucide="list-x"></span>清空待发送</button>
       <button class="danger-action" data-action="remove"><span data-lucide="trash-2"></span>移除会话</button>
       <button class="danger-action hidden" data-action="delete-now"><span data-lucide="circle-x"></span>立即删除</button>
+    </div>
+      <!-- VUE_TEMPLATE_END -->
     </div>
 
     <script src="../../node_modules/lucide/dist/umd/lucide.js"></script>
     <script src="../../node_modules/marked/marked.min.js"></script>
     <script src="../../node_modules/dompurify/dist/purify.min.js"></script>
-    <script src="app.js"></script>
+    <script type="module" src="vue-bootstrap.js"></script>
   </body>
 </html>

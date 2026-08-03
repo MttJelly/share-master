@@ -30,10 +30,15 @@ const before = {
 };
 
 fs.rmSync(store, { recursive: true, force: true });
+const modelFixtureSource = before.active[0] || before.archived[0];
+if (!modelFixtureSource) throw new Error("Model settings QA requires one existing read-only conversation fixture.");
+const modelFixtureTarget = path.join(store, "conversations", "sessions", "qa", path.basename(modelFixtureSource));
+fs.mkdirSync(path.dirname(modelFixtureTarget), { recursive: true });
+fs.copyFileSync(modelFixtureSource, modelFixtureTarget);
 const result = spawnSync(electron, [`--user-data-dir=${profile}`, root], {
   cwd: root,
   encoding: "utf8",
-  timeout: 45000,
+  timeout: 90000,
   windowsHide: true,
   env: {
     ...process.env,
@@ -75,5 +80,5 @@ try {
     screenshot,
   }));
 } finally {
-  fs.rmSync(store, { recursive: true, force: true });
+  fs.rmSync(store, { recursive: true, force: true, maxRetries: 10, retryDelay: 250 });
 }

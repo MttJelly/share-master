@@ -22,6 +22,7 @@ async function run() {
   let renameCalls = 0;
   let deleteCalls = 0;
   let taskSaveCalls = 0;
+  let taskRunCalls = 0;
   const normalize = (value) => String(value || "").trim().replace(/\s+/g, " ");
   const key = (value) => normalize(value).toLocaleLowerCase("zh-CN");
 
@@ -40,6 +41,7 @@ async function run() {
     runningTaskIds: [],
     recordHome: "",
   }));
+  ipcMain.handle("extension:list", () => ({ skills: [], prompts: [], mcpServers: [] }));
   ipcMain.handle("project:add", (_event, input) => {
     addCalls += 1;
     const label = normalize(input?.label);
@@ -89,6 +91,10 @@ async function run() {
       lastThreadId: null,
       lastError: null,
       retryAt: null,
+      runHistory: [],
+      notifyOnCompletion: input?.notifyOnCompletion !== false,
+      retryOnFailure: input?.retryOnFailure !== false,
+      approvalMode: input?.approvalMode || "auto",
     };
     scheduledTasks.push(task);
     return task;
@@ -101,6 +107,19 @@ async function run() {
   ipcMain.handle("task:remove", (_event, taskId) => {
     const index = scheduledTasks.findIndex((item) => item.id === taskId);
     return scheduledTasks.splice(index, 1)[0];
+  });
+  ipcMain.handle("task:run-now", (_event, taskId) => {
+    taskRunCalls += 1;
+    const task = scheduledTasks.find((item) => item.id === taskId);
+    const run = {
+      id: `run-${taskRunCalls}`,
+      startedAt: Date.now(),
+      finishedAt: null,
+      status: "running",
+      manual: true,
+    };
+    task.runHistory = [run];
+    return { run, task: { ...task } };
   });
   ipcMain.handle("thread:hide", (_event, input) => {
     hiddenThreads.add(input.threadId);
@@ -147,19 +166,21 @@ async function run() {
   });
   await window.loadFile(path.join(root, "src", "renderer", "index.html"));
   const summary = await window.webContents.executeJavaScript(`(async () => {
-    const waitUntil = async (predicate, timeout = 5000) => {
+    const waitUntil = async (predicate, timeout = 5000, label = 'unknown') => {
       const started = Date.now();
       while (Date.now() - started < timeout) {
         if (predicate()) return;
         await new Promise((resolve) => setTimeout(resolve, 25));
       }
-      throw new Error('Timed out waiting for Project UI.');
+      const projectError = document.querySelector('#project-error')?.textContent || '';
+      const overlayHidden = document.querySelector('#project-overlay')?.classList.contains('hidden');
+      throw new Error('Timed out waiting for Project UI (' + label + '). error=' + projectError + ' overlayHidden=' + overlayHidden);
     };
     const createProject = async (label) => {
       document.querySelector('#add-project-button').click();
       document.querySelector('#project-name-input').value = label;
       document.querySelector('#project-form').requestSubmit();
-      await waitUntil(() => document.querySelector('#project-overlay').classList.contains('hidden'));
+      await waitUntil(() => document.querySelector('#project-overlay').classList.contains('hidden'), 5000, 'create project');
     };
     window.confirm = () => true;
     await createProject('Old Project');
@@ -167,7 +188,7 @@ async function run() {
     await createProject('Delete Project');
     state.projectThreads = { 'delete-thread': 'project-3' };
     document.querySelector('[data-project-id="project-3"] .project-delete').click();
-    await waitUntil(() => !document.querySelector('[data-project-id="project-3"]'));
+    await waitUntil(() => !document.querySelector('[data-project-id="project-3"]'), 5000, 'delete project');
     const deletedProjectMapping = state.projectThreads['delete-thread'];
     const activeAfterDelete = state.activeProject;
 
@@ -179,12 +200,12 @@ async function run() {
     };
     document.querySelector('#project-name-input').value = 'Renamed Project';
     document.querySelector('#project-form').requestSubmit();
-    await waitUntil(() => document.querySelector('#project-overlay').classList.contains('hidden'));
+    await waitUntil(() => document.querySelector('#project-overlay').classList.contains('hidden'), 5000, 'rename project');
 
     document.querySelector('[data-project-id="project-1"] .project-rename').click();
     document.querySelector('#project-name-input').value = '  NEW   project  ';
     document.querySelector('#project-form').requestSubmit();
-    await waitUntil(() => document.querySelector('#project-error').textContent.includes('已存在'));
+    await waitUntil(() => document.querySelector('#project-error').textContent.includes('已存在'), 5000, 'duplicate project');
     const duplicateError = document.querySelector('#project-error').textContent;
     document.querySelector('#project-close-button').click();
 
@@ -303,7 +324,7 @@ async function run() {
     const inferredLabels = state.projects.map((project) => project.label);
     const inferredCountBeforeDelete = document.querySelectorAll('.project-row:not([data-project-id="all"])').length;
     document.querySelector('.project-row:not([data-project-id="all"]) .project-delete').click();
-    await waitUntil(() => document.querySelectorAll('.project-row:not([data-project-id="all"])').length === inferredCountBeforeDelete - 1);
+    await waitUntil(() => document.querySelectorAll('.project-row:not([data-project-id="all"])').length === inferredCountBeforeDelete - 1, 5000, 'delete inferred project');
     const inferredCountAfterDelete = document.querySelectorAll('.project-row:not([data-project-id="all"])').length;
     state.hiddenProjectRoots = [];
     state.savedProjects = savedProjects;
@@ -315,11 +336,11 @@ async function run() {
     document.querySelector('#schedule-task-button').click();
     document.querySelector('#task-name-input').value = 'Daily summary';
     document.querySelector('#task-prompt-input').value = 'Summarize the project';
-    document.querySelector('#task-time-input').value = '2026-07-27T09:30';
+    document.querySelector('#task-time-input').value = taskDateInputValue(Date.now() + 60 * 60 * 1000);
     document.querySelector('#task-repeat-select').value = 'daily';
     document.querySelector('#task-provider-select').value = 'fixture-provider';
     document.querySelector('#task-form').requestSubmit();
-    await waitUntil(() => document.querySelector('#task-overlay').classList.contains('hidden'));
+    await waitUntil(() => document.querySelector('#task-overlay').classList.contains('hidden'), 5000, 'save task');
     state.pendingDeletions = [{ threadId: 'old-thread', expiresAt: Date.now() + 60000 }];
     state.hiddenThreadIds = new Set(['old-thread']);
     updateThreadViewControls();
@@ -332,6 +353,17 @@ async function run() {
       providerId: state.scheduledTasks[0]?.providerId || null,
       composerHidden: getComputedStyle(document.querySelector('.composer-wrap')).display === 'none'
     };
+    document.querySelector('.task-main').click();
+    document.querySelector('#task-run-now-button').click();
+    await waitUntil(() => document.querySelector('#task-history-list .task-history-row.running'), 5000, 'run task now');
+    const scheduledDetails = {
+      approvalMode: state.scheduledTasks[0].approvalMode,
+      notifyOnCompletion: state.scheduledTasks[0].notifyOnCompletion,
+      retryOnFailure: state.scheduledTasks[0].retryOnFailure,
+      runNowDisabled: document.querySelector('#task-run-now-button').disabled,
+      historyText: document.querySelector('#task-history-list').textContent.trim(),
+    };
+    document.querySelector('#task-close-button').click();
     const runningTaskId = state.scheduledTasks[0].id;
     state.runningTaskIds = new Set([runningTaskId]);
     renderScheduledTasks();
@@ -368,6 +400,7 @@ async function run() {
       crossWindowUnarchiveCleared,
       crossWindowAliasTitle,
       scheduledView,
+      scheduledDetails,
       runningTaskUi,
       activeComposerVisible
     };
@@ -377,6 +410,7 @@ async function run() {
   assert.equal(renameCalls, 1, "A client-side duplicate name must not call the rename IPC.");
   assert.equal(deleteCalls, 2);
   assert.equal(taskSaveCalls, 1);
+  assert.equal(taskRunCalls, 1);
   assert.equal(summary.renameDialog.title, "重命名 Project");
   assert.equal(summary.renameDialog.rootHidden, true);
   assert.equal(summary.renameDialog.submit, "保存");
@@ -398,6 +432,11 @@ async function run() {
     composerHidden: true,
   });
   assert.equal(summary.activeComposerVisible, true);
+  assert.equal(summary.scheduledDetails.approvalMode, "auto");
+  assert.equal(summary.scheduledDetails.notifyOnCompletion, true);
+  assert.equal(summary.scheduledDetails.retryOnFailure, true);
+  assert.equal(summary.scheduledDetails.runNowDisabled, true);
+  assert.match(summary.scheduledDetails.historyText, /手动运行中/);
   assert.deepEqual(summary.runningTaskUi, {
     label: "正在执行",
     rowMarkedRunning: true,
@@ -442,6 +481,7 @@ async function run() {
     renameCalls,
     deleteCalls,
     taskSaveCalls,
+    taskRunCalls,
     ...summary,
     screenshot,
     scheduledScreenshot,

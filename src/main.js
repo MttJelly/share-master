@@ -1,18 +1,27 @@
-const { app, BrowserWindow, dialog, ipcMain, net, Notification, shell } = require("electron");
-const { execFile } = require("node:child_process");
+const { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, net, Notification, shell, Tray } = require("electron");
+const { execFile, spawn } = require("node:child_process");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { CodexServer, CODEX_HOME } = require("./codex-server");
 const { ClaudeServer } = require("./claude-server");
+const { OpenAICompatibleServer } = require("./openai-compatible-server");
 const { fetchClaudeModels, fetchClaudeModelsSafely } = require("./claude-models");
 const { fetchOpenAIModels } = require("./openai-models");
-const { ProviderStore, reasoningProfile } = require("./provider-store");
+const { ProviderStore, providerPresetCatalog, reasoningProfile } = require("./provider-store");
 const { fetchRelayBalance } = require("./relay-balance");
 const { executeScheduledTask, finalizeScheduledTask } = require("./scheduled-task-runner");
 const { syncConversationMirror } = require("./conversation-mirror");
-const { syncSkillRoots } = require("./skill-mirror");
+const { createLocalHistoryReader } = require("./local-conversation-history");
+const { createLocalProviderDiscovery } = require("./local-provider-discovery");
+const { installSkillSource, listManagedSkills, syncManagedSkills } = require("./skill-mirror");
+const { parseShareMasterLink, shareMasterLinkFromArgs } = require("./deep-link");
+const {
+  buildContinuationPrompt,
+  mergeLogicalThread,
+  remapBranchMessage,
+} = require("./conversation-branches");
 
 app.setName("Share Master");
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
@@ -21,7 +30,12 @@ const connectionGenerations = new Map();
 const connectionAttempts = new Map();
 const runningScheduledTasks = new Set();
 const scheduledTaskRuns = new Map();
+const pendingTurnDisplays = new Map();
+const pendingSteerDisplays = new Map();
+const pendingBranchCreations = new WeakMap();
+const providerRequestRuns = new WeakMap();
 let conversationMirrorSync = null;
+let skillRefreshPromise = null;
 const INTERACTIVE_SERVER_REQUESTS = new Set([
   "item/commandExecution/requestApproval",
   "item/fileChange/requestApproval",
@@ -32,7 +46,29 @@ const INTERACTIVE_SERVER_REQUESTS = new Set([
   "execCommandApproval",
 ]);
 let providerStore;
+let localProviderDiscovery;
+let sharedHistoryHome = null;
+let sharedCompatibleHistory = null;
+let sharedClaudeHistory = null;
+const sharedThreadSearchCache = new Map();
+let skillSources = [];
+let tray = null;
+let quitting = false;
+let lastActiveWindow = null;
+const pendingDeepLinks = [];
 const DEFAULT_RENDERER_THREAD_TURNS = 40;
+const APPLICATION_ROOT = path.resolve(__dirname, "..");
+let applicationUpdateCheck = null;
+const localHistoryReader = createLocalHistoryReader({ homeDirectory: os.homedir() });
+
+function loginItemOptions(openAtLogin = undefined) {
+  const launcher = path.join(path.resolve(__dirname, ".."), "Start Share Master.cmd");
+  return {
+    ...(typeof openAtLogin === "boolean" ? { openAtLogin } : {}),
+    path: process.env.ComSpec || "C:\\Windows\\System32\\cmd.exe",
+    args: ["/d", "/s", "/c", `"${launcher}"`],
+  };
+}
 
 function rendererThreadWindow(result, requestedTurns = DEFAULT_RENDERER_THREAD_TURNS) {
   const thread = result?.thread;
@@ -70,6 +106,15 @@ function userEnvironmentVariable(name) {
   });
 }
 
+function execFilePromise(file, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    execFile(file, args, { windowsHide: true, maxBuffer: 4 * 1024 * 1024, ...options }, (error, stdout, stderr) => {
+      if (error) reject(new Error(String(stderr || error.message).trim()));
+      else resolve({ stdout: String(stdout || ""), stderr: String(stderr || "") });
+    });
+  });
+}
+
 async function providerEnvironment() {
   if (process.env.SHARE_MASTER_STORE_ROOT) return {};
   const [niubi, hexuan] = await Promise.all([
@@ -80,6 +125,49 @@ async function providerEnvironment() {
     ...(niubi ? { NIUBI_API_KEY: niubi } : {}),
     ...(hexuan ? { HEXUAN_API_KEY: hexuan } : {}),
   };
+}
+
+async function checkApplicationUpdate() {
+  if (applicationUpdateCheck) return applicationUpdateCheck;
+  applicationUpdateCheck = (async () => {
+    if (!fs.existsSync(path.join(APPLICATION_ROOT, ".git"))) {
+      return { status: "unmanaged", checkedAt: Date.now(), message: "当前版本不是 Git 工作副本。" };
+    }
+    const runGit = async (...args) => (await execFilePromise("git.exe", args, {
+      cwd: APPLICATION_ROOT,
+      timeout: 60000,
+    })).stdout.trim();
+    try {
+      const branch = await runGit("branch", "--show-current") || "main";
+      const currentRevision = await runGit("rev-parse", "HEAD");
+      const dirty = Boolean(await runGit("status", "--porcelain", "--untracked-files=normal"));
+      await runGit("fetch", "--quiet", "--no-tags", "origin", branch);
+      const remoteRevision = await runGit("rev-parse", `origin/${branch}`);
+      const counts = (await runGit("rev-list", "--left-right", "--count", `HEAD...origin/${branch}`))
+        .split(/\s+/).map((value) => Number(value) || 0);
+      const [ahead, behind] = counts;
+      const status = behind > 0 ? dirty ? "blocked" : "available" : ahead > 0 ? "ahead" : "current";
+      const messages = {
+        blocked: `发现 ${behind} 个远端更新，但本地有未提交改动，已禁止自动更新。`,
+        available: `发现 ${behind} 个远端更新。`,
+        ahead: `本地领先远端 ${ahead} 个提交。`,
+        current: "当前已是最新版本。",
+      };
+      return {
+        status, branch, dirty, ahead, behind, checkedAt: Date.now(),
+        currentRevision: currentRevision.slice(0, 10),
+        remoteRevision: remoteRevision.slice(0, 10),
+        message: messages[status],
+      };
+    } catch (error) {
+      return {
+        status: "error",
+        checkedAt: Date.now(),
+        message: `无法检查更新：${String(error.message || error).replace(/https?:\/\/[^\s@]+@/g, "https://")}`.slice(0, 500),
+      };
+    }
+  })();
+  try { return await applicationUpdateCheck; } finally { applicationUpdateCheck = null; }
 }
 
 function apiKeyForProvider(provider, environment) {
@@ -168,6 +256,14 @@ function createWindow(providerId = null, projectRoot = null, threadId = null, pr
     },
   });
   const webContentsId = window.webContents.id;
+  lastActiveWindow = window;
+  window.on("focus", () => { lastActiveWindow = window; });
+  window.on("close", (event) => {
+    if (quitting || process.env.CODEX_DECK_QA_SCREENSHOT || providerStore?.appSettings().closeToTray === false) return;
+    event.preventDefault();
+    window.hide();
+    refreshTrayMenu();
+  });
   window.loadFile(path.join(__dirname, "renderer", "index.html"), {
     query: {
       ...(providerId ? { provider: providerId } : {}),
@@ -303,7 +399,20 @@ function createWindow(providerId = null, projectRoot = null, threadId = null, pr
                 if (option && !error) {
                   const providerOption = option.closest('.provider-option');
                   const providerId = providerOption.dataset.provider;
-                  const formReset = [...form.querySelectorAll('input')].every((input) => !input.value);
+                  while (Date.now() - started < 10000
+                    && !document.querySelector('#connection-overlay').classList.contains('hidden')) {
+                    await new Promise((resolve) => setTimeout(resolve, 50));
+                  }
+                  const formReset = ['id', 'label', 'baseUrl', 'model', 'apiKey']
+                    .every((name) => !form.elements[name].value);
+                  document.querySelector('[data-provider-row="' + CSS.escape(providerId) + '"] .provider-configure').click();
+                  form.elements.label.value = 'QA Relay Edited';
+                  form.requestSubmit();
+                  while (Date.now() - started < 10000) {
+                    if ([...document.querySelectorAll('.provider-option strong')]
+                      .some((node) => node.textContent === 'QA Relay Edited')) break;
+                    await new Promise((resolve) => setTimeout(resolve, 100));
+                  }
                   window.confirm = () => true;
                   document.querySelector('[data-provider-row="' + CSS.escape(providerId) + '"] .provider-delete').click();
                   while (Date.now() - started < 10000) {
@@ -311,6 +420,7 @@ function createWindow(providerId = null, projectRoot = null, threadId = null, pr
                       window.__relayFormQa = {
                         providerId,
                         providerAdded: true,
+                        providerEdited: true,
                         formReset,
                         providerDeleted: true,
                         error: null
@@ -347,6 +457,7 @@ function createWindow(providerId = null, projectRoot = null, threadId = null, pr
               throw new Error('Timed out waiting for renderer state.');
             };
             try {
+              await waitUntil(() => document.querySelector('.thread-item'));
               const firstThread = document.querySelector('.thread-item');
               if (!firstThread) throw new Error('No thread available for model settings QA.');
               const title = firstThread.querySelector('strong').textContent;
@@ -522,19 +633,28 @@ function createWindow(providerId = null, projectRoot = null, threadId = null, pr
             },
             relayForm: window.__relayFormQa || null,
             modelSettings: window.__modelSettingsQa || null,
-            threadActions: window.__threadActionsQa || null
+            threadActions: window.__threadActionsQa || null,
+            deepLinkImport: {
+              visible: !document.querySelector('#deep-link-import-overlay').classList.contains('hidden'),
+              title: document.querySelector('#import-preview-title').textContent,
+              rows: document.querySelectorAll('#import-preview-details .import-preview-row').length,
+              safety: document.querySelector('.import-safety-note').textContent,
+              confirmDisabled: document.querySelector('#import-preview-confirm-button').disabled
+            }
           })`);
           summary.windowCount = BrowserWindow.getAllWindows().length;
           console.log(JSON.stringify(summary));
         } catch (error) {
           console.error(`[qa] ${error.message}`);
         } finally {
-          app.quit();
+          for (const server of servers.values()) server.stop();
+          setTimeout(() => app.exit(0), 50);
         }
       }, Number(process.env.CODEX_DECK_QA_DELAY || 3500));
     });
   }
   window.on("closed", () => {
+    if (lastActiveWindow === window) lastActiveWindow = null;
     const server = servers.get(webContentsId);
     if (server) {
       failScheduledTasksForServer(server, "任务窗口已关闭。");
@@ -545,6 +665,113 @@ function createWindow(providerId = null, projectRoot = null, threadId = null, pr
     nextConnectionGeneration(webContentsId);
   });
   return window;
+}
+
+function activeAppWindow() {
+  if (lastActiveWindow && !lastActiveWindow.isDestroyed()) return lastActiveWindow;
+  return BrowserWindow.getAllWindows().find((window) => !window.isDestroyed()) || null;
+}
+
+function showAppWindow() {
+  const window = activeAppWindow() || createWindow();
+  if (window.isMinimized()) window.restore();
+  window.show();
+  window.focus();
+  lastActiveWindow = window;
+  return window;
+}
+
+function navigateApp(payload) {
+  const window = showAppWindow();
+  const send = () => {
+    if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+      window.webContents.send("app:navigate", payload);
+    }
+  };
+  if (window.webContents.isLoadingMainFrame()) window.webContents.once("did-finish-load", send);
+  else send();
+}
+
+function openDeepLink(rawLink) {
+  const link = parseShareMasterLink(rawLink);
+  if (!link) return false;
+  if (!providerStore) {
+    pendingDeepLinks.push(rawLink);
+    return true;
+  }
+  if (link.action === "extensions") {
+    navigateApp({ action: "extensions", tab: link.tab });
+    return true;
+  }
+  if (link.action === "scheduled") {
+    navigateApp({ view: "scheduled" });
+    return true;
+  }
+  if (link.action === "import") {
+    navigateApp({ action: "import-preview", importType: link.importType, config: link.config });
+    return true;
+  }
+  const provider = link.provider && providerStore.list().some((item) => item.id === link.provider)
+    ? link.provider
+    : null;
+  const project = link.projectId
+    ? providerStore.listProjects().find((item) => item.id === link.projectId)
+    : null;
+  let workspace = project?.root || null;
+  if (link.workspace) {
+    try {
+      if (fs.existsSync(link.workspace) && fs.statSync(link.workspace).isDirectory()) workspace = path.resolve(link.workspace);
+    } catch {}
+  }
+  createWindow(
+    provider,
+    project?.root || null,
+    link.action === "open" ? link.thread : null,
+    project?.id || null,
+    workspace,
+  );
+  return true;
+}
+
+function refreshTrayMenu() {
+  if (!tray || !providerStore) return;
+  const providers = providerStore.list();
+  const tasks = providerStore.scheduledTasks();
+  const runningCount = runningScheduledTasks.size;
+  const enabledCount = tasks.filter((task) => task.enabled).length;
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: "显示 Share Master", click: () => showAppWindow() },
+    { label: "新会话", click: () => navigateApp({ action: "new-chat" }) },
+    {
+      label: `连接 (${providers.length})`,
+      submenu: providers.map((provider) => ({
+        label: provider.connectionLabel || provider.label,
+        click: () => createWindow(provider.id),
+      })),
+    },
+    {
+      label: `已安排 (${enabledCount}${runningCount ? ` · ${runningCount} 运行中` : ""})`,
+      click: () => navigateApp({ view: "scheduled" }),
+    },
+    { type: "separator" },
+    {
+      label: "退出 Share Master",
+      click: () => {
+        quitting = true;
+        for (const window of BrowserWindow.getAllWindows()) window.destroy();
+        app.quit();
+      },
+    },
+  ]));
+}
+
+async function createTray() {
+  if (tray || process.env.CODEX_DECK_QA_SCREENSHOT) return;
+  const icon = await app.getFileIcon(process.execPath, { size: "small" });
+  tray = new Tray(icon);
+  tray.setToolTip("Share Master");
+  tray.on("click", () => showAppWindow());
+  refreshTrayMenu();
 }
 
 function waitForQa(predicate, timeoutMs = 15000) {
@@ -667,7 +894,7 @@ async function runMultiProviderWindowQa(firstWindow) {
     await waitForQaStep("second window switched to hexuan", () => servers.get(secondWindow.webContents.id)?.provider.id === "hexuan");
     await waitForQaStep("all renderer windows ready", async () => {
       const summaries = await Promise.all([firstWindow, secondWindow].map(rendererWindowSummary));
-      return summaries.every((summary) => summary.connection.includes("已连接") && summary.threadCount > 0);
+      return summaries.every((summary) => summary.connection.includes("已连接"));
     }, 30000);
 
     await firstWindow.webContents.executeJavaScript(`document.querySelector('#new-window-button').click()`);
@@ -685,7 +912,7 @@ async function runMultiProviderWindowQa(firstWindow) {
         ? summary
         : false;
     });
-    unavailableWindow.close();
+    unavailableWindow.destroy();
     await waitForQaStep("unavailable provider window closed", () => BrowserWindow.getAllWindows().length === 2);
 
     const windows = [firstWindow, secondWindow];
@@ -723,10 +950,512 @@ function serverFor(event) {
   return server;
 }
 
+function serverEngine(server) {
+  return server?.provider?.engine || "codex";
+}
+
+function sharedHistoryReaders() {
+  const home = providerStore.conversationHome();
+  if (sharedHistoryHome !== home || !sharedCompatibleHistory || !sharedClaudeHistory) {
+    sharedHistoryHome = home;
+    sharedCompatibleHistory = new OpenAICompatibleServer({
+      id: "share-master-history",
+      label: "Share Master History",
+      baseUrl: "https://history.invalid/v1",
+      model: "history",
+      apiKey: "history-reader",
+      codexHome: home,
+    }, net.fetch);
+    sharedClaudeHistory = new ClaudeServer(providerStore.resolve("claude"));
+  }
+  return { compatible: sharedCompatibleHistory, claude: sharedClaudeHistory };
+}
+
+function historySources(server) {
+  const currentEngine = serverEngine(server);
+  const readers = sharedHistoryReaders();
+  const sources = [{ engine: currentEngine, reader: server }];
+  if (currentEngine !== "openai-compatible") {
+    sources.push({ engine: "openai-compatible", reader: readers.compatible });
+  }
+  if (currentEngine !== "claude") sources.push({ engine: "claude", reader: readers.claude });
+  return sources;
+}
+
+function currentProviderId(server) {
+  return String(server?.provider?.id || "").trim();
+}
+
+function logicalThreadId(server, nativeThreadId) {
+  return providerStore.logicalThreadIdForBranch(currentProviderId(server), nativeThreadId)
+    || providerStore.logicalThreadIdForAnyBranch(nativeThreadId)
+    || nativeThreadId;
+}
+
+function branchForServer(server, logicalId) {
+  return providerStore.threadBranch(logicalId, currentProviderId(server));
+}
+
+function threadIsNativeToServer(server, thread, sourceEngine) {
+  const engine = serverEngine(server);
+  if (sourceEngine !== engine) return false;
+  if (engine !== "openai-compatible") return true;
+  return thread?.modelProvider === currentProviderId(server);
+}
+
+async function readLogicalBaseThread(server, requestedThreadId) {
+  const targetId = providerStore.logicalThreadIdForAnyBranch(requestedThreadId) || requestedThreadId;
+  let lastError = null;
+  for (const { engine, reader } of historySources(server)) {
+    try {
+      const response = await reader.readThread(targetId);
+      const sourceEngine = response.thread?._historyEngine || engine;
+      return {
+        ...response,
+        thread: { ...response.thread, _historyEngine: sourceEngine },
+        sourceEngine,
+      };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error("未找到共享会话记录。");
+}
+
+async function readBranchThread(server, providerId, branch) {
+  const readers = sharedHistoryReaders();
+  const reader = providerId === currentProviderId(server)
+    ? server
+    : branch.engine === "claude" ? readers.claude : readers.compatible;
+  const response = await reader.readThread(branch.threadId);
+  return response.thread;
+}
+
+async function logicalBranchThreads(server, logicalId) {
+  const allBranches = providerStore.threadBranches()[logicalId] || {};
+  const labels = new Map(providerStore.list().map((provider) => [provider.id, provider.connectionLabel || provider.label]));
+  const entries = await Promise.all(Object.entries(allBranches).map(async ([providerId, branch]) => {
+    try {
+      return {
+        providerId,
+        metadata: branch,
+        thread: await readBranchThread(server, providerId, branch),
+        label: labels.get(providerId) || providerId,
+      };
+    } catch (error) {
+      console.error(`[shared-branch:${providerId}] ${error.message}`);
+      return null;
+    }
+  }));
+  return entries.filter(Boolean).sort((left, right) => (
+    Number(left.metadata.createdAt) - Number(right.metadata.createdAt)
+  ));
+}
+
+async function sharedListThreads(server, searchTerm = "", archived = false) {
+  const results = await Promise.all(historySources(server).map(async ({ engine, reader }) => {
+    try {
+      const response = await reader.listThreads(searchTerm, archived);
+      return (response.data || []).map((thread) => ({
+        ...thread,
+        _historyEngine: thread._historyEngine || engine,
+      }));
+    } catch (error) {
+      console.error(`[shared-history:${engine}] ${error.message}`);
+      return [];
+    }
+  }));
+  const merged = new Map();
+  const branchIds = new Set(providerStore.branchThreadIds());
+  for (const threads of results) {
+    for (const thread of threads) {
+      if (branchIds.has(thread.id)) continue;
+      if (!merged.has(thread.id)) merged.set(thread.id, thread);
+    }
+  }
+  const branches = providerStore.threadBranches();
+  for (const [logicalId, thread] of merged) {
+    const branchUpdatedAt = Math.max(0, ...Object.values(branches[logicalId] || {}).map((branch) => (
+      Number(branch.updatedAt) > 1e12 ? Number(branch.updatedAt) / 1000 : Number(branch.updatedAt) || 0
+    )));
+    if (branchUpdatedAt > Number(thread.recencyAt || thread.updatedAt || 0)) {
+      merged.set(logicalId, { ...thread, updatedAt: branchUpdatedAt, recencyAt: branchUpdatedAt });
+    }
+  }
+  const data = [...merged.values()].sort((left, right) => (
+    Number(right.recencyAt || right.updatedAt) - Number(left.recencyAt || left.updatedAt)
+  ));
+  return { data, nextCursor: null, backwardsCursor: null };
+}
+
+async function sharedReadThread(server, threadId) {
+  const targetId = providerStore.logicalThreadIdForAnyBranch(threadId) || threadId;
+  const response = await readLogicalBaseThread(server, targetId);
+  const branches = await logicalBranchThreads(server, targetId);
+  const merged = branches.length
+    ? mergeLogicalThread(response.thread, branches, providerStore.threadTimeline(targetId))
+    : { ...response.thread, _crossModelReadOnly: false };
+  return {
+    ...response,
+    thread: {
+      ...merged,
+      id: targetId,
+      _historyEngine: response.sourceEngine,
+      _nativeForCurrentProvider: threadIsNativeToServer(server, response.thread, response.sourceEngine),
+    },
+  };
+}
+
+function searchableThreadText(thread) {
+  const parts = [thread?.name || thread?.title || ""];
+  for (const turn of thread?.turns || []) {
+    for (const item of turn.items || []) {
+      if (item.type === "userMessage") {
+        for (const content of item.content || []) if (content?.type === "text") parts.push(content.text || "");
+      } else if (item.type === "agentMessage" || item.type === "plan") {
+        parts.push(item.text || "");
+      } else if (item.type === "reasoning") {
+        for (const summary of item.summary || []) parts.push(typeof summary === "string" ? summary : summary?.text || "");
+      }
+    }
+  }
+  return parts.join("\n").replace(/\s+/g, " ").trim();
+}
+
+async function searchSharedThreads(server, rawQuery) {
+  const query = String(rawQuery || "").trim().toLocaleLowerCase("zh-CN").slice(0, 200);
+  if (query.length < 2) return [];
+  const [active, archived] = await Promise.all([
+    sharedListThreads(server, "", false),
+    sharedListThreads(server, "", true),
+  ]);
+  const merged = new Map([...active.data, ...archived.data].map((thread) => [thread.id, thread]));
+  const candidates = [...merged.values()].slice(0, 250);
+  const matches = [];
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < candidates.length) {
+      const index = cursor;
+      cursor += 1;
+      const summary = candidates[index];
+      const revision = Number(summary.recencyAt || summary.updatedAt) || 0;
+      const cacheKey = `${providerStore.conversationHome()}:${summary.id}`;
+      let cached = sharedThreadSearchCache.get(cacheKey);
+      if (!cached || cached.revision !== revision) {
+        try {
+          const response = await sharedReadThread(server, summary.id);
+          cached = { revision, text: searchableThreadText(response.thread) };
+          sharedThreadSearchCache.set(cacheKey, cached);
+          while (sharedThreadSearchCache.size > 500) sharedThreadSearchCache.delete(sharedThreadSearchCache.keys().next().value);
+        } catch {
+          continue;
+        }
+      }
+      const normalized = cached.text.toLocaleLowerCase("zh-CN");
+      const hit = normalized.indexOf(query);
+      if (hit < 0) continue;
+      const start = Math.max(0, hit - 45);
+      const end = Math.min(cached.text.length, hit + query.length + 90);
+      matches.push({
+        id: summary.id,
+        snippet: `${start ? "..." : ""}${cached.text.slice(start, end)}${end < cached.text.length ? "..." : ""}`,
+        rank: index,
+      });
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(4, candidates.length) }, worker));
+  return matches.sort((left, right) => left.rank - right.rank).slice(0, 80).map(({ rank, ...match }) => match);
+}
+
+function mappedServerMessage(server, message) {
+  const nativeId = message?.params?.threadId
+    || message?.params?.conversationId
+    || message?.params?.thread?.id
+    || null;
+  if (!nativeId) return message;
+  const pendingKey = `${currentProviderId(server)}:${nativeId}`;
+  const pending = pendingTurnDisplays.get(pendingKey) || null;
+  const isUserItem = ["item/started", "item/completed"].includes(message.method)
+    && message.params?.item?.type === "userMessage";
+  const steerQueue = pendingSteerDisplays.get(pendingKey) || [];
+  const pendingSteer = isUserItem ? steerQueue[0] || null : null;
+  const pendingCreation = pendingBranchCreations.get(server) || null;
+  const logicalId = providerStore.logicalThreadIdForBranch(currentProviderId(server), nativeId)
+    || pendingSteer?.logicalId
+    || pending?.logicalId
+    || pendingCreation?.logicalId
+    || null;
+  if (!logicalId) return message;
+  const branch = providerStore.threadBranch(logicalId, currentProviderId(server));
+  if (message.method === "turn/completed") {
+    providerStore.touchThreadBranch(logicalId, currentProviderId(server));
+    const turnId = message.params?.turn?.id;
+    if (turnId) {
+      providerStore.recordLogicalTurn(logicalId, {
+        turnId,
+        nativeThreadId: nativeId,
+        providerId: currentProviderId(server),
+        engine: serverEngine(server),
+        status: message.params?.turn?.status || "completed",
+      });
+    }
+  }
+  const itemClientId = message.params?.item?.clientId || null;
+  const visibleText = pendingSteer?.displayText ?? (pending
+    && (!pending.clientUserMessageId || !itemClientId || pending.clientUserMessageId === itemClientId)
+    ? pending.displayText
+    : branch?.firstClientUserMessageId === itemClientId ? branch.firstUserText : null);
+  const mapped = remapBranchMessage(
+    message,
+    nativeId,
+    logicalId,
+    typeof visibleText === "string" ? { firstUserText: visibleText } : null,
+  );
+  if (pendingSteer?.clientUserMessageId && mapped.params?.item?.type === "userMessage") {
+    mapped.params.item.clientId = pendingSteer.clientUserMessageId;
+  }
+  if (message.method === "item/completed" && message.params?.item?.type === "userMessage" && pendingSteer) {
+    steerQueue.shift();
+    if (steerQueue.length) pendingSteerDisplays.set(pendingKey, steerQueue);
+    else pendingSteerDisplays.delete(pendingKey);
+  }
+  if (message.method === "turn/completed") pendingSteerDisplays.delete(pendingKey);
+  if (message.method === "turn/completed"
+    || (message.method === "item/completed" && message.params?.item?.type === "userMessage")) {
+    pendingTurnDisplays.delete(pendingKey);
+  }
+  return mapped;
+}
+
+function usageNumber(usage, ...keys) {
+  for (const key of keys) {
+    const value = key.split(".").reduce((current, part) => current?.[part], usage);
+    if (Number.isFinite(Number(value))) return Math.max(0, Number(value));
+  }
+  return 0;
+}
+
+function trackProviderRequest(server, message) {
+  if (!message?.method?.startsWith("turn/")) return;
+  const nativeThreadId = message.params?.threadId || message.params?.conversationId || null;
+  const turn = message.params?.turn || {};
+  if (!nativeThreadId || !turn.id) return;
+  let runs = providerRequestRuns.get(server);
+  if (!runs) {
+    runs = new Map();
+    providerRequestRuns.set(server, runs);
+  }
+  const key = `${nativeThreadId}:${turn.id}`;
+  if (message.method === "turn/started") {
+    runs.set(key, Date.now());
+    return;
+  }
+  if (message.method !== "turn/completed") return;
+  const finishedAt = Date.now();
+  const startedAt = runs.get(key) || finishedAt;
+  runs.delete(key);
+  const usage = turn.usage || turn.tokenUsage || {};
+  const inputTokens = usageNumber(usage, "input_tokens", "inputTokens", "prompt_tokens", "input_tokens_total", "input");
+  const outputTokens = usageNumber(usage, "output_tokens", "outputTokens", "completion_tokens", "output_tokens_total", "output");
+  const cachedInputTokens = usageNumber(
+    usage,
+    "input_tokens_details.cached_tokens",
+    "inputTokensDetails.cachedTokens",
+    "prompt_tokens_details.cached_tokens",
+    "cache_read_input_tokens",
+    "cacheReadInputTokens",
+  );
+  try {
+    providerStore.recordProviderRequest({
+      providerId: turn.providerId || currentProviderId(server),
+      engine: serverEngine(server),
+      model: turn.model || usage.model || server.actualModel || server.provider.model,
+      logicalThreadId: logicalThreadId(server, nativeThreadId),
+      turnId: turn.id,
+      startedAt,
+      finishedAt,
+      durationMs: finishedAt - startedAt,
+      status: turn.status,
+      inputTokens,
+      outputTokens,
+      cachedInputTokens,
+      totalTokens: usageNumber(usage, "total_tokens", "totalTokens") || inputTokens + outputTokens,
+    });
+  } catch (error) {
+    console.error(`[provider-usage] ${error.message}`);
+  }
+}
+
+async function resumeLogicalThread(server, payload = {}) {
+  const logicalId = logicalThreadId(server, payload.threadId);
+  const branch = branchForServer(server, logicalId);
+  if (branch) {
+    await server.resumeThread(
+      branch.threadId,
+      payload.cwd || null,
+      payload.modelProvider || null,
+      payload.model || null,
+      { approvalMode: payload.approvalMode || "ask" },
+    );
+    return sharedReadThread(server, logicalId);
+  }
+  const base = await readLogicalBaseThread(server, logicalId);
+  if (threadIsNativeToServer(server, base.thread, base.sourceEngine)) {
+    await server.resumeThread(
+      logicalId,
+      payload.cwd || null,
+      payload.modelProvider || null,
+      payload.model || null,
+      { approvalMode: payload.approvalMode || "ask" },
+    );
+  }
+  return sharedReadThread(server, logicalId);
+}
+
+async function startLogicalTurn(server, payload = {}) {
+  const providerId = currentProviderId(server);
+  const logicalId = logicalThreadId(server, payload.threadId);
+  let branch = branchForServer(server, logicalId);
+  let nativeThreadId = branch?.threadId || logicalId;
+  let turnText = payload.text;
+  const displayText = typeof payload.displayText === "string" ? payload.displayText : String(payload.text || "");
+  let logical = null;
+
+  if (!branch) {
+    logical = await sharedReadThread(server, logicalId);
+    if (!logical.thread._nativeForCurrentProvider) {
+      pendingBranchCreations.set(server, { logicalId });
+      let created;
+      try {
+        created = await server.startThread(
+          payload.cwd,
+          payload.model || null,
+          { approvalMode: payload.approvalMode || "ask" },
+        );
+        nativeThreadId = created.thread.id;
+        branch = providerStore.saveThreadBranch(logicalId, providerId, nativeThreadId, {
+          engine: serverEngine(server),
+          sourceEngine: logical.thread._historyEngine,
+          firstUserText: displayText,
+          firstClientUserMessageId: payload.clientUserMessageId,
+          seeded: false,
+        });
+      } finally {
+        pendingBranchCreations.delete(server);
+      }
+      turnText = buildContinuationPrompt(logical.thread, payload.text);
+    }
+  }
+
+  const timeline = providerStore.threadTimeline(logicalId);
+  let lastNativeTurnIndex = -1;
+  for (let index = timeline.length - 1; index >= 0; index -= 1) {
+    if (timeline[index].nativeThreadId === nativeThreadId) {
+      lastNativeTurnIndex = index;
+      break;
+    }
+  }
+  const missedOtherModelTurns = timeline
+    .slice(lastNativeTurnIndex + 1)
+    .some((entry) => entry.nativeThreadId !== nativeThreadId);
+  if ((branch && !branch.seeded) || missedOtherModelTurns) {
+    logical ||= await sharedReadThread(server, logicalId);
+    turnText = buildContinuationPrompt(logical.thread, payload.text);
+  }
+  if (branch && !branch.seeded) {
+    branch = providerStore.saveThreadBranch(logicalId, providerId, nativeThreadId, {
+      ...branch,
+      engine: branch.engine || serverEngine(server),
+      firstUserText: displayText,
+      firstClientUserMessageId: payload.clientUserMessageId,
+      seeded: false,
+    });
+  }
+
+  const pendingKey = `${providerId}:${nativeThreadId}`;
+  pendingTurnDisplays.set(pendingKey, {
+    logicalId,
+    displayText,
+    clientUserMessageId: payload.clientUserMessageId || null,
+  });
+  let result;
+  try {
+    result = await server.startTurn(
+      nativeThreadId,
+      turnText,
+      payload.cwd,
+      payload.clientUserMessageId,
+      {
+        model: payload.model || null,
+        effort: payload.effort || null,
+        approvalMode: payload.approvalMode || "ask",
+        skillInputs: Array.isArray(payload.skillInputs) ? payload.skillInputs : [],
+        imageInputs: Array.isArray(payload.imageInputs) ? payload.imageInputs : [],
+      },
+    );
+  } catch (error) {
+    pendingTurnDisplays.delete(pendingKey);
+    throw error;
+  }
+  if (branch) {
+    providerStore.saveThreadBranch(logicalId, providerId, nativeThreadId, {
+      ...branch,
+      engine: branch.engine || serverEngine(server),
+      seeded: true,
+    });
+  }
+  if (result.turn?.id) {
+    providerStore.recordLogicalTurn(logicalId, {
+      turnId: result.turn.id,
+      nativeThreadId,
+      providerId,
+      engine: serverEngine(server),
+      startedAt: Date.now(),
+      status: result.turn.status || "inProgress",
+      displayText,
+      clientUserMessageId: payload.clientUserMessageId,
+    });
+  }
+  return result;
+}
+
+async function steerLogicalTurn(server, payload = {}) {
+  if (typeof server.steerTurn !== "function") throw new Error("当前模型连接不支持原生引导。");
+  const providerId = currentProviderId(server);
+  const logicalId = logicalThreadId(server, payload.threadId);
+  const branch = branchForServer(server, logicalId);
+  const nativeThreadId = branch?.threadId || logicalId;
+  const expectedTurnId = String(payload.expectedTurnId || "").trim();
+  if (!expectedTurnId) throw new Error("当前回复尚未开始，暂时无法引导。");
+  const pendingKey = `${providerId}:${nativeThreadId}`;
+  const pending = {
+    logicalId,
+    displayText: typeof payload.displayText === "string" ? payload.displayText : String(payload.text || ""),
+    clientUserMessageId: payload.clientUserMessageId || null,
+  };
+  const queue = pendingSteerDisplays.get(pendingKey) || [];
+  queue.push(pending);
+  pendingSteerDisplays.set(pendingKey, queue);
+  try {
+    return await server.steerTurn(nativeThreadId, expectedTurnId, payload.text, {
+      skillInputs: Array.isArray(payload.skillInputs) ? payload.skillInputs : [],
+      imageInputs: Array.isArray(payload.imageInputs) ? payload.imageInputs : [],
+    });
+  } catch (error) {
+    const current = pendingSteerDisplays.get(pendingKey) || [];
+    const index = current.indexOf(pending);
+    if (index >= 0) current.splice(index, 1);
+    if (current.length) pendingSteerDisplays.set(pendingKey, current);
+    else pendingSteerDisplays.delete(pendingKey);
+    throw error;
+  }
+}
+
 function publicStoreSnapshot() {
   const metadata = providerStore.metadata();
   return {
     providers: providerStore.list(),
+    providerPresets: providerPresetCatalog(),
     projects: metadata.projects.map(({ id, label, root, createdAt }) => ({
       id,
       label,
@@ -736,15 +1465,160 @@ function publicStoreSnapshot() {
     projectThreads: { ...metadata.projectThreads },
     hiddenProjectRoots: [...metadata.hiddenProjectRoots],
     threadSettings: { ...metadata.threadSettings },
+    providerRoutes: structuredClone(metadata.providerRoutes),
     threadAliases: { ...metadata.threadAliases },
     hiddenThreadIds: [...metadata.hiddenThreads],
     deletedThreadIds: [...metadata.deletedThreads],
     localArchivedThreadIds: [...metadata.localArchivedThreads],
     pendingDeletions: metadata.pendingDeletions.map((entry) => ({ ...entry })),
-    scheduledTasks: metadata.scheduledTasks.map((task) => ({ ...task })),
+    scheduledTasks: providerStore.scheduledTasks(),
+    messageQueues: providerStore.messageQueues(),
+    promptTemplates: providerStore.promptTemplates(),
+    mcpServers: providerStore.mcpServers(),
     runningTaskIds: [...runningScheduledTasks],
     recordHome: metadata.conversationHome,
   };
+}
+
+function skillLibraryRoot() {
+  return path.join(providerStore.conversationHome(), "share-master-skill-library");
+}
+
+function activeSkillRoot() {
+  return path.join(providerStore.conversationHome(), "skills");
+}
+
+function installedSkillSourceRoot() {
+  return path.join(providerStore.conversationHome(), "share-master-installed-skill-sources");
+}
+
+async function refreshPrivateSkills() {
+  if (skillRefreshPromise) return skillRefreshPromise;
+  skillRefreshPromise = syncManagedSkills(
+    [...skillSources, installedSkillSourceRoot()],
+    skillLibraryRoot(),
+    activeSkillRoot(),
+    providerStore.disabledSkills(),
+  );
+  try {
+    return await skillRefreshPromise;
+  } finally {
+    skillRefreshPromise = null;
+  }
+}
+
+async function installPrivateSkill(input = {}) {
+  const kind = ["folder", "zip", "github"].includes(input.kind) ? input.kind : null;
+  const source = String(input.source || "").trim();
+  if (!kind || !source) throw new Error("请选择 Skill 来源。");
+  const temporaryParent = path.join(providerStore.conversationHome(), "tmp");
+  fs.mkdirSync(temporaryParent, { recursive: true });
+  const temporary = fs.mkdtempSync(path.join(temporaryParent, "skill-install-"));
+  let sourceDirectory = source;
+  let sourceLabel = source;
+  try {
+    if (kind === "zip") {
+      const archive = path.resolve(source);
+      if (!fs.existsSync(archive) || !fs.statSync(archive).isFile() || path.extname(archive).toLowerCase() !== ".zip") {
+        throw new Error("请选择有效的 ZIP Skill 包。");
+      }
+      const listing = await execFilePromise("tar.exe", ["-tf", archive]);
+      const entries = listing.stdout.split(/\r?\n/).filter(Boolean);
+      if (!entries.length || entries.length > 5000) throw new Error("ZIP Skill 包为空或文件过多。");
+      for (const entry of entries) {
+        const normalized = entry.replaceAll("\\", "/");
+        if (normalized.startsWith("/") || /^[A-Za-z]:/.test(normalized)
+          || normalized.split("/").some((part) => part === "..")) {
+          throw new Error("ZIP Skill 包包含越界路径。");
+        }
+      }
+      sourceDirectory = path.join(temporary, "archive");
+      fs.mkdirSync(sourceDirectory, { recursive: true });
+      await execFilePromise("tar.exe", ["-xf", archive, "-C", sourceDirectory]);
+      sourceLabel = `ZIP · ${path.basename(archive)}`;
+    } else if (kind === "github") {
+      let parsed;
+      try { parsed = new URL(source); } catch { parsed = null; }
+      if (!parsed || parsed.protocol !== "https:" || parsed.hostname.toLowerCase() !== "github.com"
+        || parsed.username || parsed.password || parsed.search || parsed.hash
+        || !/^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?\/?$/.test(parsed.pathname)) {
+        throw new Error("请输入 GitHub 仓库首页 URL。");
+      }
+      sourceDirectory = path.join(temporary, "repository");
+      await execFilePromise("git.exe", ["clone", "--depth", "1", "--filter=blob:none", parsed.toString(), sourceDirectory], { timeout: 120000 });
+      sourceLabel = parsed.toString();
+    } else {
+      sourceDirectory = path.resolve(source);
+    }
+    const installed = await installSkillSource(sourceDirectory, installedSkillSourceRoot(), sourceLabel);
+    const result = await refreshPrivateSkills();
+    broadcastStoreSnapshot();
+    return { installed, result, ...(await privateExtensionSnapshot()) };
+  } finally {
+    fs.rmSync(temporary, { recursive: true, force: true });
+  }
+}
+
+async function privateExtensionSnapshot() {
+  const installedRoot = path.resolve(installedSkillSourceRoot());
+  return {
+    skills: (await listManagedSkills(skillLibraryRoot(), providerStore.disabledSkills())).map((skill) => {
+      const source = path.resolve(String(skill.source || ""));
+      const relative = path.relative(installedRoot, source);
+      return { ...skill, removable: Boolean(relative && !relative.startsWith("..") && !path.isAbsolute(relative)) };
+    }),
+    prompts: providerStore.promptTemplates(),
+    mcpServers: providerStore.mcpServers(),
+  };
+}
+
+function broadcastExtensionSnapshot(snapshot) {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (window.isDestroyed() || window.webContents.isDestroyed()) continue;
+    try {
+      window.webContents.send("app:extensions-changed", snapshot);
+    } catch (error) {
+      if (!window.isDestroyed()) console.error(`[ipc:app:extensions-changed] ${error.message}`);
+    }
+  }
+}
+
+async function probeMcpServer(server) {
+  const startedAt = Date.now();
+  if (server.transport !== "stdio") {
+    const response = await net.fetch(server.url, {
+      method: "GET",
+      signal: AbortSignal.timeout(5000),
+      headers: { accept: "text/event-stream, application/json" },
+    });
+    await response.body?.cancel().catch(() => {});
+    return { ok: true, latencyMs: Date.now() - startedAt, detail: `HTTP ${response.status}` };
+  }
+  return new Promise((resolve, reject) => {
+    const child = spawn(server.command, server.args || [], {
+      cwd: providerStore.conversationHome(),
+      env: { ...process.env, ...providerStore.mcpEnvironment(server.id) },
+      windowsHide: true,
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let stderr = "";
+    let settled = false;
+    let timer = null;
+    const finish = (error = null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (!child.killed) child.kill();
+      if (error) reject(error);
+      else resolve({ ok: true, latencyMs: Date.now() - startedAt, detail: "进程已成功启动" });
+    };
+    child.stderr.on("data", (chunk) => { stderr = `${stderr}${chunk}`.slice(-500); });
+    child.once("error", (error) => finish(new Error(`无法启动 MCP：${error.message}`)));
+    child.once("exit", (code) => {
+      finish(new Error(`MCP 启动后过早退出（${code ?? "未知"}）：${stderr.trim() || "无错误输出"}`));
+    });
+    timer = setTimeout(() => finish(), 700);
+  });
 }
 
 function broadcastStoreSnapshot() {
@@ -757,6 +1631,7 @@ function broadcastStoreSnapshot() {
       if (!window.isDestroyed()) console.error(`[ipc:app:store-changed] ${error.message}`);
     }
   }
+  refreshTrayMenu();
 }
 
 function broadcastThreadDeleted(threadId) {
@@ -784,34 +1659,73 @@ function runDueThreadDeletions() {
   return due.length;
 }
 
+function scheduledTaskServer(task, preferred = null) {
+  const candidates = [...servers.values()].filter((server) => server.ready);
+  if (task.providerId) return candidates.find((server) => server.provider.id === task.providerId) || null;
+  if (preferred?.ready) return preferred;
+  return candidates[0] || null;
+}
+
+function showScheduledTaskNotification(task, succeeded) {
+  if (!task?.notifyOnCompletion || !Notification.isSupported()) return;
+  const notification = new Notification({
+    title: succeeded ? "已安排任务完成" : "已安排任务失败",
+    body: succeeded ? task.title : `${task.title}：${task.lastError || "执行失败"}`,
+    silent: false,
+  });
+  notification.on("click", () => {
+    const window = BrowserWindow.getAllWindows().find((item) => !item.isDestroyed());
+    if (!window) return;
+    if (window.isMinimized()) window.restore();
+    window.show();
+    window.focus();
+  });
+  notification.show();
+}
+
+async function startScheduledTask(task, server, manual = false) {
+  if (!server?.ready) throw new Error("任务所需连接尚未连接。");
+  if (runningScheduledTasks.has(task.id)) throw new Error("任务正在执行，请等待本次运行结束。");
+  const run = providerStore.beginScheduledTaskRun(task.id, manual);
+  runningScheduledTasks.add(task.id);
+  let threadId = null;
+  try {
+    const result = await executeScheduledTask(
+      task,
+      server,
+      providerStore,
+      crypto.randomUUID(),
+      (createdThreadId) => {
+        threadId = createdThreadId;
+        scheduledTaskRuns.set(createdThreadId, {
+          taskId: task.id,
+          server,
+          runId: run.id,
+          manual,
+        });
+      },
+    );
+    broadcastStoreSnapshot();
+    return { ...run, threadId: result.threadId };
+  } catch (error) {
+    if (threadId) scheduledTaskRuns.delete(threadId);
+    runningScheduledTasks.delete(task.id);
+    const updated = providerStore.failScheduledTask(task.id, error, Date.now(), { runId: run.id, manual });
+    showScheduledTaskNotification(updated, false);
+    broadcastStoreSnapshot();
+    throw error;
+  }
+}
+
 async function runDueScheduledTasks() {
   if (!providerStore) return;
   for (const task of providerStore.dueScheduledTasks()) {
     if (runningScheduledTasks.has(task.id)) continue;
-    const candidates = [...servers.values()].filter((server) => server.ready);
-    const server = task.providerId
-      ? candidates.find((item) => item.provider.id === task.providerId)
-      : candidates[0];
+    const server = scheduledTaskServer(task);
     if (!server) continue;
-    runningScheduledTasks.add(task.id);
-    let threadId = null;
     try {
-      await executeScheduledTask(
-        task,
-        server,
-        providerStore,
-        crypto.randomUUID(),
-        (createdThreadId) => {
-          threadId = createdThreadId;
-          scheduledTaskRuns.set(createdThreadId, { taskId: task.id, server });
-        },
-      );
-      broadcastStoreSnapshot();
+      await startScheduledTask(task, server, false);
     } catch (error) {
-      if (threadId) scheduledTaskRuns.delete(threadId);
-      runningScheduledTasks.delete(task.id);
-      providerStore.failScheduledTask(task.id, error);
-      broadcastStoreSnapshot();
       console.error(`[scheduled-task:${task.id}] ${error.message}`);
     }
   }
@@ -823,7 +1737,11 @@ function handleScheduledTaskNotification(server, message) {
   const run = threadId ? scheduledTaskRuns.get(threadId) : null;
   if (!run || run.server !== server) return;
   try {
-    finalizeScheduledTask(run.taskId, threadId, message.params?.turn, providerStore);
+    const updated = finalizeScheduledTask(run.taskId, threadId, message.params?.turn, providerStore, {
+      runId: run.runId,
+      manual: run.manual,
+    });
+    showScheduledTaskNotification(updated, !updated?.lastError);
   } catch (error) {
     console.error(`[scheduled-task:${run.taskId}] 无法保存任务结果：${error.message}`);
   } finally {
@@ -838,7 +1756,11 @@ function failScheduledTasksForServer(server, reason) {
   for (const [threadId, run] of scheduledTaskRuns) {
     if (run.server !== server) continue;
     try {
-      providerStore.failScheduledTask(run.taskId, reason);
+      const updated = providerStore.failScheduledTask(run.taskId, reason, Date.now(), {
+        runId: run.runId,
+        manual: run.manual,
+      });
+      showScheduledTaskNotification(updated, false);
     } catch (error) {
       console.error(`[scheduled-task:${run.taskId}] 无法保存任务失败状态：${error.message}`);
     } finally {
@@ -881,34 +1803,70 @@ async function runConversationMirror() {
 
 if (!hasSingleInstanceLock) app.quit();
 
-app.on("second-instance", () => {
+app.on("second-instance", (_event, argv) => {
   if (!hasSingleInstanceLock) return;
-  app.whenReady().then(() => createWindow());
+  const link = shareMasterLinkFromArgs(argv);
+  app.whenReady().then(() => (link ? openDeepLink(link) : showAppWindow()));
+});
+
+app.on("open-url", (event, url) => {
+  event.preventDefault();
+  if (providerStore) openDeepLink(url);
+  else pendingDeepLinks.push(url);
 });
 
 app.whenReady().then(async () => {
   if (!hasSingleInstanceLock) return;
   providerStore = new ProviderStore();
+  localProviderDiscovery = createLocalProviderDiscovery({
+    homeDirectory: os.homedir(),
+    codexHomes: [CODEX_HOME],
+    providerStore,
+  });
+  if (app.isPackaged) app.setAsDefaultProtocolClient("share-master");
+  await createTray();
+  try {
+    providerStore.createRotatingBackup();
+  } catch (error) {
+    console.error(`[backup] ${error.message}`);
+  }
+  if (providerStore.syncStatus().autoSync) {
+    try {
+      await providerStore.syncConfigured("auto", net.fetch);
+    } catch (error) {
+      console.error(`[sync] ${error.message}`);
+    }
+  }
+  const backupTimer = setInterval(() => {
+    try {
+      providerStore.createRotatingBackup();
+    } catch (error) {
+      console.error(`[backup] ${error.message}`);
+    }
+  }, 6 * 60 * 60 * 1000);
+  backupTimer.unref?.();
   const configuredSkillSources = String(process.env.SHARE_MASTER_SKILL_SOURCES || "")
     .split(path.delimiter)
     .map((item) => item.trim())
     .filter(Boolean);
-  const skillSources = configuredSkillSources.length
+  skillSources = configuredSkillSources.length
     ? configuredSkillSources
-    : [
+    : process.env.SHARE_MASTER_STORE_ROOT && process.env.CODEX_DECK_QA_SCREENSHOT
+      ? []
+      : [
       path.join(os.homedir(), ".agents", "skills"),
       path.join(os.homedir(), ".codex", "skills"),
-    ];
+      ];
   if (skillSources.length) {
-    try {
-      const result = await syncSkillRoots(
-        skillSources,
-        path.join(providerStore.conversationHome(), "skills"),
-      );
-      console.log(`[skills] copied ${result.copied} private skill directories`);
-    } catch (error) {
-      console.error(`[skills] ${error.message}`);
-    }
+    const skillRefreshTimer = setTimeout(() => {
+      refreshPrivateSkills()
+        .then(async (result) => {
+          console.log(`[skills] copied ${result.copied} private skill directories`);
+          broadcastExtensionSnapshot(await privateExtensionSnapshot());
+        })
+        .catch((error) => console.error(`[skills] ${error.message}`));
+    }, 750);
+    skillRefreshTimer.unref?.();
   }
   if (process.env.SHARE_MASTER_MIRROR_SOURCE) {
     providerStore.setConversationMirrorSource(process.env.SHARE_MASTER_MIRROR_SOURCE);
@@ -928,10 +1886,102 @@ app.whenReady().then(async () => {
       model: "fable",
     });
   }
+  if (process.env.CODEX_DECK_QA_HEXUAN_TOKEN && process.env.SHARE_MASTER_STORE_ROOT) {
+    providerStore.saveProviderKey("hexuan", process.env.CODEX_DECK_QA_HEXUAN_TOKEN);
+  }
   ipcMain.handle("app:bootstrap", async () => ({
     codexHome: providerStore.conversationHome(),
+    defaultWorkspace: APPLICATION_ROOT,
     ...publicStoreSnapshot(),
   }));
+  ipcMain.handle("app:settings", () => ({
+    ...providerStore.appSettings(),
+    launchAtLogin: app.getLoginItemSettings(loginItemOptions()).openAtLogin,
+    version: app.getVersion(),
+  }));
+  ipcMain.handle("app:save-settings", (_event, input = {}) => {
+    const launchAtLogin = Boolean(input.launchAtLogin);
+    app.setLoginItemSettings(loginItemOptions(launchAtLogin));
+    return { ...providerStore.saveAppSettings(input), launchAtLogin };
+  });
+  ipcMain.handle("app:check-update", () => checkApplicationUpdate());
+  ipcMain.handle("local-history:sources", () => localHistoryReader.sources());
+  ipcMain.handle("local-history:list", (_event, input = {}) => localHistoryReader.list(input));
+  ipcMain.handle("local-history:read", (_event, input = {}) => localHistoryReader.read(input));
+  ipcMain.handle("deep-link:confirm-import", async (_event, input = {}) => {
+    const importType = String(input.importType || "").trim();
+    const rawConfig = input.config && typeof input.config === "object" ? input.config : {};
+    const encoded = Buffer.from(JSON.stringify({ type: importType, ...rawConfig }), "utf8").toString("base64url");
+    const normalized = parseShareMasterLink(`share-master://import?data=${encoded}`);
+    if (!normalized || normalized.action !== "import") throw new Error("导入配置无效或包含敏感字段。");
+    if (normalized.importType === "provider") return { importType, config: normalized.config, requiresApiKey: true };
+    if (normalized.importType === "prompt") {
+      const imported = providerStore.savePromptTemplate(normalized.config);
+      broadcastStoreSnapshot();
+      return { importType, imported };
+    }
+    if (normalized.importType === "mcp") {
+      const imported = providerStore.saveMcpServer({
+        ...normalized.config,
+        env: Object.fromEntries(normalized.config.envKeys.map((key) => [key, ""])),
+      });
+      broadcastStoreSnapshot();
+      return { importType, imported, requiresSecrets: normalized.config.envKeys.length > 0 };
+    }
+    const result = await installPrivateSkill({ kind: "github", source: normalized.config.source });
+    return { importType, imported: result.installed, extensions: result };
+  });
+  ipcMain.handle("extension:list", () => privateExtensionSnapshot());
+  ipcMain.handle("extension:refresh-skills", async () => {
+    const result = await refreshPrivateSkills();
+    broadcastStoreSnapshot();
+    return { result, ...(await privateExtensionSnapshot()) };
+  });
+  ipcMain.handle("extension:install-skill", (_event, input) => installPrivateSkill(input));
+  ipcMain.handle("extension:remove-skill", async (_event, requestedName) => {
+    const name = String(requestedName || "").trim();
+    if (!/^[\w.-]{1,100}$/i.test(name)) throw new Error("Skill 名称无效。");
+    const root = path.resolve(installedSkillSourceRoot());
+    const target = path.resolve(root, name);
+    if (path.dirname(target) !== root || !fs.existsSync(path.join(target, "SKILL.md"))) {
+      throw new Error("只能卸载通过 Share Master 安装的 Skill。");
+    }
+    fs.rmSync(target, { recursive: true, force: true });
+    const result = await refreshPrivateSkills();
+    broadcastStoreSnapshot();
+    return { removed: name, result, ...(await privateExtensionSnapshot()) };
+  });
+  ipcMain.handle("extension:set-skill-enabled", async (_event, input) => {
+    const updated = providerStore.setSkillEnabled(input?.name, input?.enabled);
+    await refreshPrivateSkills();
+    broadcastStoreSnapshot();
+    return { updated, ...(await privateExtensionSnapshot()) };
+  });
+  ipcMain.handle("prompt:save", (_event, input) => {
+    const template = providerStore.savePromptTemplate(input);
+    broadcastStoreSnapshot();
+    return template;
+  });
+  ipcMain.handle("prompt:remove", (_event, id) => {
+    const template = providerStore.removePromptTemplate(id);
+    broadcastStoreSnapshot();
+    return template;
+  });
+  ipcMain.handle("mcp:save", (_event, input) => {
+    const server = providerStore.saveMcpServer(input);
+    broadcastStoreSnapshot();
+    return server;
+  });
+  ipcMain.handle("mcp:remove", (_event, id) => {
+    const server = providerStore.removeMcpServer(id);
+    broadcastStoreSnapshot();
+    return server;
+  });
+  ipcMain.handle("mcp:test", async (_event, id) => {
+    const server = providerStore.mcpServers().find((item) => item.id === String(id || "").trim());
+    if (!server) throw new Error("MCP 配置不存在。");
+    return probeMcpServer(server);
+  });
 
   ipcMain.handle("window:new", (_event, payload = {}) => {
     createWindow(
@@ -948,7 +1998,7 @@ app.whenReady().then(async () => {
     const owner = BrowserWindow.fromWebContents(event.sender);
     const result = await dialog.showOpenDialog(owner, {
       title: "Choose working directory",
-      defaultPath: currentPath || "F:\\codepro",
+      defaultPath: currentPath || APPLICATION_ROOT,
       properties: ["openDirectory", "createDirectory"],
     });
     return result.canceled ? null : result.filePaths[0];
@@ -962,14 +2012,37 @@ app.whenReady().then(async () => {
     });
     return result.canceled ? null : result.filePaths[0];
   });
+  ipcMain.handle("dialog:sync-directory", async (event, currentPath) => {
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    const result = await dialog.showOpenDialog(owner, {
+      title: "选择 Share Master 同步目录",
+      defaultPath: currentPath || undefined,
+      properties: ["openDirectory", "createDirectory"],
+    });
+    return result.canceled ? null : result.filePaths[0];
+  });
   ipcMain.handle("dialog:images", async (event) => {
     const owner = BrowserWindow.fromWebContents(event.sender);
     const result = await dialog.showOpenDialog(owner, {
-      title: "选择图片",
+      title: "选择图片附件",
       properties: ["openFile", "multiSelections"],
       filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "gif"] }],
     });
     return result.canceled ? [] : result.filePaths;
+  });
+  ipcMain.handle("dialog:skill-folder", async (event) => {
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    const result = await dialog.showOpenDialog(owner, { title: "选择 Skill 文件夹", properties: ["openDirectory"] });
+    return result.canceled ? null : result.filePaths[0];
+  });
+  ipcMain.handle("dialog:skill-zip", async (event) => {
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    const result = await dialog.showOpenDialog(owner, {
+      title: "选择 Skill ZIP 包",
+      properties: ["openFile"],
+      filters: [{ name: "ZIP", extensions: ["zip"] }],
+    });
+    return result.canceled ? null : result.filePaths[0];
   });
   ipcMain.handle("app:notify", (event, payload = {}) => {
     const owner = BrowserWindow.fromWebContents(event.sender);
@@ -988,11 +2061,44 @@ app.whenReady().then(async () => {
     owner?.flashFrame(true);
     return true;
   });
+  ipcMain.handle("app:copy-text", (_event, value) => {
+    clipboard.writeText(String(value || "").slice(0, 500000));
+    return true;
+  });
 
   ipcMain.handle("provider:add-relay", (_event, input) => {
     const provider = providerStore.addRelay(input);
     broadcastStoreSnapshot();
     return provider;
+  });
+  ipcMain.handle("local-providers:discover", () => localProviderDiscovery.discover());
+  ipcMain.handle("local-providers:import", (_event, candidateIds) => {
+    const results = localProviderDiscovery.importCandidates(candidateIds, providerStore);
+    if (results.some((result) => result.status === "imported")) broadcastStoreSnapshot();
+    return { results, providers: providerStore.list() };
+  });
+  ipcMain.handle("provider:update-relay", (_event, input) => {
+    const provider = providerStore.updateRelay(input);
+    broadcastStoreSnapshot();
+    return provider;
+  });
+  ipcMain.handle("provider:save-route", (_event, input) => {
+    const route = providerStore.saveProviderRoute(input);
+    broadcastStoreSnapshot();
+    return route;
+  });
+  ipcMain.handle("provider:probe-models", async (_event, input = {}) => {
+    const providerId = String(input.providerId || "").trim();
+    let provider = null;
+    if (providerId) {
+      provider = providerStore.resolve(providerId);
+      if (provider.type !== "relay") throw new Error("只能测试 Share Master 中添加的模型供应商。");
+    }
+    const baseUrl = String(input.baseUrl || provider?.baseUrl || "").trim();
+    const apiKey = String(input.apiKey || "").trim() || provider?.apiKey || null;
+    const startedAt = Date.now();
+    const models = await fetchOpenAIModels(baseUrl, apiKey, net.fetch);
+    return { models, latencyMs: Math.max(0, Date.now() - startedAt) };
   });
   ipcMain.handle("provider:add-account", (_event, input) => {
     const provider = providerStore.addAccount(input);
@@ -1001,6 +2107,9 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle("provider:remove", (_event, providerId) => {
     const removed = providerStore.removeConnection(providerId);
+    for (const [webContentsId, attempt] of connectionAttempts) {
+      if (attempt.providerId === removed.id) nextConnectionGeneration(webContentsId);
+    }
     for (const [webContentsId, server] of servers) {
       if (server.provider.id !== removed.id) continue;
       failScheduledTasksForServer(server, "任务使用的连接已删除。");
@@ -1019,6 +2128,11 @@ app.whenReady().then(async () => {
     }
     broadcastStoreSnapshot();
     return removed;
+  });
+  ipcMain.handle("provider:reorder", (_event, providerIds) => {
+    const providers = providerStore.reorderProviders(providerIds);
+    broadcastStoreSnapshot();
+    return providers;
   });
   ipcMain.handle("provider:save-key", (_event, input) => {
     const provider = providerStore.saveProviderKey(input?.providerId, input?.apiKey);
@@ -1043,6 +2157,73 @@ app.whenReady().then(async () => {
     const apiKey = apiKeyForProvider(provider, environment);
     if (!apiKey) throw new Error(`${provider.envKey || "API Key"} 未配置，无法查询余额。`);
     return fetchRelayBalance(provider, apiKey, net.fetch);
+  });
+  ipcMain.handle("usage:get", (_event, input = {}) => providerStore.providerUsage(
+    input?.providerId || null,
+    input?.since || 0,
+  ));
+  ipcMain.handle("usage:clear", (_event, input = {}) => providerStore.clearProviderRequestLogs(
+    input?.providerId || null,
+  ));
+  ipcMain.handle("usage:save-pricing", (_event, input = {}) => providerStore.saveModelPricing(input));
+  ipcMain.handle("usage:pricing", () => providerStore.modelPricing());
+  ipcMain.handle("config:export", async (event) => {
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    const result = await dialog.showSaveDialog(owner, {
+      title: "导出 Share Master 配置",
+      defaultPath: `share-master-config-${new Date().toISOString().slice(0, 10)}.json`,
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    });
+    if (result.canceled || !result.filePath) return { canceled: true };
+    const temporary = `${result.filePath}.${process.pid}.tmp`;
+    fs.writeFileSync(temporary, `${JSON.stringify(providerStore.exportConfiguration(), null, 2)}\n`, "utf8");
+    fs.renameSync(temporary, result.filePath);
+    return { canceled: false, filePath: result.filePath, containsCredentials: false };
+  });
+  ipcMain.handle("config:import", async (event) => {
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    const result = await dialog.showOpenDialog(owner, {
+      title: "导入 Share Master 配置",
+      properties: ["openFile"],
+      filters: [{ name: "JSON", extensions: ["json"] }],
+    });
+    if (result.canceled || !result.filePaths[0]) return { canceled: true };
+    let bundle;
+    try {
+      bundle = JSON.parse(fs.readFileSync(result.filePaths[0], "utf8"));
+    } catch (error) {
+      throw new Error(`无法读取配置文件：${error.message}`);
+    }
+    providerStore.createRotatingBackup(10, 0);
+    const imported = providerStore.importConfiguration(bundle);
+    broadcastStoreSnapshot();
+    return { canceled: false, filePath: result.filePaths[0], ...imported };
+  });
+  ipcMain.handle("backup:list", () => providerStore.listConfigurationBackups());
+  ipcMain.handle("backup:create", () => providerStore.createRotatingBackup(10, 0));
+  ipcMain.handle("sync:status", () => providerStore.syncStatus());
+  ipcMain.handle("sync:configure", (_event, input) => providerStore.configureSync(input));
+  ipcMain.handle("sync:configure-webdav", (_event, input) => providerStore.configureWebdavSync(input));
+  ipcMain.handle("sync:run", async (_event, mode) => {
+    const result = await providerStore.syncConfigured(mode, net.fetch);
+    if (!result.conflict && result.result?.direction === "pull") broadcastStoreSnapshot();
+    return result;
+  });
+  ipcMain.handle("backup:restore", (_event, name) => {
+    const restored = providerStore.restoreConfigurationBackup(name);
+    for (const [webContentsId, server] of servers) {
+      failScheduledTasksForServer(server, "Share Master 配置已从备份恢复。");
+      server.stop();
+      servers.delete(webContentsId);
+      nextConnectionGeneration(webContentsId);
+    }
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
+        window.webContents.send("codex:disconnected", { code: null, reason: "backup-restored" });
+      }
+    }
+    broadcastStoreSnapshot();
+    return restored;
   });
   ipcMain.handle("project:add", (_event, input) => {
     const project = providerStore.addProject(input);
@@ -1075,8 +2256,10 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle("settings:set-record-home", (_event, directory) => {
     const recordHome = providerStore.setConversationHome(directory);
-    broadcastStoreSnapshot();
-    return recordHome;
+    return refreshPrivateSkills().then(() => {
+      broadcastStoreSnapshot();
+      return recordHome;
+    });
   });
   ipcMain.handle("thread:hide", (_event, input) => {
     const payload = typeof input === "string" ? { threadId: input } : input || {};
@@ -1118,6 +2301,9 @@ app.whenReady().then(async () => {
     broadcastThreadDeleted(threadId);
     return deletedIds;
   });
+  ipcMain.handle("thread:save-message-queue", (_event, input) => (
+    providerStore.saveMessageQueue(input?.threadId, input?.messages)
+  ));
   ipcMain.handle("task:save", (_event, input) => {
     ensureScheduledTaskIdle(input?.id);
     const task = providerStore.saveScheduledTask(input);
@@ -1137,6 +2323,21 @@ app.whenReady().then(async () => {
     broadcastStoreSnapshot();
     if (task.enabled) runDueScheduledTasks().catch((error) => console.error(`[scheduled-task] ${error.message}`));
     return task;
+  });
+  ipcMain.handle("task:run-now", async (event, taskId) => {
+    ensureScheduledTaskIdle(taskId);
+    const task = providerStore.scheduledTasks().find((item) => item.id === String(taskId || "").trim());
+    if (!task) throw new Error("已安排任务不存在。");
+    const preferred = servers.get(event.sender.id) || null;
+    const server = scheduledTaskServer(task, preferred);
+    if (!server) {
+      const label = task.providerId
+        ? providerStore.list().find((item) => item.id === task.providerId)?.connectionLabel || "指定连接"
+        : "任一模型连接";
+      throw new Error(`请先连接${label}，再运行此任务。`);
+    }
+    const run = await startScheduledTask(task, server, true);
+    return { run, task: providerStore.scheduledTasks().find((item) => item.id === task.id) };
   });
 
   ipcMain.handle("auth:official-login", async (_event, providerId = "official") => {
@@ -1182,14 +2383,49 @@ app.whenReady().then(async () => {
         const apiKey = apiKeyForProvider(provider, environment);
         try {
           const models = await fetchOpenAIModels(provider.baseUrl, apiKey, net.fetch);
+          if (provider.type === "relay") {
+            providerStore.updateRelay({
+              id: provider.id,
+              label: provider.label,
+              baseUrl: provider.baseUrl,
+              model: provider.model,
+              protocol: provider.protocol,
+              preset: provider.preset,
+              discoveredModels: models,
+            });
+          }
           provider = providerStore.withModelCatalog(provider, models);
         } catch (error) {
+          if (provider.engine === "openai-compatible" && [401, 403].includes(error.status)) {
+            throw new Error(`API Key 无效或没有模型权限：${error.message}`);
+          }
           modelWarning = error.message;
         }
       }
+      let serverProvider = provider;
+      if (provider.engine === "openai-compatible") {
+        const route = providerStore.providerRoute(provider.id);
+        const fallbackProviders = route?.enabled
+          ? (route.fallbackProviderIds || []).flatMap((fallbackId) => {
+            try {
+              const fallback = providerStore.resolve(fallbackId);
+              return fallback.engine === "openai-compatible" && fallback.apiKey ? [fallback] : [];
+            } catch {
+              return [];
+            }
+          })
+          : [];
+        serverProvider = {
+          ...provider,
+          fallbackProviders,
+          failover: route?.enabled ? route : null,
+        };
+      }
       const server = provider.engine === "claude"
-        ? new ClaudeServer(provider)
-        : new CodexServer(provider, environment);
+        ? new ClaudeServer(serverProvider)
+        : provider.engine === "openai-compatible"
+          ? new OpenAICompatibleServer(serverProvider, net.fetch)
+          : new CodexServer(serverProvider, environment);
       const requestIsCurrent = () => !sender.isDestroyed()
         && connectionGenerations.get(senderId) === generation;
       if (!requestIsCurrent()) {
@@ -1208,8 +2444,9 @@ app.whenReady().then(async () => {
       };
       servers.set(senderId, server);
       server.on("notification", (message) => {
+        trackProviderRequest(server, message);
         handleScheduledTaskNotification(server, message);
-        send("codex:event", message);
+        send("codex:event", mappedServerMessage(server, message));
       });
       server.on("server-request", (message) => {
         if (!isCurrent()) return;
@@ -1218,7 +2455,7 @@ app.whenReady().then(async () => {
           return;
         }
         if (INTERACTIVE_SERVER_REQUESTS.has(message.method)) {
-          send("codex:approval", message);
+          send("codex:approval", mappedServerMessage(server, message));
           return;
         }
         server.respondError(message.id, -32601, `Share Master does not support ${message.method}.`);
@@ -1259,13 +2496,25 @@ app.whenReady().then(async () => {
         return { superseded: true };
       }
       const account = await accountSnapshot(server);
-      const publicProvider = providerStore.publicProvider(providerId);
+      if (!isCurrent()) {
+        server.stop();
+        return { superseded: true };
+      }
+      let publicProvider;
+      try {
+        publicProvider = providerStore.publicProvider(providerId);
+      } catch (error) {
+        if (!isCurrent()) return { superseded: true };
+        throw error;
+      }
       return {
         provider: providerId,
         label: publicProvider.connectionLabel,
         brand: publicProvider.brand,
         vendorLabel: provider.vendorLabel || null,
+        providerPreset: publicProvider.preset || null,
         providerType: provider.type,
+        providerEngine: provider.engine || "codex",
         modelProvider: provider.modelProvider,
         modelSource: provider.discoveredModels?.length ? "provider" : "configured",
         modelWarning,
@@ -1282,7 +2531,11 @@ app.whenReady().then(async () => {
     }
   });
 
-  ipcMain.handle("codex:list", (event, query) => serverFor(event).listThreads(query?.search, Boolean(query?.archived)));
+  ipcMain.handle("codex:list", (event, query) => sharedListThreads(
+    serverFor(event),
+    query?.search,
+    Boolean(query?.archived),
+  ));
   ipcMain.handle("codex:models", async (event) => {
     const server = serverFor(event);
     if (server.provider.type !== "claude") {
@@ -1348,61 +2601,73 @@ app.whenReady().then(async () => {
   ipcMain.handle("codex:skills", async (event, payload = {}) => {
     const server = serverFor(event);
     if (server.provider.engine === "claude") return { data: [], warning: "Claude 连接不使用 Codex Skills。" };
-    return server.request("skills/list", {
+    if (server.provider.engine === "openai-compatible") {
+      return { data: [], warning: "Chat Completions 连接不提供 Codex 本地工具或 Skills。" };
+    }
+    const response = await server.request("skills/list", {
       cwds: [payload.cwd || providerStore.conversationHome()],
       forceReload: Boolean(payload.forceReload),
     });
+    const disabled = new Set(providerStore.disabledSkills().map((name) => name.toLocaleLowerCase("en-US")));
+    return {
+      ...response,
+      data: (response?.data || []).map((group) => ({
+        ...group,
+        skills: (group?.skills || []).filter((skill) => !disabled.has(String(skill?.name || "").toLocaleLowerCase("en-US"))),
+      })),
+    };
   });
   ipcMain.handle("codex:read", async (event, threadId) => (
-    rendererThreadWindow(await serverFor(event).readThread(threadId))
+    rendererThreadWindow(await sharedReadThread(serverFor(event), threadId))
   ));
+  ipcMain.handle("codex:search", (event, query) => searchSharedThreads(serverFor(event), query));
   ipcMain.handle("codex:read-window", async (event, payload) => (
     rendererThreadWindow(
-      await serverFor(event).readThread(payload?.threadId),
+      await sharedReadThread(serverFor(event), payload?.threadId),
       payload?.turnCount,
     )
   ));
   ipcMain.handle("codex:account-status", (event) => accountSnapshot(serverFor(event)));
-  ipcMain.handle("codex:resume", async (event, payload) => (
-    rendererThreadWindow(await serverFor(event).resumeThread(
-      payload.threadId,
-      payload.cwd || null,
-      payload.modelProvider || null,
-      payload.model || null,
-      { approvalMode: payload.approvalMode || "ask" },
-    ))
-  ));
+  ipcMain.handle("codex:resume", async (event, payload) => {
+    const server = serverFor(event);
+    try {
+      return rendererThreadWindow(await resumeLogicalThread(server, payload));
+    } catch {
+      return rendererThreadWindow(await sharedReadThread(server, payload.threadId));
+    }
+  });
   ipcMain.handle("codex:start-thread", (event, payload) => serverFor(event).startThread(
     payload?.cwd,
     payload?.model || null,
     { approvalMode: payload?.approvalMode || "ask" },
   ));
-  ipcMain.handle("codex:start-turn", (event, payload) => serverFor(event).startTurn(
-    payload.threadId,
-    payload.text,
-    payload.cwd,
-    payload.clientUserMessageId,
-    {
-      model: payload.model || null,
-      effort: payload.effort || null,
-      approvalMode: payload.approvalMode || "ask",
-      skillInputs: Array.isArray(payload.skillInputs) ? payload.skillInputs : [],
-      imageInputs: Array.isArray(payload.imageInputs) ? payload.imageInputs : [],
-    },
-  ));
-  ipcMain.handle("codex:rename", (event, payload) => serverFor(event).renameThread(payload.threadId, payload.name));
-  ipcMain.handle("codex:interrupt", (event, payload) => serverFor(event).request("turn/interrupt", payload));
+  ipcMain.handle("codex:start-turn", (event, payload) => startLogicalTurn(serverFor(event), payload));
+  ipcMain.handle("codex:steer", (event, payload) => steerLogicalTurn(serverFor(event), payload));
+  ipcMain.handle("codex:rename", (event, payload) => {
+    const server = serverFor(event);
+    const logicalId = logicalThreadId(server, payload.threadId);
+    const nativeThreadId = branchForServer(server, logicalId)?.threadId || logicalId;
+    return server.renameThread(nativeThreadId, payload.name);
+  });
+  ipcMain.handle("codex:interrupt", (event, payload) => {
+    const server = serverFor(event);
+    const logicalId = logicalThreadId(server, payload.threadId);
+    const nativeThreadId = branchForServer(server, logicalId)?.threadId || logicalId;
+    return server.request("turn/interrupt", { ...payload, threadId: nativeThreadId });
+  });
   ipcMain.handle("codex:approval-response", (event, payload) => {
     serverFor(event).respond(payload.id, payload.result);
     return true;
   });
 
-  const initialWindow = createWindow(
+  const initialDeepLink = shareMasterLinkFromArgs(process.argv);
+  const initialWindow = initialDeepLink ? null : createWindow(
     process.env.SHARE_MASTER_OPEN_PROVIDER || process.env.CODEX_DECK_QA_PROVIDER || null,
     process.env.SHARE_MASTER_OPEN_PROJECT || process.env.CODEX_DECK_QA_PROJECT || null,
     process.env.SHARE_MASTER_OPEN_THREAD || process.env.CODEX_DECK_QA_THREAD || null,
     process.env.SHARE_MASTER_OPEN_PROJECT_ID || null,
   );
+  for (const link of [initialDeepLink, ...pendingDeepLinks.splice(0)].filter(Boolean)) openDeepLink(link);
   if (providerStore.conversationMirrorSource()) {
     runConversationMirror().catch((error) => console.error(`[conversation-mirror] ${error.message}`));
     const mirrorTimer = setInterval(() => {
@@ -1412,7 +2677,7 @@ app.whenReady().then(async () => {
   }
   if (process.env.CODEX_DECK_QA_MULTI_PROVIDER === "1") runMultiProviderWindowQa(initialWindow);
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    showAppWindow();
   });
 });
 
@@ -1421,5 +2686,12 @@ app.on("window-all-closed", () => {
     failScheduledTasksForServer(server, "Share Master 已关闭。");
     server.stop();
   }
-  if (process.platform !== "darwin") app.quit();
+  if ((quitting || process.env.CODEX_DECK_QA_SCREENSHOT || !tray || providerStore?.appSettings().closeToTray === false)
+    && process.platform !== "darwin") app.quit();
+});
+
+app.on("before-quit", () => { quitting = true; });
+app.on("will-quit", () => {
+  tray?.destroy();
+  tray = null;
 });
