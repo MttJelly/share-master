@@ -262,6 +262,9 @@ async function run() {
   });
   ipcMain.handle("codex:steer", (_event, input) => {
     steerRequests.push(structuredClone(input));
+    if (/竞态/.test(input.displayText || input.text || "")) {
+      return { steered: false, inactive: true, expectedTurnId: input.expectedTurnId };
+    }
     return { turnId: input.expectedTurnId };
   });
   ipcMain.handle("codex:interrupt", (_event, input) => {
@@ -506,30 +509,37 @@ async function run() {
     state.providerEngine = 'openai-compatible';
     input.value = '等当前回复完成后再执行这一条';
     syncComposerState();
-    await sendMessage('queue');
-    input.value = '立刻改变方向，先检查失败测试';
+    await sendMessage('auto');
+    input.value = '竞态情况下也不能丢失的消息';
     syncComposerState();
     await sendMessage('steer');
     await new Promise((resolve) => setTimeout(resolve, 40));
-    const fallbackQueue = state.messageQueues.get(state.activeThread.id) || [];
-    const fallback = {
-      queueLength: fallbackQueue.length,
-      firstQueuedText: fallbackQueue[0]?.displayText || '',
-      secondQueuedText: fallbackQueue[1]?.displayText || '',
-      stopRequested: state.runningThreads.get(state.activeThread.id)?.stopRequested === true,
+    const queuedBeforeSteer = state.messageQueues.get(state.activeThread.id) || [];
+    const queued = {
+      queueLengthBeforeSteer: queuedBeforeSteer.length,
+      firstQueuedText: queuedBeforeSteer[0]?.displayText || '',
+      secondQueuedText: queuedBeforeSteer[1]?.displayText || '',
       queueBadge: document.querySelector('#queue-button').dataset.count,
-      deliveryLabels: [...document.querySelectorAll('.message-delivery-state')].map((node) => node.textContent),
+      steerButtonsBeforeClick: document.querySelectorAll('.queued-steer-button').length,
+      inputAfterQueue: input.value,
     };
-    const run = state.runningThreads.get(state.activeThread.id);
-    run.stopRequested = false;
-    run.interruptingTurnId = null;
     state.providerEngine = 'codex';
-    input.value = '原生引导当前 Codex 回复';
-    syncComposerState();
-    await sendMessage('steer');
+    syncActiveRunState();
+    const firstSteer = [...document.querySelectorAll('.queued-steer-button')]
+      .find((button) => button.dataset.clientUserMessageId === queuedBeforeSteer[0].clientUserMessageId);
+    firstSteer.click();
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    const queueAfterSuccess = state.messageQueues.get(state.activeThread.id) || [];
+    const queueLengthAfterSuccess = queueAfterSuccess.length;
+    const inactiveSteer = [...document.querySelectorAll('.queued-steer-button')]
+      .find((button) => button.dataset.clientUserMessageId === queueAfterSuccess[0]?.clientUserMessageId);
+    inactiveSteer.click();
+    await new Promise((resolve) => setTimeout(resolve, 120));
     return {
-      ...fallback,
-      nativeQueueLength: (state.messageQueues.get(state.activeThread.id) || []).length,
+      ...queued,
+      queueLengthAfterSuccess,
+      remainingAfterInactive: (state.messageQueues.get(state.activeThread.id) || []).length,
+      deliveryLabels: [...document.querySelectorAll('.message-delivery-state')].map((node) => node.textContent),
       sendTitle: document.querySelector('#send-button').title,
       queueTitle: document.querySelector('#queue-button').title,
       actionTopDelta: Math.abs(Math.round(document.querySelector('#send-button').getBoundingClientRect().top - document.querySelector('#queue-button').getBoundingClientRect().top)),
@@ -539,6 +549,8 @@ async function run() {
   deliveryModes.nativeSteerRequests = steerRequests.length;
   deliveryModes.interruptRequests = interruptRequests.length;
   deliveryModes.nativeExpectedTurnId = steerRequests[0]?.expectedTurnId || null;
+  deliveryModes.inactiveExpectedTurnId = steerRequests[1]?.expectedTurnId || null;
+  deliveryModes.inactiveStartedText = startTurnRequests.at(-1)?.displayText || '';
   deliveryModes.persistedQueueWrites = persistedQueues.length;
   deliveryModes.persistedQueueLength = persistedQueues.at(-1)?.messages?.length || 0;
   const attachments = await window.webContents.executeJavaScript(`(async () => {
@@ -885,7 +897,7 @@ async function run() {
   assert.equal(connectRequests.length, 1);
   assert.equal(connectRequests[0], "deepseek-fixture");
   assert.equal(startThreadRequests.length, 0);
-  assert.equal(startTurnRequests.length, 0);
+  assert.equal(startTurnRequests.length, 1);
   assert.equal(reconnect.connected, true);
   assert.equal(reconnect.reconnecting, false);
   assert.equal(reconnect.running, false);
@@ -909,20 +921,23 @@ async function run() {
   assert.equal(messageFeatures.searchHits, 1);
   assert.match(messageFeatures.searchSnippet, /消息正文命中/);
   assert.equal(messageFeatures.searchBodyOverflow, false);
-  assert.equal(deliveryModes.queueLength, 2);
-  assert.equal(deliveryModes.firstQueuedText, "立刻改变方向，先检查失败测试");
-  assert.equal(deliveryModes.secondQueuedText, "等当前回复完成后再执行这一条");
-  assert.equal(deliveryModes.stopRequested, true);
-  assert.equal(deliveryModes.nativeQueueLength, 2);
-  assert.equal(deliveryModes.nativeSteerRequests, 1);
-  assert.equal(deliveryModes.interruptRequests, 1);
-  assert.ok(deliveryModes.persistedQueueWrites >= 2);
-  assert.equal(deliveryModes.persistedQueueLength, 2);
+  assert.equal(deliveryModes.queueLengthBeforeSteer, 2);
+  assert.equal(deliveryModes.firstQueuedText, "等当前回复完成后再执行这一条");
+  assert.equal(deliveryModes.secondQueuedText, "竞态情况下也不能丢失的消息");
+  assert.equal(deliveryModes.steerButtonsBeforeClick, 2);
+  assert.equal(deliveryModes.inputAfterQueue, "");
+  assert.equal(deliveryModes.queueLengthAfterSuccess, 1);
+  assert.equal(deliveryModes.remainingAfterInactive, 0);
+  assert.equal(deliveryModes.nativeSteerRequests, 2);
+  assert.equal(deliveryModes.interruptRequests, 0);
+  assert.ok(deliveryModes.persistedQueueWrites >= 4);
+  assert.equal(deliveryModes.persistedQueueLength, 0);
   assert.equal(deliveryModes.nativeExpectedTurnId, "turn-running");
-  assert.match(deliveryModes.sendTitle, /引导当前回复/);
+  assert.equal(deliveryModes.inactiveExpectedTurnId, "turn-running");
+  assert.equal(deliveryModes.inactiveStartedText, "竞态情况下也不能丢失的消息");
+  assert.match(deliveryModes.sendTitle, /排队发送/);
   assert.match(deliveryModes.queueTitle, /排队发送/);
   assert.ok(deliveryModes.deliveryLabels.some((label) => label.includes("已排队")));
-  assert.ok(deliveryModes.deliveryLabels.some((label) => label.includes("接续")));
   assert.ok(deliveryModes.actionTopDelta <= 1);
   assert.equal(deliveryModes.footerOverflow, false);
   assert.deepEqual({ added: attachments.added, unsupported: attachments.unsupported }, { added: 1, unsupported: 1 });

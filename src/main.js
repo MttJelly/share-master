@@ -1465,6 +1465,13 @@ async function steerLogicalTurn(server, payload = {}) {
     if (index >= 0) current.splice(index, 1);
     if (current.length) pendingSteerDisplays.set(pendingKey, current);
     else pendingSteerDisplays.delete(pendingKey);
+    if (/no active turn to steer/i.test(String(error?.message || error))) {
+      return {
+        steered: false,
+        inactive: true,
+        expectedTurnId,
+      };
+    }
     throw error;
   }
 }

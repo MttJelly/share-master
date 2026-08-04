@@ -145,6 +145,31 @@ async function run() {
     result.cachedSwitchMs < result.firstRenderMs,
     `Cached A-B-A switch (${result.cachedSwitchMs.toFixed(1)} ms) was not faster than the first render (${result.firstRenderMs.toFixed(1)} ms).`,
   );
+  const streaming = await window.webContents.executeJavaScript(`(async () => {
+    state.activeThread = { id: 'stream-performance-thread', name: 'Stream performance' };
+    state.renderedThreadId = state.activeThread.id;
+    document.querySelector('#chat-view').replaceChildren();
+    const started = performance.now();
+    for (let index = 0; index < 1200; index += 1) {
+      appendAgentMessageDelta('stream-agent-performance', 'token ');
+      appendActivityDelta('stream-reasoning-performance', 'stream-turn', '思考过程', 'step ', 'brain', state.activeThread.id);
+    }
+    const dispatchMs = performance.now() - started;
+    const pendingBeforeFlush = pendingAgentStreamRenders.size + pendingActivityStreamDeltas.size;
+    await new Promise((resolve) => setTimeout(resolve, STREAM_RENDER_INTERVAL_MS * 3));
+    return {
+      dispatchMs,
+      pendingBeforeFlush,
+      pendingAfterFlush: pendingAgentStreamRenders.size + pendingActivityStreamDeltas.size,
+      agentTextLength: document.querySelector('[data-message-id="stream-agent-performance"]')?.textContent.length || 0,
+      reasoningTextLength: document.querySelector('[data-activity-id="stream-reasoning-performance"] .activity-output')?.textContent.length || 0,
+    };
+  })()`);
+  assert.equal(streaming.pendingBeforeFlush, 2);
+  assert.equal(streaming.pendingAfterFlush, 0);
+  assert.ok(streaming.agentTextLength >= 7200);
+  assert.ok(streaming.reasoningTextLength >= 6000);
+  assert.ok(streaming.dispatchMs < 1000, `Batched stream dispatch took ${streaming.dispatchMs.toFixed(1)} ms.`);
   const protocol = await window.webContents.executeJavaScript(`(async () => {
     state.connected = true;
     state.provider = 'fixture';
@@ -222,7 +247,7 @@ async function run() {
   assert.equal(protocol.queuedTurnStarted, true);
   assert.equal(startTurnCalls, 1);
   assert.equal(notificationCalls, 1);
-  console.log(JSON.stringify({ ok: true, ...result, resumeCalls, readCalls, interruptCalls, startTurnCalls, notificationCalls, protocol }));
+  console.log(JSON.stringify({ ok: true, ...result, streaming, resumeCalls, readCalls, interruptCalls, startTurnCalls, notificationCalls, protocol }));
   window.destroy();
 }
 

@@ -1921,13 +1921,33 @@ html[data-theme="dark"] .local-provider-badge.missing { background: #493521; col
   font-size: 10px;
   line-height: 1.3;
   text-align: right;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
 }
-.message-delivery-state::before { content: ""; display: inline-block; width: 5px; height: 5px; margin: 0 5px 1px 0; border-radius: 50%; background: currentColor; }
+.message-delivery-state::before { content: ""; display: inline-block; flex: 0 0 auto; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
 .message-delivery-state.delivery-steer,
 .message-delivery-state.delivery-steered { color: var(--accent); }
 .message-delivery-state.delivery-steer::before { animation: delivery-pulse 900ms ease-in-out infinite alternate; }
 .message-delivery-state.delivery-steer-fallback { color: #9a6828; }
 .message-delivery-state.delivery-queue { color: #66736e; }
+.queued-steer-button {
+  min-width: 42px;
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid #a7beb5;
+  border-radius: 999px;
+  background: #f2f8f5;
+  color: var(--accent);
+  font: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.queued-steer-button:hover:not(:disabled) { border-color: #6f9c8c; background: #e4f1ec; }
+.queued-steer-button:disabled { opacity: .46; cursor: default; }
 @keyframes delivery-pulse { to { opacity: .35; transform: scale(.78); } }
 .stop-button {
   border: 1px solid #b9463d;
@@ -1944,6 +1964,8 @@ html[data-theme="dark"] .activity-row.activity-reasoning .activity-output,
 html[data-theme="dark"] .activity-row.activity-plan .activity-output { background: transparent; color: #b8c7c0; }
 html[data-theme="dark"] .queue-button { border-color: #3d5b51; background: #23352f; color: #82cfb8; }
 html[data-theme="dark"] .queue-button:hover:not(:disabled) { border-color: #547b6d; background: #29423a; }
+html[data-theme="dark"] .queued-steer-button { border-color: #46685c; background: #243a33; color: #8bd7bf; }
+html[data-theme="dark"] .queued-steer-button:hover:not(:disabled) { border-color: #5d8b7b; background: #2b473e; }
 
 @media (max-width: 980px) {
   .activity { width: 100%; margin-left: 0; padding-left: 12px; }
