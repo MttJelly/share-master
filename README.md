@@ -42,13 +42,10 @@ Share Master 是一款面向 Windows 的多模型桌面客户端。不同模型�
 | **本地配置发现**<br>只读发现 Codex、Claude Code 与 CCSwitch 的现有配置 | **附件与扩展**<br>支持图片拖放、消息引用、`/` Skill、Prompt 和 MCP |
 | **本地记录浏览**<br>只读查看并单向复制 Codex 与 Claude 会话 | **备份与同步**<br>支持本地目录和 WebDAV，同步时排除密钥与聊天正文 |
 
-## 首次使用
+## 使用文档 / Documentation
 
-1. 启动 Share Master，在“选择连接方式”中选择官方账号或添加 API 连接。
-2. 使用 Codex 时需先安装 Codex CLI，并确保终端可以运行 `codex`。
-3. 使用 Claude 时需先安装 Claude Code CLI，并确保终端可以运行 `claude`。
-4. 使用 DeepSeek、Qwen 或其他兼容服务时，填写 Base URL、模型名称和 API Key。
-5. API Key 使用 Windows 安全存储加密，只保存在当前电脑的 Share Master 数据目录中。
+- [中文使用指南](docs/USER_GUIDE.zh-CN.md)
+- [English User Guide](docs/USER_GUIDE.en.md)
 
 ## 数据与隐私
 
