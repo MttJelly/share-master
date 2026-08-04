@@ -2,6 +2,13 @@
 
 本文件记录 Share Master 每个版本的用户可见变化。版本号遵循语义化版本；每次向 GitHub 推送产品更新前，必须先更新版本号和本文件。
 
+## [0.1.5] - 2026-08-04
+
+### 修复
+
+- 将 Windows AppUserModelID 固定为 Share Master 的应用 ID，修复源码运行时被 Windows 归类为 Electron 并显示默认原子图标的问题。
+- 窗口和托盘在开发运行时统一使用多尺寸 Share Master ICO，安装版继续使用可执行文件内嵌的同一套图标。
+
 ## [0.1.4] - 2026-08-04
 
 ### 优化
@@ -63,3 +70,4 @@
 [0.1.2]: https://github.com/MttJelly/share-master/compare/v0.1.1...v0.1.2
 [0.1.3]: https://github.com/MttJelly/share-master/compare/v0.1.2...v0.1.3
 [0.1.4]: https://github.com/MttJelly/share-master/compare/v0.1.3...v0.1.4
+[0.1.5]: https://github.com/MttJelly/share-master/compare/v0.1.4...v0.1.5

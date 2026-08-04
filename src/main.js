@@ -7,7 +7,9 @@ const path = require("node:path");
 const { fileURLToPath } = require("node:url");
 const { APP_VERSION, LATEST_RELEASE_API, USER_AGENT, updateFromRelease } = require("./app-version");
 
+const WINDOWS_APP_ID = "com.sharemaster.desktop";
 app.setName("Share Master");
+app.setAppUserModelId(WINDOWS_APP_ID);
 if (app.isPackaged) {
   process.env.SHARE_MASTER_PACKAGED = "1";
   process.env.SHARE_MASTER_STORE_ROOT ||= path.join(app.getPath("userData"), "data");
@@ -67,6 +69,7 @@ let lastActiveWindow = null;
 const pendingDeepLinks = [];
 const DEFAULT_RENDERER_THREAD_TURNS = 40;
 const APPLICATION_ROOT = path.resolve(__dirname, "..");
+const DEVELOPMENT_ICON = path.join(APPLICATION_ROOT, "build", "icon.ico");
 const DEFAULT_WORKSPACE = app.isPackaged ? os.homedir() : APPLICATION_ROOT;
 let applicationUpdateCheck = null;
 const localHistoryReader = createLocalHistoryReader({ homeDirectory: os.homedir() });
@@ -258,7 +261,7 @@ function createWindow(providerId = null, projectRoot = null, threadId = null, pr
     minWidth: 900,
     minHeight: 640,
     backgroundColor: "#f5f6f7",
-    ...(!app.isPackaged ? { icon: path.join(APPLICATION_ROOT, "build", "icon.png") } : {}),
+    ...(!app.isPackaged && fs.existsSync(DEVELOPMENT_ICON) ? { icon: DEVELOPMENT_ICON } : {}),
     titleBarStyle: "hidden",
     titleBarOverlay: { color: "#f5f6f7", symbolColor: "#1d2329", height: 42 },
     webPreferences: {
@@ -780,9 +783,8 @@ function refreshTrayMenu() {
 
 async function createTray() {
   if (tray || process.env.CODEX_DECK_QA_SCREENSHOT) return;
-  const developmentIcon = path.join(APPLICATION_ROOT, "build", "icon.png");
-  const icon = !app.isPackaged && fs.existsSync(developmentIcon)
-    ? nativeImage.createFromPath(developmentIcon).resize({ width: 32, height: 32, quality: "best" })
+  const icon = !app.isPackaged && fs.existsSync(DEVELOPMENT_ICON)
+    ? nativeImage.createFromPath(DEVELOPMENT_ICON).resize({ width: 32, height: 32, quality: "best" })
     : await app.getFileIcon(process.execPath, { size: "small" });
   tray = new Tray(icon);
   tray.setToolTip("Share Master");
@@ -940,6 +942,8 @@ async function runMultiProviderWindowQa(firstWindow) {
     }
     console.log(JSON.stringify({
       ok: true,
+      appUserModelId: WINDOWS_APP_ID,
+      runtimeIconAvailable: app.isPackaged || !nativeImage.createFromPath(DEVELOPMENT_ICON).isEmpty(),
       windowCount: windows.length,
       serverCount: servers.size,
       providerReturn: true,
