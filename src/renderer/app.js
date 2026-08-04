@@ -121,10 +121,13 @@ window.shareMasterState = state;
 const INITIAL_VISIBLE_TURNS = 40;
 const EARLIER_TURN_BATCH = 40;
 const STREAM_RENDER_INTERVAL_MS = 48;
+const COMPOSER_ACTIVITY_WINDOW_MS = 180;
 const pendingAgentStreamRenders = new Map();
 const pendingActivityStreamDeltas = new Map();
 let streamRenderTimer = null;
 let scrollFrame = null;
+let composerInputFrame = null;
+let lastComposerInputAt = Number.NEGATIVE_INFINITY;
 
 const $ = (selector) => document.querySelector(selector);
 const elements = {
@@ -2135,7 +2138,7 @@ function parseSkillInvocations(text) {
   return { prompt, skillInputs: [...selected.values()] };
 }
 
-function renderItem(item, turnId = null) {
+function renderItem(item, turnId = null, streaming = false) {
   if (!item) return;
   if (item.type === "userMessage") {
     if (item.clientId) {
@@ -2145,7 +2148,7 @@ function renderItem(item, turnId = null) {
     return appendUserMessage(item);
   }
   if (item.type === "agentMessage") {
-    return appendMessage("agent", item.text, item.id, item.phase, item.sourceLabel || null);
+    return appendMessage("agent", item.text, item.id, item.phase, item.sourceLabel || null, streaming);
   }
   if (item.type === "plan") {
     return appendActivity({
@@ -2820,7 +2823,7 @@ function ensureMessageActions(node, role) {
   if (!state.renderTarget) refreshIcons();
 }
 
-function appendMessage(role, text, id = crypto.randomUUID(), phase = null, sourceLabel = null) {
+function appendMessage(role, text, id = crypto.randomUUID(), phase = null, sourceLabel = null, streaming = false) {
   const target = conversationTarget();
   let node = target.querySelector(`[data-message-id="${CSS.escape(id)}"]`);
   if (!node) {
@@ -2834,9 +2837,18 @@ function appendMessage(role, text, id = crypto.randomUUID(), phase = null, sourc
     node.innerHTML = `<div class="message-avatar">${avatar}</div><div class="message-column"><div class="message-header">${role === "user" ? "你" : escapeHtml(providerLabel)}</div><div class="message-body"></div></div>`;
     target.appendChild(node);
   }
-  node.querySelector(".message-body").innerHTML = role === "agent" ? renderMarkdown(text) : `<p>${escapeHtml(text).replaceAll("\n", "<br>")}</p>`;
+  const body = node.querySelector(".message-body");
+  if (role === "agent" && streaming) body.textContent = String(text || "");
+  else body.innerHTML = role === "agent" ? renderMarkdown(text) : `<p>${escapeHtml(text).replaceAll("\n", "<br>")}</p>`;
   node.dataset.rawText = String(text || "");
-  ensureMessageActions(node, role);
+  node.classList.toggle("streaming", role === "agent" && streaming);
+  if (role === "agent" && streaming) {
+    node.setAttribute("aria-busy", "true");
+    node.querySelector(".message-actions")?.remove();
+  } else {
+    node.removeAttribute("aria-busy");
+    ensureMessageActions(node, role);
+  }
   if (phase) node.dataset.phase = phase;
   state.streamNodes.set(id, node);
   if (!state.renderTarget) {
@@ -2916,7 +2928,7 @@ function renderActivityDelta(itemId, turnId, label, delta, icon = "terminal") {
   scrollToBottom();
 }
 
-function flushPendingStreamUpdates(itemId = null) {
+function flushPendingStreamUpdates(itemId = null, finalize = false) {
   if (itemId === null && streamRenderTimer) {
     clearTimeout(streamRenderTimer);
     streamRenderTimer = null;
@@ -2924,13 +2936,24 @@ function flushPendingStreamUpdates(itemId = null) {
   for (const [id, pending] of [...pendingAgentStreamRenders]) {
     if (itemId !== null && id !== itemId) continue;
     pendingAgentStreamRenders.delete(id);
-    if (pending.node.isConnected) pending.node.querySelector(".message-body").innerHTML = renderMarkdown(pending.text);
+    if (!pending.node.isConnected) continue;
+    const body = pending.node.querySelector(".message-body");
+    if (finalize) body.innerHTML = renderMarkdown(pending.node.dataset.rawText || "");
+    else if (pending.delta) body.append(document.createTextNode(pending.delta));
   }
   for (const [id, pending] of [...pendingActivityStreamDeltas]) {
     if (itemId !== null && id !== itemId) continue;
     pendingActivityStreamDeltas.delete(id);
     if (pending.threadId && pending.threadId !== state.activeThread?.id) continue;
     renderActivityDelta(id, pending.turnId, pending.label, pending.delta, pending.icon);
+  }
+  if (finalize) {
+    for (const node of elements.chat.querySelectorAll(".message.agent.streaming")) {
+      node.querySelector(".message-body").innerHTML = renderMarkdown(node.dataset.rawText || "");
+      node.classList.remove("streaming");
+      node.removeAttribute("aria-busy");
+      ensureMessageActions(node, "agent");
+    }
   }
   scrollToBottom();
 }
@@ -2944,10 +2967,16 @@ function scheduleStreamUpdateFlush() {
 }
 
 function appendAgentMessageDelta(itemId, delta) {
-  const node = state.streamNodes.get(itemId) || appendMessage("agent", "", itemId, "commentary");
+  const node = state.streamNodes.get(itemId) || appendMessage("agent", "", itemId, "commentary", null, true);
+  if (!node.classList.contains("streaming")) {
+    node.classList.add("streaming");
+    node.setAttribute("aria-busy", "true");
+    node.querySelector(".message-actions")?.remove();
+  }
   const text = `${node.dataset.rawText || ""}${delta || ""}`;
   node.dataset.rawText = text;
-  pendingAgentStreamRenders.set(itemId, { node, text });
+  const pending = pendingAgentStreamRenders.get(itemId);
+  pendingAgentStreamRenders.set(itemId, { node, delta: `${pending?.delta || ""}${delta || ""}` });
   scheduleStreamUpdateFlush();
 }
 
@@ -3567,7 +3596,7 @@ function handleEvent(message) {
     return;
   }
   if (method === "turn/completed") {
-    flushPendingStreamUpdates();
+    if (eventThreadId === state.activeThread?.id) flushPendingStreamUpdates(null, true);
     completeThreadRun(eventThreadId, params.turn);
     if (!elements.usageOverlay.classList.contains("hidden")) refreshUsage();
     return;
@@ -3576,7 +3605,7 @@ function handleEvent(message) {
   if (eventThreadId && !globallyRelevant && eventThreadId !== state.activeThread?.id) return;
   if (method === "item/started" || method === "item/completed") {
     if (method === "item/completed" && params.item?.id) flushPendingStreamUpdates(params.item.id);
-    renderItem(params.item, params.turnId);
+    renderItem(params.item, params.turnId, method === "item/started");
   } else if (method === "item/agentMessage/delta") {
     const id = params.itemId || "stream-agent";
     appendAgentMessageDelta(id, params.delta);
@@ -4036,13 +4065,25 @@ function updateWorkspace() {
   elements.workspaceLabel.title = state.workspace;
 }
 
-function resizeComposer() {
+function resizeComposer(syncState = true) {
   elements.input.style.height = "auto";
   elements.input.style.height = `${Math.min(elements.input.scrollHeight, 180)}px`;
+  if (syncState) syncComposerState();
+}
+
+function scheduleComposerInputUpdate() {
+  lastComposerInputAt = performance.now();
   syncComposerState();
+  if (composerInputFrame) return;
+  composerInputFrame = requestAnimationFrame(() => {
+    composerInputFrame = null;
+    resizeComposer(false);
+    updateSkillAutocomplete();
+  });
 }
 
 function scrollToBottom() {
+  if (performance.now() - lastComposerInputAt < COMPOSER_ACTIVITY_WINDOW_MS) return;
   if (scrollFrame) return;
   scrollFrame = requestAnimationFrame(() => {
     scrollFrame = null;
@@ -6065,8 +6106,7 @@ elements.chat.addEventListener("click", (event) => {
   api.openExternal(target).catch(showActionError);
 });
 elements.input.addEventListener("input", () => {
-  resizeComposer();
-  updateSkillAutocomplete();
+  scheduleComposerInputUpdate();
 });
 elements.input.addEventListener("paste", pasteClipboardAttachments);
 elements.attachButton.addEventListener("click", async () => {

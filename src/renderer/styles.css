@@ -148,6 +148,8 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 .message-body pre code { background: transparent; padding: 0; }
 .message-actions { display: flex; align-items: center; gap: 2px; min-height: 28px; margin-top: 4px; opacity: 0; transition: opacity 120ms ease; }
 .message:hover .message-actions, .message:focus-within .message-actions { opacity: 1; }
+.message.agent.streaming .message-body { white-space: pre-wrap; overflow-wrap: anywhere; }
+.message.agent.streaming .message-actions { display: none; }
 .message-action-button { width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 5px; background: transparent; color: var(--muted); cursor: pointer; }
 .message-action-button:hover { background: var(--surface-2); color: var(--ink); }
 .message-action-button svg { width: 14px; height: 14px; }

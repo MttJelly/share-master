@@ -46,6 +46,7 @@ Share Master 是一款面向 Windows 的多模型桌面客户端。不同模型�
 
 - [中文使用指南](docs/USER_GUIDE.zh-CN.md)
 - [English User Guide](docs/USER_GUIDE.en.md)
+- [更新日志](CHANGELOG.md)
 
 ## 数据与隐私
 
@@ -95,6 +96,8 @@ npm run dist:win
 生成文件位于 `release` 目录。
 
 </details>
+
+版本发布与 GitHub 更新规则见 [发布维护流程](docs/RELEASE_PROCESS.md)。
 
 <details>
 <summary><strong>运行测试</strong></summary>

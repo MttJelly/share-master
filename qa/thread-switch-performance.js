@@ -157,19 +157,49 @@ async function run() {
     const dispatchMs = performance.now() - started;
     const pendingBeforeFlush = pendingAgentStreamRenders.size + pendingActivityStreamDeltas.size;
     await new Promise((resolve) => setTimeout(resolve, STREAM_RENDER_INTERVAL_MS * 3));
+    const agent = document.querySelector('[data-message-id="stream-agent-performance"]');
+    const actionsWhileStreaming = agent?.querySelectorAll('.message-action-button').length || 0;
+    const composer = document.querySelector('#composer-input');
+    const inputStarted = performance.now();
+    for (let index = 0; index < 300; index += 1) {
+      composer.value = 'typing while streaming ' + index;
+      composer.dispatchEvent(new Event('input', { bubbles: true }));
+      appendAgentMessageDelta('stream-agent-performance', 'more ');
+    }
+    const inputDispatchMs = performance.now() - inputStarted;
+    await new Promise((resolve) => setTimeout(resolve, STREAM_RENDER_INTERVAL_MS * 3));
+    const completedText = agent.dataset.rawText;
+    handleEvent({
+      method: 'item/completed',
+      params: {
+        threadId: state.activeThread.id,
+        turnId: 'stream-turn',
+        item: { id: 'stream-agent-performance', type: 'agentMessage', text: completedText, phase: 'final_answer' }
+      }
+    });
     return {
       dispatchMs,
+      inputDispatchMs,
       pendingBeforeFlush,
       pendingAfterFlush: pendingAgentStreamRenders.size + pendingActivityStreamDeltas.size,
-      agentTextLength: document.querySelector('[data-message-id="stream-agent-performance"]')?.textContent.length || 0,
+      agentTextLength: agent?.textContent.length || 0,
       reasoningTextLength: document.querySelector('[data-activity-id="stream-reasoning-performance"] .activity-output')?.textContent.length || 0,
+      actionsWhileStreaming,
+      actionsAfterCompletion: agent?.querySelectorAll('.message-action-button').length || 0,
+      streamingAfterCompletion: agent?.classList.contains('streaming') || false,
+      composerValue: composer.value,
     };
   })()`);
   assert.equal(streaming.pendingBeforeFlush, 2);
   assert.equal(streaming.pendingAfterFlush, 0);
   assert.ok(streaming.agentTextLength >= 7200);
   assert.ok(streaming.reasoningTextLength >= 6000);
+  assert.equal(streaming.actionsWhileStreaming, 0);
+  assert.equal(streaming.actionsAfterCompletion, 3);
+  assert.equal(streaming.streamingAfterCompletion, false);
+  assert.equal(streaming.composerValue, "typing while streaming 299");
   assert.ok(streaming.dispatchMs < 1000, `Batched stream dispatch took ${streaming.dispatchMs.toFixed(1)} ms.`);
+  assert.ok(streaming.inputDispatchMs < 1000, `Composer input dispatch during streaming took ${streaming.inputDispatchMs.toFixed(1)} ms.`);
   const protocol = await window.webContents.executeJavaScript(`(async () => {
     state.connected = true;
     state.provider = 'fixture';
