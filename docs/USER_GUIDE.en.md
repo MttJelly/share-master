@@ -76,6 +76,7 @@ Failover uses only the fallback connections you configure. Model capabilities, c
 ### Create and switch conversations
 
 - Choose New chat (`新会话`) to start a conversation.
+- After sending, the bottom of the conversation shows Connecting to model (`正在连接模型`) or Thinking (`正在思考`); it disappears when the response completes, fails, or stops.
 - You can switch to another conversation while a response is running; the original conversation continues in the background.
 - Share Master can send a Windows notification when background work completes. Check Windows notification permissions if none appears.
 - The conversation list supports search. Its menu supports rename, archive, and remove actions.

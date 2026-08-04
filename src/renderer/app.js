@@ -1395,7 +1395,7 @@ function renderThreadList() {
       ? searchSnippet
       : deletion
       ? `${deletionMinutes} 分钟后从 Share Master 清除`
-      : run ? `正在运行${queueLength ? ` · ${queueLength} 条排队` : ""}`
+      : run ? `正在思考${queueLength ? ` · ${queueLength} 条排队` : ""}`
       : queueLength ? `${queueLength} 条待发送 · 点击会话后继续`
       : thread._syncedFromCodex ? `已同步的 Codex 会话 · ${timeAgo(thread.recencyAt || thread.updatedAt)}`
       : `${savedModel || thread.model || thread.modelProvider || "会话"} · ${timeAgo(thread.recencyAt || thread.updatedAt)}`;
@@ -1923,6 +1923,7 @@ function showCachedConversation(thread) {
   state.streamNodes = cached.streamNodes;
   state.renderedThreadId = threadId;
   state.renderedThreadRevision = cached.revision;
+  syncThinkingIndicator();
   scrollToBottom();
   return true;
 }
@@ -1933,6 +1934,7 @@ function renderConversation(thread) {
   elements.empty.classList.add("hidden");
   elements.chat.classList.remove("hidden");
   if (state.renderedThreadId === thread.id && state.renderedThreadRevision === revision) {
+    syncThinkingIndicator();
     scrollToBottom();
     return;
   }
@@ -1985,6 +1987,7 @@ function renderConversation(thread) {
   elements.chat.replaceChildren(fragment);
   state.renderedThreadId = thread.id;
   state.renderedThreadRevision = revision;
+  syncThinkingIndicator();
   refreshIcons();
   scrollToBottom();
 }
@@ -2343,13 +2346,19 @@ function appendMessage(role, text, id = crypto.randomUUID(), phase = null, sourc
   ensureMessageActions(node, role);
   if (phase) node.dataset.phase = phase;
   state.streamNodes.set(id, node);
-  if (!state.renderTarget) scrollToBottom();
+  if (!state.renderTarget) {
+    syncThinkingIndicator();
+    scrollToBottom();
+  }
   return node;
 }
 
 function appendActivity(item, turnId = null) {
   const target = conversationTarget();
-  let group = target.lastElementChild?.classList.contains("activity") ? target.lastElementChild : null;
+  const lastContent = target.lastElementChild?.classList.contains("thinking-indicator")
+    ? target.lastElementChild.previousElementSibling
+    : target.lastElementChild;
+  let group = lastContent?.classList.contains("activity") ? lastContent : null;
   if (group && turnId && group.dataset.turnId !== turnId) group = null;
   if (!group) {
     group = document.createElement("div");
@@ -2375,6 +2384,7 @@ function appendActivity(item, turnId = null) {
     : "";
   row.innerHTML = `<span data-lucide="${icon}"></span><code>${escapeHtml(details)}</code><span>${escapeHtml(item.status || "")}</span>${output}`;
   if (!state.renderTarget) {
+    syncThinkingIndicator();
     refreshIcons();
     scrollToBottom();
   }
@@ -2507,6 +2517,7 @@ async function sendMessage(deliveryMode = "auto") {
       } finally {
         state.submitting = false;
         syncComposerState();
+        syncThinkingIndicator();
       }
       return;
     }
@@ -2594,6 +2605,7 @@ async function sendMessage(deliveryMode = "auto") {
   } finally {
     state.submitting = false;
     syncComposerState();
+    syncThinkingIndicator();
   }
 }
 
@@ -2659,6 +2671,54 @@ function setThreadRunning(threadId, running, turnId = null) {
   syncActiveRunState();
 }
 
+function syncThinkingIndicator() {
+  const threadId = state.activeThread?.id || null;
+  const run = threadId ? state.runningThreads.get(threadId) : null;
+  const shouldShow = Boolean(
+    threadId
+    && (run || state.submitting)
+    && !state.activeArchived
+    && state.renderedThreadId === threadId
+    && !elements.chat.classList.contains("hidden"),
+  );
+  let indicator = elements.chat.querySelector(".thinking-indicator");
+  if (!shouldShow) {
+    indicator?.remove();
+    return;
+  }
+  if (indicator?.dataset.threadId !== threadId) {
+    indicator?.remove();
+    indicator = null;
+  }
+  if (!indicator) {
+    indicator = document.createElement("div");
+    indicator.className = "thinking-indicator";
+    indicator.dataset.threadId = threadId;
+    indicator.setAttribute("role", "status");
+    indicator.setAttribute("aria-live", "polite");
+    const providerLabel = currentProviderDefinition()?.label
+      || (state.providerType === "claude" ? "Claude" : "Share Master");
+    indicator.innerHTML = `
+      <span class="thinking-avatar">${escapeHtml(providerInitials(providerLabel))}</span>
+      <span class="thinking-copy">
+        <strong class="thinking-label"></strong>
+        <small class="thinking-detail"></small>
+      </span>
+      <span class="thinking-dots" aria-hidden="true"><i></i><i></i><i></i></span>`;
+  }
+  const queueLength = (state.messageQueues.get(threadId) || []).length;
+  const label = run?.stopRequested ? "正在停止…" : run ? "正在思考…" : "正在连接模型…";
+  const detail = run?.stopRequested
+    ? "正在安全结束当前回复"
+    : queueLength
+      ? `模型正在处理你的消息 · 后续 ${queueLength} 条待发送`
+      : "模型正在处理你的消息";
+  indicator.dataset.state = run?.stopRequested ? "stopping" : run ? "thinking" : "connecting";
+  indicator.querySelector(".thinking-label").textContent = label;
+  indicator.querySelector(".thinking-detail").textContent = detail;
+  if (indicator !== elements.chat.lastElementChild) elements.chat.appendChild(indicator);
+}
+
 function resetAllRuns(clearQueues = false) {
   state.runningThreads.clear();
   if (clearQueues) state.messageQueues.clear();
@@ -2687,6 +2747,7 @@ function syncActiveRunState() {
   elements.queue.setAttribute("aria-label", run ? `排队发送，已有 ${queueLength} 条` : `继续发送 ${queueLength} 条恢复队列`);
   elements.queue.dataset.count = String(queueLength);
   syncComposerState();
+  syncThinkingIndicator();
   if (state.threads.length) renderThreadList();
 }
 

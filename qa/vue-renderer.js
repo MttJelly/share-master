@@ -405,7 +405,7 @@ async function run() {
     const reasoningOutput = document.querySelector('.activity-reasoning .activity-output');
     const send = document.querySelector('#send-button');
     const stop = document.querySelector('#stop-button');
-    return {
+    const snapshot = {
       messages: document.querySelectorAll('.message').length,
       agentHeader: agentHeader?.textContent || '',
       userBubbleColor: userBubble ? getComputedStyle(userBubble).backgroundColor : '',
@@ -414,11 +414,18 @@ async function run() {
       activityWidth: Math.round(activity?.getBoundingClientRect().width || 0),
       reasoningOutputWidth: Math.round(reasoningOutput?.getBoundingClientRect().width || 0),
       reasoningLineHeight: reasoningOutput ? parseFloat(getComputedStyle(reasoningOutput).lineHeight) : 0,
+      thinkingVisible: Boolean(document.querySelector('.thinking-indicator')),
+      thinkingText: document.querySelector('.thinking-indicator')?.textContent.replace(/\s+/g, ' ').trim() || '',
+      thinkingIsLast: document.querySelector('#chat-view').lastElementChild?.classList.contains('thinking-indicator') || false,
       stopVisible: !stop.classList.contains('hidden'),
       actionTopDelta: Math.abs(Math.round(send.getBoundingClientRect().top - stop.getBoundingClientRect().top)),
       actionLaneWidth: Math.round(document.querySelector('.composer-submit').getBoundingClientRect().width),
       composerFooterOverflow: document.querySelector('.composer-footer').scrollWidth > document.querySelector('.composer-footer').clientWidth
     };
+    setThreadRunning(state.activeThread.id, false);
+    snapshot.thinkingHiddenAfterCompletion = !document.querySelector('.thinking-indicator');
+    setThreadRunning(state.activeThread.id, true, 'turn-running');
+    return snapshot;
   })()`);
   window.setSize(900, 640);
   await new Promise((resolve) => setTimeout(resolve, 180));
@@ -764,6 +771,10 @@ async function run() {
   assert.ok(conversation.activityWidth >= 700, `Reasoning activity remained too narrow: ${JSON.stringify(conversation)}`);
   assert.ok(conversation.reasoningOutputWidth >= 650, `Reasoning output remained too narrow: ${JSON.stringify(conversation)}`);
   assert.ok(conversation.reasoningLineHeight >= 19);
+  assert.equal(conversation.thinkingVisible, true);
+  assert.match(conversation.thinkingText, /正在思考/);
+  assert.equal(conversation.thinkingIsLast, true);
+  assert.equal(conversation.thinkingHiddenAfterCompletion, true);
   assert.equal(conversation.stopVisible, true);
   assert.ok(conversation.actionTopDelta <= 1, `Send and stop controls are on different rows: ${JSON.stringify(conversation)}`);
   assert.ok(conversation.actionLaneWidth >= 70);
