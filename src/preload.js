@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld("codexDeck", {
   localFilePath: (file) => webUtils.getPathForFile(file),
   notify: (payload) => ipcRenderer.invoke("app:notify", payload),
   copyText: (value) => ipcRenderer.invoke("app:copy-text", value),
+  copyImage: (payload) => ipcRenderer.invoke("app:copy-image", payload),
   appSettings: () => ipcRenderer.invoke("app:settings"),
   saveAppSettings: (input) => ipcRenderer.invoke("app:save-settings", input),
   checkForUpdates: () => ipcRenderer.invoke("app:check-update"),

@@ -1,9 +1,10 @@
-const { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, net, Notification, shell, Tray } = require("electron");
+const { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, net, Notification, shell, Tray } = require("electron");
 const { execFile, spawn } = require("node:child_process");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { fileURLToPath } = require("node:url");
 
 app.setName("Share Master");
 if (app.isPackaged) {
@@ -1598,6 +1599,41 @@ async function privateExtensionSnapshot() {
 }
 
 const CLIPBOARD_IMAGE_PATTERN = /\.(?:gif|jpe?g|png|webp)$/i;
+const MAX_CLIPBOARD_IMAGE_BYTES = 25 * 1024 * 1024;
+
+async function clipboardImageFromPayload(payload = {}) {
+  const localPath = String(payload.path || "").trim();
+  const sourceUrl = String(payload.url || "").trim();
+  if (localPath) {
+    const stats = fs.statSync(localPath);
+    if (!stats.isFile()) throw new Error("图片附件不存在。");
+    if (stats.size > MAX_CLIPBOARD_IMAGE_BYTES) throw new Error("图片超过 25 MB，无法复制。");
+    return nativeImage.createFromPath(localPath);
+  }
+  if (/^file:\/\//i.test(sourceUrl)) {
+    const filePath = fileURLToPath(sourceUrl);
+    const stats = fs.statSync(filePath);
+    if (!stats.isFile()) throw new Error("图片附件不存在。");
+    if (stats.size > MAX_CLIPBOARD_IMAGE_BYTES) throw new Error("图片超过 25 MB，无法复制。");
+    return nativeImage.createFromPath(filePath);
+  }
+  if (/^data:image\//i.test(sourceUrl)) {
+    if (Buffer.byteLength(sourceUrl, "utf8") > MAX_CLIPBOARD_IMAGE_BYTES * 1.4) {
+      throw new Error("图片超过 25 MB，无法复制。");
+    }
+    return nativeImage.createFromDataURL(sourceUrl);
+  }
+  if (/^https:\/\//i.test(sourceUrl)) {
+    const response = await net.fetch(sourceUrl, { signal: AbortSignal.timeout(15000) });
+    if (!response.ok) throw new Error(`图片下载失败（HTTP ${response.status}）。`);
+    const declaredLength = Number(response.headers.get("content-length") || 0);
+    if (declaredLength > MAX_CLIPBOARD_IMAGE_BYTES) throw new Error("图片超过 25 MB，无法复制。");
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.length > MAX_CLIPBOARD_IMAGE_BYTES) throw new Error("图片超过 25 MB，无法复制。");
+    return nativeImage.createFromBuffer(buffer);
+  }
+  throw new Error("不支持的图片来源。");
+}
 
 function clipboardImageFilePaths() {
   const paths = new Set();
@@ -2143,6 +2179,12 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle("app:copy-text", (_event, value) => {
     clipboard.writeText(String(value || "").slice(0, 500000));
+    return true;
+  });
+  ipcMain.handle("app:copy-image", async (_event, payload = {}) => {
+    const image = await clipboardImageFromPayload(payload);
+    if (!image || image.isEmpty()) throw new Error("无法读取这张图片。");
+    clipboard.writeImage(image);
     return true;
   });
 

@@ -25,6 +25,9 @@ const AttachmentTray = {
     const remove = (index) => window.dispatchEvent(new CustomEvent("share-master:remove-attachment", {
       detail: { index },
     }));
+    const copy = (item) => window.dispatchEvent(new CustomEvent("share-master:copy-attachment", {
+      detail: { path: item.path },
+    }));
     return () => h("div", {
       id: "attachment-list",
       class: ["attachment-list", { hidden: attachmentUi.items.length === 0 }],
@@ -38,6 +41,13 @@ const AttachmentTray = {
         h("strong", { title: item.name }, item.name),
         h("small", null, "图片附件"),
       ]),
+      h("button", {
+        type: "button",
+        class: "attachment-copy-button",
+        title: `复制 ${item.name}`,
+        "aria-label": `复制 ${item.name}`,
+        onClick: () => copy(item),
+      }, [h("span", { "aria-hidden": "true" }, "⧉")]),
       h("button", {
         type: "button",
         class: "attachment-remove",

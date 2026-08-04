@@ -146,8 +146,10 @@ async function run() {
   const startThreadRequests = [];
   const startTurnRequests = [];
   const copiedTexts = [];
+  const copiedImages = [];
   const persistedQueues = [];
   let clipboardPasteRequests = 0;
+  let pendingSteerResolve = null;
   ipcMain.handle("app:bootstrap", () => ({
     providerPresets: [
       { id: "deepseek", label: "DeepSeek", group: "国内模型", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat", protocol: "chat_completions", note: "DeepSeek 兼容接口。" },
@@ -263,6 +265,9 @@ async function run() {
   });
   ipcMain.handle("codex:steer", (_event, input) => {
     steerRequests.push(structuredClone(input));
+    if (/等待引导完成/.test(input.displayText || input.text || "")) {
+      return new Promise((resolve) => { pendingSteerResolve = resolve; });
+    }
     if (/竞态/.test(input.displayText || input.text || "")) {
       return { steered: false, inactive: true, expectedTurnId: input.expectedTurnId };
     }
@@ -274,6 +279,10 @@ async function run() {
   });
   ipcMain.handle("app:copy-text", (_event, value) => {
     copiedTexts.push(String(value || ""));
+    return true;
+  });
+  ipcMain.handle("app:copy-image", (_event, value) => {
+    copiedImages.push(structuredClone(value));
     return true;
   });
   ipcMain.handle("clipboard:images", () => {
@@ -494,6 +503,16 @@ async function run() {
     user.querySelector('[title="引用到输入框"]').click();
     await new Promise((resolve) => setTimeout(resolve, 30));
     const quotedText = document.querySelector('#composer-input').value;
+    user.querySelector('.user-edit-message').click();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const editedText = document.querySelector('#composer-input').value;
+    const stopRequestedByEdit = state.runningThreads.get(state.activeThread.id)?.stopRequested === true;
+    const editTitleWhileRunning = user.querySelector('.user-edit-message').title;
+    const run = state.runningThreads.get(state.activeThread.id);
+    if (run) {
+      run.stopRequested = false;
+      run.interruptingTurnId = null;
+    }
     document.querySelector('#composer-input').value = '';
     document.querySelector('#thread-search').value = '克制的提示';
     scheduleThreadSearch();
@@ -503,6 +522,9 @@ async function run() {
       agentActions: agent.querySelectorAll('.message-action-button').length,
       userActions: user.querySelectorAll('.message-action-button').length,
       quotedText,
+      editedText,
+      stopRequestedByEdit,
+      editTitleWhileRunning,
       searchHits: state.threadSearchHits.size,
       searchSnippet: document.querySelector('.thread-item small')?.textContent || '',
       searchBodyOverflow: document.body.scrollWidth > document.body.clientWidth || document.body.scrollHeight > document.body.clientHeight,
@@ -528,6 +550,9 @@ async function run() {
       queueBadge: document.querySelector('#queue-button').dataset.count,
       queuePanelVisible: !queuePanel.classList.contains('hidden'),
       queuePanelItems: queuePanel.querySelectorAll('.queued-prompt-item').length,
+      queueIcons: queuePanel.querySelectorAll('.queued-prompt-icon').length,
+      deleteButtons: queuePanel.querySelectorAll('.queued-prompt-delete').length,
+      moreButtons: queuePanel.querySelectorAll('.queued-prompt-more > summary').length,
       queuePanelAboveInput: queuePanel.getBoundingClientRect().bottom <= input.getBoundingClientRect().top + 1,
       steerButtonsBeforeClick: queuePanel.querySelectorAll('.queued-steer-button').length,
       queuedMessagesInChat: queuedBeforeSteer.filter((message) => document.querySelector('[data-message-id="' + CSS.escape(message.clientUserMessageId) + '"]')).length,
@@ -564,6 +589,71 @@ async function run() {
   deliveryModes.inactiveStartedText = startTurnRequests.at(-1)?.displayText || '';
   deliveryModes.persistedQueueWrites = persistedQueues.length;
   deliveryModes.persistedQueueLength = persistedQueues.at(-1)?.messages?.length || 0;
+  const raceStartTurnOffset = startTurnRequests.length;
+  await window.webContents.executeJavaScript(`(() => {
+    const threadId = state.activeThread.id;
+    setThreadRunning(threadId, true, 'turn-race');
+    state.providerEngine = 'codex';
+    state.messageQueues.set(threadId, [
+      { threadId, text: '等待引导完成', displayText: '等待引导完成', clientUserMessageId: 'race-steer', providerId: state.provider, queuedAt: 1 },
+      { threadId, text: '只发送一次的下一条', displayText: '只发送一次的下一条', clientUserMessageId: 'race-next', providerId: state.provider, queuedAt: 2 },
+    ]);
+    renderMessageQueuePanel(threadId);
+    document.querySelector('[data-client-user-message-id="race-steer"] .queued-steer-button').click();
+  })()`);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  await window.webContents.executeJavaScript(`handleEvent({
+    method: 'turn/completed',
+    params: { threadId: state.activeThread.id, turn: { id: 'turn-race', status: 'completed' } }
+  })`);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  const startsWhileSteerPending = startTurnRequests.length - raceStartTurnOffset;
+  assert.equal(typeof pendingSteerResolve, "function", "Deferred steer was not invoked.");
+  pendingSteerResolve({ turnId: "turn-race" });
+  pendingSteerResolve = null;
+  await new Promise((resolve) => setTimeout(resolve, 160));
+  await window.webContents.executeJavaScript(`handleEvent({
+    method: 'turn/completed',
+    params: { threadId: state.activeThread.id, turn: { id: 'turn-race', status: 'completed' } }
+  })`);
+  const steerRace = await window.webContents.executeJavaScript(`(() => ({
+    remaining: (state.messageQueues.get(state.activeThread.id) || []).map((message) => message.displayText),
+    runningTurnId: state.runningThreads.get(state.activeThread.id)?.turnId || null,
+    steeringLocked: state.steeringThreads.has(state.activeThread.id),
+    dispatchLocked: state.queueDispatchingThreads.has(state.activeThread.id),
+  }))()`);
+  steerRace.startsWhilePending = startsWhileSteerPending;
+  steerRace.startedAfterResolve = startTurnRequests.slice(raceStartTurnOffset).map((request) => request.displayText);
+  const queueActions = await window.webContents.executeJavaScript(`(async () => {
+    const threadId = state.activeThread.id;
+    setThreadRunning(threadId, false);
+    setThreadRunning(threadId, true, 'turn-queue-actions');
+    state.messageQueues.set(threadId, [
+      { threadId, text: '删除我', displayText: '删除我', clientUserMessageId: 'queue-delete', providerId: state.provider, queuedAt: 1 },
+      { threadId, text: '编辑我', displayText: '编辑我', clientUserMessageId: 'queue-edit', providerId: state.provider, queuedAt: 2, imageInputs: [{ path: ${JSON.stringify(conversationScreenshot)}, detail: 'auto' }] },
+    ]);
+    renderMessageQueuePanel(threadId);
+    document.querySelector('[data-client-user-message-id="queue-delete"] .queued-prompt-delete').click();
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    const afterDelete = (state.messageQueues.get(threadId) || []).map((message) => message.displayText);
+    const more = document.querySelector('[data-client-user-message-id="queue-edit"] .queued-prompt-more');
+    more.open = true;
+    more.querySelector('.queued-prompt-edit').click();
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    const result = {
+      afterDelete,
+      remainingAfterEdit: (state.messageQueues.get(threadId) || []).length,
+      restoredText: document.querySelector('#composer-input').value,
+      restoredAttachments: [...state.pendingAttachments],
+      panelHidden: document.querySelector('#message-queue-panel').classList.contains('hidden'),
+    };
+    setThreadRunning(threadId, false);
+    state.pendingAttachments = [];
+    renderAttachments();
+    document.querySelector('#composer-input').value = '';
+    syncComposerState();
+    return result;
+  })()`);
   const attachments = await window.webContents.executeJavaScript(`(async () => {
     const testImage = ${JSON.stringify(conversationScreenshot)};
     state.pendingAttachments = [];
@@ -589,6 +679,16 @@ async function run() {
       reactiveCount: ShareMasterVueRuntime.attachmentUi.items.length,
       ignoredMessage: document.querySelector('#status-toast').textContent,
     };
+    const imageMessage = appendUserMessage({
+      id: 'copyable-image-message',
+      type: 'userMessage',
+      content: [{ type: 'text', text: '可复制附件' }, { type: 'localImage', path: testImage }],
+    });
+    imageMessage.querySelector('.message-media-copy').click();
+    document.querySelector('.attachment-copy-button').click();
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    tray.conversationCopyButtons = imageMessage.querySelectorAll('.message-media-copy').length;
+    tray.trayCopyButtons = document.querySelectorAll('.attachment-copy-button').length;
     const transfer = new DataTransfer();
     transfer.items.add(new File(['image'], 'drop.png', { type: 'image/png' }));
     window.dispatchEvent(new DragEvent('dragenter', { dataTransfer: transfer }));
@@ -600,6 +700,7 @@ async function run() {
     return { ...result, ...pasted, ...tray };
   })()`);
   attachments.clipboardPasteRequests = clipboardPasteRequests;
+  attachments.copiedImages = structuredClone(copiedImages);
   fs.writeFileSync(attachmentScreenshot, (await capturePageWithRetry(window)).toPNG());
   Object.assign(attachments, await window.webContents.executeJavaScript(`(async () => {
     document.querySelector('.attachment-remove').click();
@@ -838,7 +939,7 @@ async function run() {
     state.allThreads = [foreground, background];
     setThreadRunning(background.id, true, 'background-running-turn');
     completeThreadRun(background.id, {
-      id: 'background-failed-turn',
+      id: 'background-running-turn',
       status: 'failed',
       error: { code: 'INCOMPLETE_STREAM', message: '后台回答连接提前关闭。' },
       items: [],
@@ -849,7 +950,7 @@ async function run() {
     renderConversation(background);
     return {
       stored: state.interruptedTurns.has(background.id),
-      visible: Boolean(document.querySelector('[data-interrupted-turn-id="background-failed-turn"]')),
+      visible: Boolean(document.querySelector('[data-interrupted-turn-id="background-running-turn"]')),
       buttons: document.querySelectorAll('.continue-interrupted-turn').length,
     };
   })()`);
@@ -924,7 +1025,7 @@ async function run() {
   assert.equal(connectRequests.length, 1);
   assert.equal(connectRequests[0], "deepseek-fixture");
   assert.equal(startThreadRequests.length, 0);
-  assert.equal(startTurnRequests.length, 1);
+  assert.equal(startTurnRequests.length, 2);
   assert.equal(reconnect.connected, true);
   assert.equal(reconnect.reconnecting, false);
   assert.equal(reconnect.running, false);
@@ -939,12 +1040,15 @@ async function run() {
   assert.equal(conversation.compactFooterOverflow, false);
   assert.equal(conversation.compactBodyOverflow, false);
   assert.ok(conversation.compactActivityWidth >= 500);
-  assert.equal(messageFeatures.actionButtons, 5);
+  assert.equal(messageFeatures.actionButtons, 6);
   assert.equal(messageFeatures.agentActions, 3);
-  assert.equal(messageFeatures.userActions, 2);
+  assert.equal(messageFeatures.userActions, 3);
   assert.match(messageFeatures.copiedText, /优化重点/);
   assert.match(messageFeatures.quotedText, /^回复完成后继续处理下一条消息/);
   assert.match(messageFeatures.quotedText, /> 请分析当前界面/);
+  assert.match(messageFeatures.editedText, /请分析当前界面/);
+  assert.equal(messageFeatures.stopRequestedByEdit, true);
+  assert.match(messageFeatures.editTitleWhileRunning, /停止当前回复并编辑/);
   assert.equal(messageFeatures.searchHits, 1);
   assert.match(messageFeatures.searchSnippet, /消息正文命中/);
   assert.equal(messageFeatures.searchBodyOverflow, false);
@@ -954,6 +1058,9 @@ async function run() {
   assert.equal(deliveryModes.steerButtonsBeforeClick, 2);
   assert.equal(deliveryModes.queuePanelVisible, true);
   assert.equal(deliveryModes.queuePanelItems, 2);
+  assert.equal(deliveryModes.queueIcons, 2);
+  assert.equal(deliveryModes.deleteButtons, 2);
+  assert.equal(deliveryModes.moreButtons, 2);
   assert.equal(deliveryModes.queuePanelAboveInput, true);
   assert.equal(deliveryModes.queuedMessagesInChat, 0);
   assert.equal(deliveryModes.inputAfterQueue, "");
@@ -961,7 +1068,7 @@ async function run() {
   assert.equal(deliveryModes.remainingAfterInactive, 0);
   assert.equal(deliveryModes.queuePanelHiddenAfterDrain, true);
   assert.equal(deliveryModes.nativeSteerRequests, 2);
-  assert.equal(deliveryModes.interruptRequests, 0);
+  assert.equal(deliveryModes.interruptRequests, 1);
   assert.ok(deliveryModes.persistedQueueWrites >= 4);
   assert.equal(deliveryModes.persistedQueueLength, 0);
   assert.equal(deliveryModes.nativeExpectedTurnId, "turn-running");
@@ -972,6 +1079,17 @@ async function run() {
   assert.ok(deliveryModes.deliveryLabels.some((label) => label.includes("已引导")));
   assert.ok(deliveryModes.actionTopDelta <= 1);
   assert.equal(deliveryModes.footerOverflow, false);
+  assert.equal(steerRace.startsWhilePending, 0);
+  assert.deepEqual(steerRace.startedAfterResolve, ["只发送一次的下一条"]);
+  assert.deepEqual(steerRace.remaining, []);
+  assert.equal(steerRace.runningTurnId, "unexpected-reconnect-turn");
+  assert.equal(steerRace.steeringLocked, false);
+  assert.equal(steerRace.dispatchLocked, false);
+  assert.deepEqual(queueActions.afterDelete, ["编辑我"]);
+  assert.equal(queueActions.remainingAfterEdit, 0);
+  assert.equal(queueActions.restoredText, "编辑我");
+  assert.deepEqual(queueActions.restoredAttachments, [conversationScreenshot]);
+  assert.equal(queueActions.panelHidden, true);
   assert.deepEqual({ added: attachments.added, unsupported: attachments.unsupported }, { added: 1, unsupported: 1 });
   assert.equal(attachments.pasteCanceled, true);
   assert.equal(attachments.pastedCount, 1);
@@ -983,6 +1101,12 @@ async function run() {
   assert.match(attachments.ignoredMessage, /已忽略 1 个非图片文件/);
   assert.equal(attachments.overlayVisible, true);
   assert.equal(attachments.overlayCleared, true);
+  assert.equal(attachments.conversationCopyButtons, 1);
+  assert.equal(attachments.trayCopyButtons, 1);
+  assert.deepEqual(attachments.copiedImages, [
+    { path: conversationScreenshot },
+    { path: conversationScreenshot },
+  ]);
   assert.equal(attachments.countAfterRemove, 0);
   assert.equal(attachments.reactiveCountAfterRemove, 0);
   assert.deepEqual({ visible: localHistory.visible, sources: localHistory.sources, conversations: localHistory.conversations, messages: localHistory.messages }, { visible: true, sources: 2, conversations: 2, messages: 3 });

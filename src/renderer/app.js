@@ -64,6 +64,8 @@ const state = ShareMasterVueRuntime.shallowReactive({
   interruptedTurns: new Map(),
   messageQueues: new Map(),
   steeringQueuedMessages: new Set(),
+  steeringThreads: new Set(),
+  queueDispatchingThreads: new Set(),
   threadSearchHits: new Map(),
   threadSearchGeneration: 0,
   threadSearchQuery: "",
@@ -2336,6 +2338,17 @@ window.addEventListener("share-master:remove-attachment", (event) => {
   syncComposerState();
 });
 
+window.addEventListener("share-master:copy-attachment", async (event) => {
+  const filePath = String(event.detail?.path || "");
+  if (!filePath) return;
+  try {
+    await api.copyImage({ path: filePath });
+    showDiagnostic("图片已复制到剪贴板。", false);
+  } catch (error) {
+    showDiagnostic(`复制图片失败：${error.message}`, true);
+  }
+});
+
 window.addEventListener("dragenter", (event) => {
   if (!hasDraggedFiles(event) || elements.attachButton.disabled) return;
   event.preventDefault();
@@ -2406,6 +2419,8 @@ function queuedMessageCanSteer(threadId, message) {
     && !state.submitting
     && state.providerEngine === "codex"
     && run?.turnId
+    && !state.steeringThreads.has(threadId)
+    && !state.queueDispatchingThreads.has(threadId)
     && (!message?.providerId || message.providerId === state.provider)
     && !state.steeringQueuedMessages.has(queuedMessageSteerKey(threadId, message?.clientUserMessageId)),
   );
@@ -2413,6 +2428,37 @@ function queuedMessageCanSteer(threadId, message) {
 
 function queuedMessageAttachmentPaths(message) {
   return (message?.imageInputs || []).map((image) => image?.path).filter(Boolean);
+}
+
+function queueThreadBusy(threadId) {
+  return state.steeringThreads.has(threadId) || state.queueDispatchingThreads.has(threadId);
+}
+
+async function removeQueuedMessage(threadId, clientUserMessageId, { restoreToComposer = false } = {}) {
+  if (queueThreadBusy(threadId)) {
+    showDiagnostic("队列正在处理，请稍候再操作。", false);
+    return false;
+  }
+  const queue = state.messageQueues.get(threadId) || [];
+  const index = queue.findIndex((message) => message.clientUserMessageId === clientUserMessageId);
+  if (index < 0) return false;
+  const [message] = queue.splice(index, 1);
+  if (queue.length) state.messageQueues.set(threadId, queue);
+  else state.messageQueues.delete(threadId);
+  await persistMessageQueue(threadId);
+  if (restoreToComposer && threadId === state.activeThread?.id) {
+    elements.input.value = message.displayText || message.text || "";
+    state.pendingAttachments = [];
+    addAttachments(queuedMessageAttachmentPaths(message));
+    renderAttachments();
+    resizeComposer();
+    syncComposerState();
+    elements.input.focus();
+    elements.input.setSelectionRange(elements.input.value.length, elements.input.value.length);
+  }
+  renderMessageQueuePanel(threadId);
+  syncActiveRunState();
+  return true;
 }
 
 function renderMessageQueuePanel(threadId = state.activeThread?.id) {
@@ -2425,21 +2471,24 @@ function renderMessageQueuePanel(threadId = state.activeThread?.id) {
 
   const heading = document.createElement("div");
   heading.className = "message-queue-heading";
+  const headingIcon = document.createElement("span");
+  headingIcon.className = "message-queue-heading-icon";
+  headingIcon.innerHTML = '<span data-lucide="list-plus"></span>';
   const title = document.createElement("strong");
   title.textContent = `待发送 · ${queue.length}`;
   const detail = document.createElement("small");
   detail.textContent = "当前回复完成后按顺序发送";
-  heading.append(title, detail);
+  heading.append(headingIcon, title, detail);
 
   const list = document.createElement("div");
   list.className = "message-queue-list";
-  queue.forEach((message, index) => {
+  queue.forEach((message) => {
     const item = document.createElement("div");
     item.className = "queued-prompt-item";
     item.dataset.clientUserMessageId = message.clientUserMessageId || "";
-    const order = document.createElement("span");
-    order.className = "queued-prompt-order";
-    order.textContent = String(index + 1);
+    const queueIcon = document.createElement("span");
+    queueIcon.className = "queued-prompt-icon";
+    queueIcon.innerHTML = '<span data-lucide="clock-3"></span>';
     const copy = document.createElement("span");
     copy.className = "queued-prompt-copy";
     const prompt = document.createElement("strong");
@@ -2462,12 +2511,36 @@ function renderMessageQueuePanel(threadId = state.activeThread?.id) {
     steer.dataset.clientUserMessageId = message.clientUserMessageId || "";
     steer.textContent = steering ? "引导中" : "引导";
     steer.addEventListener("click", () => steerQueuedMessage(threadId, message.clientUserMessageId));
-    actions.appendChild(steer);
-    item.append(order, copy, actions);
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "queued-prompt-icon-button queued-prompt-delete";
+    remove.title = "删除这条排队消息";
+    remove.setAttribute("aria-label", remove.title);
+    remove.innerHTML = '<span data-lucide="trash-2"></span>';
+    remove.addEventListener("click", () => removeQueuedMessage(threadId, message.clientUserMessageId));
+    const more = document.createElement("details");
+    more.className = "queued-prompt-more";
+    const moreToggle = document.createElement("summary");
+    moreToggle.className = "queued-prompt-icon-button";
+    moreToggle.title = "更多操作";
+    moreToggle.setAttribute("aria-label", moreToggle.title);
+    moreToggle.innerHTML = '<span data-lucide="ellipsis"></span>';
+    const moreMenu = document.createElement("span");
+    moreMenu.className = "queued-prompt-more-menu";
+    const edit = document.createElement("button");
+    edit.type = "button";
+    edit.className = "queued-prompt-edit";
+    edit.innerHTML = '<span data-lucide="pencil"></span><span>编辑消息</span>';
+    edit.addEventListener("click", () => removeQueuedMessage(threadId, message.clientUserMessageId, { restoreToComposer: true }));
+    moreMenu.appendChild(edit);
+    more.append(moreToggle, moreMenu);
+    actions.append(steer, remove, more);
+    item.append(queueIcon, copy, actions);
     list.appendChild(item);
   });
   panel.append(heading, list);
   refreshQueuedSteerButtons(threadId);
+  refreshIcons();
 }
 
 function refreshQueuedSteerButtons(threadId = state.activeThread?.id) {
@@ -2481,6 +2554,16 @@ function refreshQueuedSteerButtons(threadId = state.activeThread?.id) {
     button.disabled = !visible || !queuedMessageCanSteer(threadId, message);
     button.title = button.disabled ? "当前回复结束后将自动发送" : "立即引导当前回复";
     button.setAttribute("aria-label", button.title);
+  }
+  const busy = queueThreadBusy(threadId);
+  for (const button of elements.messageQueuePanel?.querySelectorAll(".queued-prompt-delete, .queued-prompt-edit") || []) {
+    button.disabled = busy;
+  }
+  for (const toggle of elements.messageQueuePanel?.querySelectorAll(".queued-prompt-more > summary") || []) {
+    toggle.setAttribute("aria-disabled", String(busy));
+    toggle.addEventListener("click", (event) => {
+      if (busy) event.preventDefault();
+    });
   }
 }
 
@@ -2517,6 +2600,10 @@ function appendUserMessage(item) {
   if (item.clientId) node.querySelector(".message-delivery-state")?.remove();
   node.querySelector(".message-media")?.remove();
   const images = (item.content || []).filter((part) => ["image", "localImage"].includes(part.type));
+  node.dataset.attachmentSources = JSON.stringify(images.map((part) => ({
+    path: part.path || null,
+    url: part.url || null,
+  })));
   if (!images.length) return node;
   const media = document.createElement("div");
   media.className = "message-media";
@@ -2539,9 +2626,39 @@ function appendUserMessage(item) {
       fallback.textContent = `图片无法加载：${part.path || part.url || "未知来源"}`;
       image.replaceWith(fallback);
     }, { once: true });
-    media.appendChild(image);
+    const mediaItem = document.createElement("span");
+    mediaItem.className = "message-media-item";
+    const copy = document.createElement("button");
+    copy.type = "button";
+    copy.className = "message-media-copy";
+    copy.title = "复制图片";
+    copy.setAttribute("aria-label", copy.title);
+    copy.innerHTML = '<span data-lucide="copy"></span>';
+    copy.addEventListener("click", async () => {
+      copy.disabled = true;
+      try {
+        await api.copyImage(part.path ? { path: part.path } : { url: part.url });
+        copy.title = "已复制";
+        copy.innerHTML = '<span data-lucide="check"></span>';
+        showDiagnostic("图片已复制到剪贴板。", false);
+      } catch (error) {
+        showDiagnostic(`复制图片失败：${error.message}`, true);
+      } finally {
+        copy.disabled = false;
+        refreshIcons();
+        setTimeout(() => {
+          if (!copy.isConnected) return;
+          copy.title = "复制图片";
+          copy.innerHTML = '<span data-lucide="copy"></span>';
+          refreshIcons();
+        }, 1400);
+      }
+    });
+    mediaItem.append(image, copy);
+    media.appendChild(mediaItem);
   }
   node.querySelector(".message-body").appendChild(media);
+  if (!state.renderTarget) refreshIcons();
   return node;
 }
 
@@ -2613,6 +2730,26 @@ function ensureMessageActions(node, role) {
     const quoted = String(node.dataset.rawText || "").slice(0, 4000).split("\n").map((line) => `> ${line}`).join("\n");
     composerInsert(quoted);
   });
+  if (role === "user") {
+    addAction("pencil", "编辑并重新发送", () => {
+      if (state.runningThreads.has(state.activeThread?.id)) requestTurnInterrupt();
+      elements.input.value = node.dataset.rawText || "";
+      let sources = [];
+      try {
+        sources = JSON.parse(node.dataset.attachmentSources || "[]");
+      } catch {
+        sources = [];
+      }
+      state.pendingAttachments = [];
+      addAttachments(sources.map((source) => source?.path).filter(Boolean));
+      renderAttachments();
+      resizeComposer();
+      syncComposerState();
+      elements.input.focus();
+      elements.input.setSelectionRange(elements.input.value.length, elements.input.value.length);
+    });
+    actions.lastElementChild?.classList.add("user-edit-message");
+  }
   if (role === "agent") {
     addAction("refresh-cw", "重新生成回答", () => {
       if (state.running || state.submitting) {
@@ -2831,8 +2968,8 @@ async function steerQueuedMessage(threadId, clientUserMessageId) {
     : null;
   const status = node?.querySelector(".message-delivery-state") || null;
   const statusLabel = status?.querySelector(".message-delivery-label");
+  state.steeringThreads.add(threadId);
   state.steeringQueuedMessages.add(steerKey);
-  state.submitting = true;
   syncComposerState();
   renderMessageQueuePanel(threadId);
   let inactive = false;
@@ -2862,7 +2999,7 @@ async function steerQueuedMessage(threadId, clientUserMessageId) {
     showDiagnostic(`引导发送失败，消息仍在队列中：${error.message}`, true);
   } finally {
     state.steeringQueuedMessages.delete(steerKey);
-    state.submitting = false;
+    state.steeringThreads.delete(threadId);
     if (inactive && state.runningThreads.get(threadId)?.turnId === expectedTurnId) {
       setThreadRunning(threadId, false);
     } else {
@@ -3009,26 +3146,31 @@ async function beginTurn(payload) {
 }
 
 async function startNextQueuedMessage(threadId) {
-  const queue = state.messageQueues.get(threadId) || [];
-  const next = queue[0];
-  if (next && state.steeringQueuedMessages.has(queuedMessageSteerKey(threadId, next.clientUserMessageId))) return;
-  if (next?.providerId && next.providerId !== state.provider) {
-    const label = state.providers.find((provider) => provider.id === next.providerId)?.connectionLabel || "原连接";
-    showDiagnostic(`这条待发送消息属于${label}，请先切换连接。`, true);
-    syncActiveRunState();
-    return;
-  }
-  queue.shift();
-  if (!queue.length) state.messageQueues.delete(threadId);
-  else state.messageQueues.set(threadId, queue);
-  renderMessageQueuePanel(threadId);
-  await persistMessageQueue(threadId);
-  if (!next || !state.connected) {
-    syncActiveRunState();
-    return;
-  }
+  if (!threadId
+    || state.steeringThreads.has(threadId)
+    || state.queueDispatchingThreads.has(threadId)
+    || state.runningThreads.has(threadId)) return;
+  state.queueDispatchingThreads.add(threadId);
   let optimistic = null;
+  let next = null;
   try {
+    const queue = state.messageQueues.get(threadId) || [];
+    next = queue[0] || null;
+    if (!next || !state.connected) {
+      syncActiveRunState();
+      return;
+    }
+    if (next.providerId && next.providerId !== state.provider) {
+      const label = state.providers.find((provider) => provider.id === next.providerId)?.connectionLabel || "原连接";
+      showDiagnostic(`这条待发送消息属于${label}，请先切换连接。`, true);
+      syncActiveRunState();
+      return;
+    }
+    queue.shift();
+    if (!queue.length) state.messageQueues.delete(threadId);
+    else state.messageQueues.set(threadId, queue);
+    renderMessageQueuePanel(threadId);
+    await persistMessageQueue(threadId);
     if (threadId === state.activeThread?.id) {
       optimistic = appendPendingUserMessage(
         next.displayText || next.text || "",
@@ -3042,12 +3184,18 @@ async function startNextQueuedMessage(threadId) {
   } catch (error) {
     optimistic?.remove();
     const pending = state.messageQueues.get(threadId) || [];
-    pending.unshift(next);
-    state.messageQueues.set(threadId, pending);
+    if (next && !pending.some((message) => message.clientUserMessageId === next.clientUserMessageId)) {
+      pending.unshift(next);
+      state.messageQueues.set(threadId, pending);
+    }
     renderMessageQueuePanel(threadId);
     await persistMessageQueue(threadId);
     showDiagnostic(`排队消息发送失败：${error.message}`, true);
     api.notify({ title: "Share Master", body: `排队消息发送失败：${error.message}` }).catch(() => {});
+  } finally {
+    state.queueDispatchingThreads.delete(threadId);
+    renderMessageQueuePanel(threadId);
+    syncActiveRunState();
   }
 }
 
@@ -3118,6 +3266,9 @@ function syncThinkingIndicator() {
 
 function resetAllRuns(clearQueues = false) {
   state.runningThreads.clear();
+  state.steeringQueuedMessages.clear();
+  state.steeringThreads.clear();
+  state.queueDispatchingThreads.clear();
   if (clearQueues) state.messageQueues.clear();
   state.submitting = false;
   syncActiveRunState();
@@ -3131,6 +3282,11 @@ function syncActiveRunState() {
   state.activeTurn = run?.turnId || null;
   state.stopRequested = Boolean(run?.stopRequested);
   state.interruptingTurnId = run?.interruptingTurnId || null;
+  for (const button of elements.chat.querySelectorAll(".user-edit-message")) {
+    const title = run ? "停止当前回复并编辑这条消息" : "编辑并重新发送";
+    button.title = title;
+    button.setAttribute("aria-label", title);
+  }
   elements.send.classList.remove("hidden");
   elements.queue.classList.toggle("hidden", !run && !queueLength);
   elements.stop.classList.toggle("hidden", !run);
@@ -3239,6 +3395,8 @@ function notifyThreadCompletion(threadId, turn) {
 }
 
 function completeThreadRun(threadId, turn) {
+  const currentRun = state.runningThreads.get(threadId);
+  if (currentRun?.turnId && turn?.id && currentRun.turnId !== turn.id) return;
   const wasBackground = threadId !== state.activeThread?.id || document.hidden;
   setThreadRunning(threadId, false);
   if (turn?.status === "failed") state.interruptedTurns.set(threadId, { ...turn });
