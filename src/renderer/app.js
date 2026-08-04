@@ -178,7 +178,16 @@ const elements = {
   skillButton: $("#skill-button"), skillMenu: $("#skill-menu"), skillSearch: $("#skill-search"),
   skillList: $("#skill-list"),
   attachButton: $("#attach-button"), attachmentList: $("#attachment-list"),
+  messageQueuePanel: $("#message-queue-panel"),
 };
+
+const composerWrap = document.querySelector(".composer-wrap");
+if (composerWrap && typeof ResizeObserver === "function") {
+  new ResizeObserver(([entry]) => {
+    const height = Math.ceil(entry?.contentRect?.height || composerWrap.getBoundingClientRect().height || 0);
+    if (height) document.documentElement.style.setProperty("--composer-inset", `${height + 28}px`);
+  }).observe(composerWrap);
+}
 
 marked.setOptions({ breaks: true, gfm: true });
 const markdownCache = new Map();
@@ -1798,7 +1807,10 @@ function applyStoreSnapshot(snapshot) {
           : !isHidden && !isDeleted && !isLocalArchived
     : false;
   if (activeId && wasInView !== isInView) newChat(false);
-  else if (state.activeThread) elements.windowTitle.textContent = titleOf(state.activeThread);
+  else if (state.activeThread) {
+    elements.windowTitle.textContent = titleOf(state.activeThread);
+    renderMessageQueuePanel(state.activeThread.id);
+  }
   if (activeProviderWasRemoved) {
     ++state.connectionGeneration;
     state.connectingProvider = null;
@@ -2051,21 +2063,13 @@ function renderConversation(thread) {
     }
     const pendingInterruption = state.interruptedTurns.get(thread.id);
     if (pendingInterruption) appendTurnInterruption(pendingInterruption, thread.id);
-    for (const message of state.messageQueues.get(thread.id) || []) {
-      appendPendingUserMessage(
-        message.displayText || message.text || "",
-        message.clientUserMessageId,
-        (message.imageInputs || []).map((image) => image?.path).filter(Boolean),
-        "queue",
-        thread.id,
-      );
-    }
   } finally {
     state.renderTarget = null;
   }
   elements.chat.replaceChildren(fragment);
   state.renderedThreadId = thread.id;
   state.renderedThreadRevision = revision;
+  renderMessageQueuePanel(thread.id);
   syncThinkingIndicator();
   refreshIcons();
   scrollToBottom();
@@ -2359,6 +2363,38 @@ window.addEventListener("drop", (event) => {
   addDroppedAttachments(paths);
 });
 
+let clipboardPastePending = false;
+
+function clipboardContainsImage(event) {
+  const data = event.clipboardData;
+  if (!data) return false;
+  return Array.from(data.items || []).some((item) => item.kind === "file" || /^image\//i.test(item.type || ""))
+    || Array.from(data.types || []).includes("Files");
+}
+
+async function pasteClipboardAttachments(event) {
+  if (elements.attachButton.disabled || clipboardPastePending || !clipboardContainsImage(event)) return;
+  event.preventDefault();
+  const directPaths = droppedAttachmentPaths(event.clipboardData?.files);
+  if (directPaths.length) {
+    const result = addDroppedAttachments(directPaths);
+    if (result.added) showDiagnostic(`已从剪贴板添加 ${result.added} 张图片。`, false);
+    return;
+  }
+  clipboardPastePending = true;
+  try {
+    const result = await api.pasteClipboardImages();
+    const added = addDroppedAttachments(result?.paths || []);
+    if (added.added) showDiagnostic(`已从剪贴板添加 ${added.added} 张图片。`, false);
+    else showDiagnostic("剪贴板中没有可添加的图片附件。", true);
+  } catch (error) {
+    showDiagnostic(`粘贴附件失败：${error.message}`, true);
+  } finally {
+    clipboardPastePending = false;
+    elements.input.focus();
+  }
+}
+
 function queuedMessageSteerKey(threadId, clientUserMessageId) {
   return `${threadId}:${clientUserMessageId}`;
 }
@@ -2375,13 +2411,72 @@ function queuedMessageCanSteer(threadId, message) {
   );
 }
 
+function queuedMessageAttachmentPaths(message) {
+  return (message?.imageInputs || []).map((image) => image?.path).filter(Boolean);
+}
+
+function renderMessageQueuePanel(threadId = state.activeThread?.id) {
+  const panel = elements.messageQueuePanel;
+  if (!panel) return;
+  const queue = threadId ? state.messageQueues.get(threadId) || [] : [];
+  panel.replaceChildren();
+  panel.classList.toggle("hidden", !queue.length || threadId !== state.activeThread?.id);
+  if (!queue.length || threadId !== state.activeThread?.id) return;
+
+  const heading = document.createElement("div");
+  heading.className = "message-queue-heading";
+  const title = document.createElement("strong");
+  title.textContent = `待发送 · ${queue.length}`;
+  const detail = document.createElement("small");
+  detail.textContent = "当前回复完成后按顺序发送";
+  heading.append(title, detail);
+
+  const list = document.createElement("div");
+  list.className = "message-queue-list";
+  queue.forEach((message, index) => {
+    const item = document.createElement("div");
+    item.className = "queued-prompt-item";
+    item.dataset.clientUserMessageId = message.clientUserMessageId || "";
+    const order = document.createElement("span");
+    order.className = "queued-prompt-order";
+    order.textContent = String(index + 1);
+    const copy = document.createElement("span");
+    copy.className = "queued-prompt-copy";
+    const prompt = document.createElement("strong");
+    prompt.textContent = String(message.displayText || message.text || "").trim() || "图片附件";
+    prompt.title = prompt.textContent;
+    const meta = document.createElement("small");
+    const attachmentCount = queuedMessageAttachmentPaths(message).length;
+    const steering = state.steeringQueuedMessages.has(queuedMessageSteerKey(threadId, message.clientUserMessageId));
+    meta.className = "queued-prompt-state";
+    meta.textContent = steering
+      ? "正在引导当前回复…"
+      : attachmentCount ? `${attachmentCount} 张图片 · 已排队` : "已排队";
+    copy.append(prompt, meta);
+    const actions = document.createElement("span");
+    actions.className = "queued-prompt-actions";
+    const steer = document.createElement("button");
+    steer.type = "button";
+    steer.className = "queued-steer-button";
+    steer.dataset.threadId = threadId;
+    steer.dataset.clientUserMessageId = message.clientUserMessageId || "";
+    steer.textContent = steering ? "引导中" : "引导";
+    steer.addEventListener("click", () => steerQueuedMessage(threadId, message.clientUserMessageId));
+    actions.appendChild(steer);
+    item.append(order, copy, actions);
+    list.appendChild(item);
+  });
+  panel.append(heading, list);
+  refreshQueuedSteerButtons(threadId);
+}
+
 function refreshQueuedSteerButtons(threadId = state.activeThread?.id) {
   if (!threadId || threadId !== state.activeThread?.id) return;
   const queue = state.messageQueues.get(threadId) || [];
   const messages = new Map(queue.map((message) => [message.clientUserMessageId, message]));
-  for (const button of elements.chat.querySelectorAll(".queued-steer-button")) {
+  for (const button of elements.messageQueuePanel?.querySelectorAll(".queued-steer-button") || []) {
     const message = messages.get(button.dataset.clientUserMessageId);
-    const visible = Boolean(message && state.providerEngine === "codex");
+    const visible = Boolean(message && state.providerEngine === "codex" && state.runningThreads.get(threadId)?.turnId);
     button.classList.toggle("hidden", !visible);
     button.disabled = !visible || !queuedMessageCanSteer(threadId, message);
     button.title = button.disabled ? "当前回复结束后将自动发送" : "立即引导当前回复";
@@ -2400,18 +2495,7 @@ function setPendingMessageDelivery(node, delivery, threadId, clientUserMessageId
     : delivery === "steered" ? "已引导"
       : "正在引导当前回复";
   status.appendChild(label);
-  if (delivery === "queue" && threadId && clientUserMessageId) {
-    const steer = document.createElement("button");
-    steer.type = "button";
-    steer.className = "queued-steer-button";
-    steer.dataset.threadId = threadId;
-    steer.dataset.clientUserMessageId = clientUserMessageId;
-    steer.textContent = "引导";
-    steer.addEventListener("click", () => steerQueuedMessage(threadId, clientUserMessageId));
-    status.appendChild(steer);
-  }
   node.querySelector(".message-column")?.appendChild(status);
-  refreshQueuedSteerButtons(threadId);
   return status;
 }
 
@@ -2736,20 +2820,28 @@ async function steerQueuedMessage(threadId, clientUserMessageId) {
   }
   const steerKey = queuedMessageSteerKey(threadId, clientUserMessageId);
   const expectedTurnId = run.turnId;
-  const node = elements.chat.querySelector(`[data-message-id="${CSS.escape(clientUserMessageId)}"]`);
-  const status = node ? setPendingMessageDelivery(node, "steer", threadId, clientUserMessageId) : null;
+  const node = threadId === state.activeThread?.id
+    ? appendPendingUserMessage(
+      message.displayText || message.text || "",
+      clientUserMessageId,
+      queuedMessageAttachmentPaths(message),
+      "steer",
+      threadId,
+    )
+    : null;
+  const status = node?.querySelector(".message-delivery-state") || null;
   const statusLabel = status?.querySelector(".message-delivery-label");
   state.steeringQueuedMessages.add(steerKey);
   state.submitting = true;
   syncComposerState();
-  refreshQueuedSteerButtons(threadId);
+  renderMessageQueuePanel(threadId);
   let inactive = false;
   let steered = false;
   try {
     const result = await api.steerTurn({ ...message, expectedTurnId });
     inactive = Boolean(result?.inactive || result?.steered === false);
     if (inactive) {
-      if (node) setPendingMessageDelivery(node, "queue", threadId, clientUserMessageId);
+      node?.remove();
       showDiagnostic("当前回复已结束，消息继续按队列发送。", false);
       return;
     }
@@ -2766,7 +2858,7 @@ async function steerQueuedMessage(threadId, clientUserMessageId) {
     if (status) setTimeout(() => status.remove(), 1800);
     showDiagnostic("已引导当前回复。", false);
   } catch (error) {
-    if (node) setPendingMessageDelivery(node, "queue", threadId, clientUserMessageId);
+    node?.remove();
     showDiagnostic(`引导发送失败，消息仍在队列中：${error.message}`, true);
   } finally {
     state.steeringQueuedMessages.delete(steerKey);
@@ -2776,7 +2868,7 @@ async function steerQueuedMessage(threadId, clientUserMessageId) {
     } else {
       syncActiveRunState();
     }
-    refreshQueuedSteerButtons(threadId);
+    renderMessageQueuePanel(threadId);
     const remaining = state.messageQueues.get(threadId) || [];
     if ((inactive || steered) && remaining.length && !state.runningThreads.has(threadId)) {
       setTimeout(() => startNextQueuedMessage(threadId), 0);
@@ -2817,7 +2909,6 @@ async function sendMessage(_deliveryMode = "auto") {
     const queue = state.messageQueues.get(initialThread.id) || [];
     queue.push(outgoing);
     state.messageQueues.set(initialThread.id, queue);
-    appendPendingUserMessage(text, clientUserMessageId, attachments, "queue", initialThread.id);
     await persistMessageQueue(initialThread.id);
     showDiagnostic(`消息已排队（${queue.length}）`, false);
     syncActiveRunState();
@@ -2930,17 +3021,30 @@ async function startNextQueuedMessage(threadId) {
   queue.shift();
   if (!queue.length) state.messageQueues.delete(threadId);
   else state.messageQueues.set(threadId, queue);
+  renderMessageQueuePanel(threadId);
   await persistMessageQueue(threadId);
   if (!next || !state.connected) {
     syncActiveRunState();
     return;
   }
+  let optimistic = null;
   try {
+    if (threadId === state.activeThread?.id) {
+      optimistic = appendPendingUserMessage(
+        next.displayText || next.text || "",
+        next.clientUserMessageId,
+        queuedMessageAttachmentPaths(next),
+        null,
+        threadId,
+      );
+    }
     await beginTurn({ ...next, threadId });
   } catch (error) {
+    optimistic?.remove();
     const pending = state.messageQueues.get(threadId) || [];
     pending.unshift(next);
     state.messageQueues.set(threadId, pending);
+    renderMessageQueuePanel(threadId);
     await persistMessageQueue(threadId);
     showDiagnostic(`排队消息发送失败：${error.message}`, true);
     api.notify({ title: "Share Master", body: `排队消息发送失败：${error.message}` }).catch(() => {});
@@ -3041,7 +3145,7 @@ function syncActiveRunState() {
   elements.queue.dataset.count = String(queueLength);
   syncComposerState();
   syncThinkingIndicator();
-  refreshQueuedSteerButtons(threadId);
+  renderMessageQueuePanel(threadId);
   if (state.threads.length) renderThreadList();
 }
 
@@ -5734,6 +5838,7 @@ elements.input.addEventListener("input", () => {
   resizeComposer();
   updateSkillAutocomplete();
 });
+elements.input.addEventListener("paste", pasteClipboardAttachments);
 elements.attachButton.addEventListener("click", async () => {
   if (elements.attachButton.disabled) return;
   try {

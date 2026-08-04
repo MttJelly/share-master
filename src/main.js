@@ -1597,6 +1597,51 @@ async function privateExtensionSnapshot() {
   };
 }
 
+const CLIPBOARD_IMAGE_PATTERN = /\.(?:gif|jpe?g|png|webp)$/i;
+
+function clipboardImageFilePaths() {
+  const paths = new Set();
+  for (const format of clipboard.availableFormats()) {
+    if (!/filename/i.test(format)) continue;
+    try {
+      const buffer = clipboard.readBuffer(format);
+      if (!buffer?.length || buffer.length > 1024 * 1024) continue;
+      const encoding = /filenamew/i.test(format) ? "utf16le" : "utf8";
+      for (const value of buffer.toString(encoding).split(/\0|\r?\n/)) {
+        const candidate = value.trim().replace(/^"|"$/g, "");
+        if (!candidate || !path.isAbsolute(candidate) || !CLIPBOARD_IMAGE_PATTERN.test(candidate)) continue;
+        try {
+          if (fs.statSync(candidate).isFile()) paths.add(candidate);
+        } catch {
+          // Ignore clipboard entries that no longer exist.
+        }
+      }
+    } catch {
+      // Clipboard formats vary by application; unsupported formats are ignored.
+    }
+  }
+  return [...paths].slice(0, 8);
+}
+
+function saveClipboardImage() {
+  const image = clipboard.readImage();
+  if (image.isEmpty()) return null;
+  const size = image.getSize();
+  if (!size.width || !size.height || size.width > 16384 || size.height > 16384) {
+    throw new Error("剪贴板图片尺寸过大，无法作为附件添加。");
+  }
+  const png = image.toPNG();
+  if (!png.length || png.length > 25 * 1024 * 1024) {
+    throw new Error("剪贴板图片超过 25 MB，无法作为附件添加。");
+  }
+  const directory = path.join(providerStore.conversationHome(), "attachments", "clipboard");
+  fs.mkdirSync(directory, { recursive: true });
+  const timestamp = new Date().toISOString().replace(/[-:TZ.]/g, "").slice(0, 14);
+  const target = path.join(directory, `clipboard-${timestamp}-${crypto.randomUUID().slice(0, 8)}.png`);
+  fs.writeFileSync(target, png);
+  return target;
+}
+
 function broadcastExtensionSnapshot(snapshot) {
   for (const window of BrowserWindow.getAllWindows()) {
     if (window.isDestroyed() || window.webContents.isDestroyed()) continue;
@@ -2058,6 +2103,12 @@ app.whenReady().then(async () => {
       filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp", "gif"] }],
     });
     return result.canceled ? [] : result.filePaths;
+  });
+  ipcMain.handle("clipboard:images", () => {
+    const filePaths = clipboardImageFilePaths();
+    if (filePaths.length) return { paths: filePaths, source: "files" };
+    const saved = saveClipboardImage();
+    return { paths: saved ? [saved] : [], source: saved ? "image" : "empty" };
   });
   ipcMain.handle("dialog:skill-folder", async (event) => {
     const owner = BrowserWindow.fromWebContents(event.sender);

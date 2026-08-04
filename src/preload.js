@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld("codexDeck", {
   chooseRecordHome: (current) => ipcRenderer.invoke("dialog:record-home", current),
   chooseSyncDirectory: (current) => ipcRenderer.invoke("dialog:sync-directory", current),
   chooseImages: () => ipcRenderer.invoke("dialog:images"),
+  pasteClipboardImages: () => ipcRenderer.invoke("clipboard:images"),
   chooseSkillFolder: () => ipcRenderer.invoke("dialog:skill-folder"),
   chooseSkillZip: () => ipcRenderer.invoke("dialog:skill-zip"),
   localFilePath: (file) => webUtils.getPathForFile(file),

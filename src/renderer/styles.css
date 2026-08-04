@@ -130,7 +130,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 .empty-symbol svg { width: 24px; }
 .empty-state h1 { margin: 18px 0 7px; font-size: 21px; font-weight: 650; }
 .empty-state p { margin: 0; color: var(--muted); font-size: 13px; }
-.chat-view { flex: 1; min-height: 0; overflow-y: auto; padding: 32px max(24px, calc((100% - 820px)/2)) 240px; }
+.chat-view { flex: 1; min-height: 0; overflow-y: auto; padding: 32px max(24px, calc((100% - 820px)/2)) var(--composer-inset, 240px); }
 .conversation-state { min-height: 100%; display: flex; align-items: center; justify-content: center; gap: 9px; color: var(--muted); font-size: 12px; }
 .conversation-state svg { width: 18px; height: 18px; }
 .conversation-loading svg { animation: conversation-spin 900ms linear infinite; }
@@ -195,6 +195,19 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 .composer:focus-within { border-color: #8f989f; }
 .composer textarea { width: 100%; max-height: 180px; min-height: 48px; resize: none; border: 0; outline: 0; background: transparent; color: var(--ink); line-height: 1.5; }
 .composer textarea::placeholder { color: #9aa0a6; }
+.message-queue-panel { margin: -2px -2px 10px; padding: 9px 10px 8px; border: 1px solid #d5e0dc; border-radius: 7px; background: #f5f8f7; }
+.message-queue-panel.hidden { display: none; }
+.message-queue-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 7px; color: #52615c; }
+.message-queue-heading strong { font-size: 11px; font-weight: 750; }
+.message-queue-heading small { overflow: hidden; color: var(--subtle); font-size: 9.5px; text-overflow: ellipsis; white-space: nowrap; }
+.message-queue-list { display: grid; gap: 5px; max-height: 150px; overflow-y: auto; scrollbar-gutter: stable; }
+.queued-prompt-item { min-width: 0; display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 6px 7px; border: 1px solid #dfe7e4; border-radius: 6px; background: #fff; }
+.queued-prompt-order { width: 20px; height: 20px; display: grid; place-items: center; border-radius: 5px; background: #e8f1ed; color: #527064; font-size: 9px; font-weight: 800; }
+.queued-prompt-copy { min-width: 0; }
+.queued-prompt-copy strong, .queued-prompt-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.queued-prompt-copy strong { color: #34413c; font-size: 10.5px; font-weight: 620; }
+.queued-prompt-copy small { margin-top: 2px; color: var(--subtle); font-size: 9px; }
+.queued-prompt-actions { display: flex; align-items: center; }
 .attachment-list { display: flex; gap: 8px; margin-bottom: 10px; padding-bottom: 2px; overflow-x: auto; }
 .attachment-list.hidden { display: none; }
 .attachment-item { position: relative; width: 172px; height: 58px; flex: 0 0 172px; display: grid; grid-template-columns: 50px minmax(0,1fr); align-items: center; gap: 9px; padding: 3px 26px 3px 3px; border: 1px solid var(--line); border-radius: 7px; background: #f8f9fb; overflow: hidden; }
@@ -1966,6 +1979,11 @@ html[data-theme="dark"] .queue-button { border-color: #3d5b51; background: #2335
 html[data-theme="dark"] .queue-button:hover:not(:disabled) { border-color: #547b6d; background: #29423a; }
 html[data-theme="dark"] .queued-steer-button { border-color: #46685c; background: #243a33; color: #8bd7bf; }
 html[data-theme="dark"] .queued-steer-button:hover:not(:disabled) { border-color: #5d8b7b; background: #2b473e; }
+html[data-theme="dark"] .message-queue-panel { border-color: #34443e; background: #1c2521; }
+html[data-theme="dark"] .message-queue-heading { color: #b7c6c0; }
+html[data-theme="dark"] .queued-prompt-item { border-color: #33413c; background: #202a26; }
+html[data-theme="dark"] .queued-prompt-order { background: #293b34; color: #8dc6b4; }
+html[data-theme="dark"] .queued-prompt-copy strong { color: #dce6e1; }
 
 @media (max-width: 980px) {
   .activity { width: 100%; margin-left: 0; padding-left: 12px; }
@@ -1976,6 +1994,7 @@ html[data-theme="dark"] .queued-steer-button:hover:not(:disabled) { border-color
   .composer-submit > .send-button,
   .composer-submit > .queue-button,
   .composer-submit > .stop-button { grid-column: auto; grid-row: auto; }
+  .message-queue-heading small { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {

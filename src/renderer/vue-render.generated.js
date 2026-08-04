@@ -10,8 +10,8 @@ export function render(_ctx, _cache) {
   const _component_attachment_tray = _resolveComponent("attachment-tray")
 
   return (_openBlock(), _createElementBlock(_Fragment, null, [
-    _cache[7] || (_cache[7] = _createStaticVNode("<header class=\"titlebar\"><div class=\"titlebar-brand\"><button id=\"sidebar-toggle\" class=\"icon-button\" title=\"切换侧栏\" aria-label=\"切换侧栏\"><span data-lucide=\"panel-left\"></span></button><span class=\"wordmark\"><span class=\"wordmark-symbol\">S</span><span>Share Master</span></span></div><div id=\"window-thread-title\" class=\"window-thread-title\">未选择会话</div><div class=\"titlebar-actions\"><button id=\"workspace-button\" class=\"toolbar-button\" title=\"选择工作目录\"><span data-lucide=\"folder\"></span><span id=\"workspace-label\">选择工作目录</span></button><button id=\"theme-button\" class=\"icon-button\" title=\"主题：跟随系统\" aria-label=\"切换主题\"><span data-lucide=\"monitor\"></span></button><button id=\"new-window-button\" class=\"icon-button\" title=\"新建窗口\" aria-label=\"新建窗口\"><span data-lucide=\"panels-top-left\"></span></button></div></header>", 1)),
-    _cache[8] || (_cache[8] = _createElementVNode("aside", { class: "sidebar" }, [
+    _cache[8] || (_cache[8] = _createStaticVNode("<header class=\"titlebar\"><div class=\"titlebar-brand\"><button id=\"sidebar-toggle\" class=\"icon-button\" title=\"切换侧栏\" aria-label=\"切换侧栏\"><span data-lucide=\"panel-left\"></span></button><span class=\"wordmark\"><span class=\"wordmark-symbol\">S</span><span>Share Master</span></span></div><div id=\"window-thread-title\" class=\"window-thread-title\">未选择会话</div><div class=\"titlebar-actions\"><button id=\"workspace-button\" class=\"toolbar-button\" title=\"选择工作目录\"><span data-lucide=\"folder\"></span><span id=\"workspace-label\">选择工作目录</span></button><button id=\"theme-button\" class=\"icon-button\" title=\"主题：跟随系统\" aria-label=\"切换主题\"><span data-lucide=\"monitor\"></span></button><button id=\"new-window-button\" class=\"icon-button\" title=\"新建窗口\" aria-label=\"新建窗口\"><span data-lucide=\"panels-top-left\"></span></button></div></header>", 1)),
+    _cache[9] || (_cache[9] = _createElementVNode("aside", { class: "sidebar" }, [
       _createElementVNode("div", { class: "sidebar-top" }, [
         _createElementVNode("button", {
           id: "new-chat-button",
@@ -117,28 +117,33 @@ export function render(_ctx, _cache) {
       ])
     ], -1 /* CACHED */)),
     _createElementVNode("main", _hoisted_1, [
-      _cache[5] || (_cache[5] = _createElementVNode("div", {
+      _cache[6] || (_cache[6] = _createElementVNode("div", {
         id: "status-toast",
         class: "status-toast hidden",
         role: "status",
         "aria-live": "polite"
       }, null, -1 /* CACHED */)),
       _createVNode(_component_attachment_drop_overlay),
-      _cache[6] || (_cache[6] = _createStaticVNode("<section id=\"empty-state\" class=\"empty-state\"><div class=\"empty-symbol\"><span data-lucide=\"terminal-square\"></span></div><h1 id=\"empty-title\">新会话</h1><p id=\"empty-subtitle\">Share Master</p></section><section id=\"chat-view\" class=\"chat-view hidden\" aria-live=\"polite\"></section>", 2)),
+      _cache[7] || (_cache[7] = _createStaticVNode("<section id=\"empty-state\" class=\"empty-state\"><div class=\"empty-symbol\"><span data-lucide=\"terminal-square\"></span></div><h1 id=\"empty-title\">新会话</h1><p id=\"empty-subtitle\">Share Master</p></section><section id=\"chat-view\" class=\"chat-view hidden\" aria-live=\"polite\"></section>", 2)),
       _createElementVNode("footer", _hoisted_2, [
-        _cache[4] || (_cache[4] = _createElementVNode("div", {
+        _cache[5] || (_cache[5] = _createElementVNode("div", {
           id: "approval-banner",
           class: "approval-banner hidden"
         }, null, -1 /* CACHED */)),
         _createElementVNode("div", _hoisted_3, [
+          _cache[0] || (_cache[0] = _createElementVNode("div", {
+            id: "message-queue-panel",
+            class: "message-queue-panel hidden",
+            "aria-label": "待发送消息队列"
+          }, null, -1 /* CACHED */)),
           _createVNode(_component_attachment_tray),
-          _cache[0] || (_cache[0] = _createElementVNode("textarea", {
+          _cache[1] || (_cache[1] = _createElementVNode("textarea", {
             id: "composer-input",
             rows: "1",
             placeholder: "给 Codex 发送消息",
             disabled: ""
           }, null, -1 /* CACHED */)),
-          _cache[1] || (_cache[1] = _createElementVNode("div", {
+          _cache[2] || (_cache[2] = _createElementVNode("div", {
             id: "skill-menu",
             class: "skill-menu hidden",
             role: "menu",
@@ -155,7 +160,7 @@ export function render(_ctx, _cache) {
               class: "skill-list"
             })
           ], -1 /* CACHED */)),
-          _cache[2] || (_cache[2] = _createElementVNode("div", {
+          _cache[3] || (_cache[3] = _createElementVNode("div", {
             id: "approval-mode-menu",
             class: "approval-mode-menu hidden",
             role: "menu",
@@ -217,11 +222,11 @@ export function render(_ctx, _cache) {
               })
             ])
           ], -1 /* CACHED */)),
-          _cache[3] || (_cache[3] = _createStaticVNode("<div class=\"composer-footer\"><div class=\"session-controls\"><button id=\"attach-button\" class=\"skill-button\" type=\"button\" title=\"添加图片附件\" aria-label=\"添加图片附件\" disabled><span data-lucide=\"paperclip\"></span></button><button id=\"skill-button\" class=\"skill-button\" type=\"button\" title=\"Skills\" aria-label=\"Skills\" aria-haspopup=\"menu\" aria-expanded=\"false\" disabled><span data-lucide=\"wand-sparkles\"></span></button><label class=\"session-select\" title=\"会话模型\"><img id=\"composer-brand-icon\" src=\"../../node_modules/simple-icons/icons/openai.svg\" alt=\"\"><select id=\"session-model\" aria-label=\"会话模型\" disabled><option>模型</option></select></label><label class=\"session-select\" title=\"推理强度\"><span data-lucide=\"brain\"></span><select id=\"session-effort\" aria-label=\"推理强度\" disabled><option value=\"high\">高</option></select></label><span id=\"applied-settings\" class=\"applied-settings\" title=\"服务端实际采用的会话设置\">待首轮确认</span></div><div class=\"composer-meta\"><button id=\"mode-badge\" class=\"mode-badge\" type=\"button\" aria-haspopup=\"menu\" aria-expanded=\"false\" disabled><span data-lucide=\"shield-check\"></span><span id=\"approval-mode-label\">请求批准</span><span data-lucide=\"chevron-up\"></span></button><span id=\"connection-badge\"><span class=\"status-dot\"></span>未连接</span></div><div class=\"composer-submit\" aria-label=\"消息操作\"><button id=\"send-button\" class=\"send-button\" title=\"发送\" aria-label=\"发送\" disabled><span data-lucide=\"arrow-up\"></span></button><button id=\"queue-button\" class=\"queue-button hidden\" title=\"排队发送\" aria-label=\"排队发送\" disabled><span data-lucide=\"list-plus\"></span></button><button id=\"stop-button\" class=\"stop-button hidden\" title=\"停止\" aria-label=\"停止\"><span data-lucide=\"square\"></span></button></div></div>", 1))
+          _cache[4] || (_cache[4] = _createStaticVNode("<div class=\"composer-footer\"><div class=\"session-controls\"><button id=\"attach-button\" class=\"skill-button\" type=\"button\" title=\"添加图片附件\" aria-label=\"添加图片附件\" disabled><span data-lucide=\"paperclip\"></span></button><button id=\"skill-button\" class=\"skill-button\" type=\"button\" title=\"Skills\" aria-label=\"Skills\" aria-haspopup=\"menu\" aria-expanded=\"false\" disabled><span data-lucide=\"wand-sparkles\"></span></button><label class=\"session-select\" title=\"会话模型\"><img id=\"composer-brand-icon\" src=\"../../node_modules/simple-icons/icons/openai.svg\" alt=\"\"><select id=\"session-model\" aria-label=\"会话模型\" disabled><option>模型</option></select></label><label class=\"session-select\" title=\"推理强度\"><span data-lucide=\"brain\"></span><select id=\"session-effort\" aria-label=\"推理强度\" disabled><option value=\"high\">高</option></select></label><span id=\"applied-settings\" class=\"applied-settings\" title=\"服务端实际采用的会话设置\">待首轮确认</span></div><div class=\"composer-meta\"><button id=\"mode-badge\" class=\"mode-badge\" type=\"button\" aria-haspopup=\"menu\" aria-expanded=\"false\" disabled><span data-lucide=\"shield-check\"></span><span id=\"approval-mode-label\">请求批准</span><span data-lucide=\"chevron-up\"></span></button><span id=\"connection-badge\"><span class=\"status-dot\"></span>未连接</span></div><div class=\"composer-submit\" aria-label=\"消息操作\"><button id=\"send-button\" class=\"send-button\" title=\"发送\" aria-label=\"发送\" disabled><span data-lucide=\"arrow-up\"></span></button><button id=\"queue-button\" class=\"queue-button hidden\" title=\"排队发送\" aria-label=\"排队发送\" disabled><span data-lucide=\"list-plus\"></span></button><button id=\"stop-button\" class=\"stop-button hidden\" title=\"停止\" aria-label=\"停止\"><span data-lucide=\"square\"></span></button></div></div>", 1))
         ])
       ])
     ]),
-    _cache[9] || (_cache[9] = _createElementVNode("div", {
+    _cache[10] || (_cache[10] = _createElementVNode("div", {
       id: "provider-overlay",
       class: "overlay"
     }, [
@@ -350,7 +355,7 @@ export function render(_ctx, _cache) {
         ])
       ])
     ], -1 /* CACHED */)),
-    _cache[10] || (_cache[10] = _createElementVNode("div", {
+    _cache[11] || (_cache[11] = _createElementVNode("div", {
       id: "local-provider-overlay",
       class: "overlay hidden"
     }, [
@@ -418,7 +423,7 @@ export function render(_ctx, _cache) {
         ])
       ])
     ], -1 /* CACHED */)),
-    _cache[11] || (_cache[11] = _createElementVNode("div", {
+    _cache[12] || (_cache[12] = _createElementVNode("div", {
       id: "connection-overlay",
       class: "overlay hidden"
     }, [
@@ -626,7 +631,7 @@ export function render(_ctx, _cache) {
         ])
       ])
     ], -1 /* CACHED */)),
-    _cache[12] || (_cache[12] = _createElementVNode("div", {
+    _cache[13] || (_cache[13] = _createElementVNode("div", {
       id: "claude-overlay",
       class: "overlay hidden"
     }, [
@@ -729,7 +734,7 @@ export function render(_ctx, _cache) {
         ])
       ])
     ], -1 /* CACHED */)),
-    _cache[13] || (_cache[13] = _createElementVNode("div", {
+    _cache[14] || (_cache[14] = _createElementVNode("div", {
       id: "record-home-overlay",
       class: "overlay hidden"
     }, [
@@ -799,7 +804,7 @@ export function render(_ctx, _cache) {
         ])
       ])
     ], -1 /* CACHED */)),
-    _cache[14] || (_cache[14] = _createElementVNode("div", {
+    _cache[15] || (_cache[15] = _createElementVNode("div", {
       id: "usage-overlay",
       class: "overlay hidden"
     }, [
@@ -957,7 +962,7 @@ export function render(_ctx, _cache) {
         ])
       ])
     ], -1 /* CACHED */)),
-    _cache[15] || (_cache[15] = _createElementVNode("div", {
+    _cache[16] || (_cache[16] = _createElementVNode("div", {
       id: "local-history-overlay",
       class: "overlay hidden"
     }, [
@@ -1037,7 +1042,7 @@ export function render(_ctx, _cache) {
         ])
       ])
     ], -1 /* CACHED */)),
-    _cache[16] || (_cache[16] = _createElementVNode("div", {
+    _cache[17] || (_cache[17] = _createElementVNode("div", {
       id: "health-overlay",
       class: "overlay hidden"
     }, [
@@ -1097,7 +1102,7 @@ export function render(_ctx, _cache) {
         ])
       ])
     ], -1 /* CACHED */)),
-    _cache[17] || (_cache[17] = _createElementVNode("div", {
+    _cache[18] || (_cache[18] = _createElementVNode("div", {
       id: "backup-overlay",
       class: "overlay hidden"
     }, [
@@ -1158,7 +1163,7 @@ export function render(_ctx, _cache) {
         ])
       ])
     ], -1 /* CACHED */)),
-    _cache[18] || (_cache[18] = _createElementVNode("div", {
+    _cache[19] || (_cache[19] = _createElementVNode("div", {
       id: "sync-overlay",
       class: "overlay hidden"
     }, [
@@ -1327,7 +1332,7 @@ export function render(_ctx, _cache) {
         ])
       ])
     ], -1 /* CACHED */)),
-    _cache[19] || (_cache[19] = _createElementVNode("div", {
+    _cache[20] || (_cache[20] = _createElementVNode("div", {
       id: "extensions-overlay",
       class: "overlay hidden"
     }, [
@@ -1691,7 +1696,7 @@ export function render(_ctx, _cache) {
         ])
       ])
     ], -1 /* CACHED */)),
-    _cache[20] || (_cache[20] = _createElementVNode("div", {
+    _cache[21] || (_cache[21] = _createElementVNode("div", {
       id: "skill-install-overlay",
       class: "overlay hidden"
     }, [
@@ -1777,7 +1782,7 @@ export function render(_ctx, _cache) {
         ])
       ])
     ], -1 /* CACHED */)),
-    _cache[21] || (_cache[21] = _createElementVNode("div", {
+    _cache[22] || (_cache[22] = _createElementVNode("div", {
       id: "app-settings-overlay",
       class: "overlay hidden"
     }, [
@@ -1876,7 +1881,7 @@ export function render(_ctx, _cache) {
         ])
       ])
     ], -1 /* CACHED */)),
-    _cache[22] || (_cache[22] = _createElementVNode("div", {
+    _cache[23] || (_cache[23] = _createElementVNode("div", {
       id: "deep-link-import-overlay",
       class: "overlay hidden"
     }, [
@@ -1936,7 +1941,7 @@ export function render(_ctx, _cache) {
         ])
       ])
     ], -1 /* CACHED */)),
-    _cache[23] || (_cache[23] = _createElementVNode("div", {
+    _cache[24] || (_cache[24] = _createElementVNode("div", {
       id: "project-overlay",
       class: "overlay hidden"
     }, [
@@ -2030,7 +2035,7 @@ export function render(_ctx, _cache) {
         ])
       ])
     ], -1 /* CACHED */)),
-    _cache[24] || (_cache[24] = _createElementVNode("div", {
+    _cache[25] || (_cache[25] = _createElementVNode("div", {
       id: "credential-overlay",
       class: "overlay hidden"
     }, [
@@ -2094,7 +2099,7 @@ export function render(_ctx, _cache) {
         ])
       ])
     ], -1 /* CACHED */)),
-    _cache[25] || (_cache[25] = _createElementVNode("div", {
+    _cache[26] || (_cache[26] = _createElementVNode("div", {
       id: "rename-overlay",
       class: "overlay hidden"
     }, [
@@ -2152,7 +2157,7 @@ export function render(_ctx, _cache) {
         ])
       ])
     ], -1 /* CACHED */)),
-    _cache[26] || (_cache[26] = _createElementVNode("div", {
+    _cache[27] || (_cache[27] = _createElementVNode("div", {
       id: "task-overlay",
       class: "overlay hidden"
     }, [
@@ -2352,6 +2357,6 @@ export function render(_ctx, _cache) {
         ])
       ])
     ], -1 /* CACHED */)),
-    _cache[27] || (_cache[27] = _createStaticVNode("<div id=\"thread-menu\" class=\"context-menu hidden\"><button data-action=\"archive\"><span data-lucide=\"archive\"></span>归档</button><button data-action=\"rename\"><span data-lucide=\"pencil\"></span>重命名</button><button class=\"hidden\" data-action=\"clear-queue\"><span data-lucide=\"list-x\"></span>清空待发送</button><button class=\"danger-action\" data-action=\"remove\"><span data-lucide=\"trash-2\"></span>移除会话</button><button class=\"danger-action hidden\" data-action=\"delete-now\"><span data-lucide=\"circle-x\"></span>立即删除</button></div>", 1))
+    _cache[28] || (_cache[28] = _createStaticVNode("<div id=\"thread-menu\" class=\"context-menu hidden\"><button data-action=\"archive\"><span data-lucide=\"archive\"></span>归档</button><button data-action=\"rename\"><span data-lucide=\"pencil\"></span>重命名</button><button class=\"hidden\" data-action=\"clear-queue\"><span data-lucide=\"list-x\"></span>清空待发送</button><button class=\"danger-action\" data-action=\"remove\"><span data-lucide=\"trash-2\"></span>移除会话</button><button class=\"danger-action hidden\" data-action=\"delete-now\"><span data-lucide=\"circle-x\"></span>立即删除</button></div>", 1))
   ], 64 /* STABLE_FRAGMENT */))
 }

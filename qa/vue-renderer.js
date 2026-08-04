@@ -147,6 +147,7 @@ async function run() {
   const startTurnRequests = [];
   const copiedTexts = [];
   const persistedQueues = [];
+  let clipboardPasteRequests = 0;
   ipcMain.handle("app:bootstrap", () => ({
     providerPresets: [
       { id: "deepseek", label: "DeepSeek", group: "国内模型", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat", protocol: "chat_completions", note: "DeepSeek 兼容接口。" },
@@ -274,6 +275,10 @@ async function run() {
   ipcMain.handle("app:copy-text", (_event, value) => {
     copiedTexts.push(String(value || ""));
     return true;
+  });
+  ipcMain.handle("clipboard:images", () => {
+    clipboardPasteRequests += 1;
+    return { paths: [conversationScreenshot], source: "image" };
   });
   ipcMain.handle("app:notify", () => true);
   ipcMain.handle("thread:save-message-queue", (_event, input) => {
@@ -515,12 +520,17 @@ async function run() {
     await sendMessage('steer');
     await new Promise((resolve) => setTimeout(resolve, 40));
     const queuedBeforeSteer = state.messageQueues.get(state.activeThread.id) || [];
+    const queuePanel = document.querySelector('#message-queue-panel');
     const queued = {
       queueLengthBeforeSteer: queuedBeforeSteer.length,
       firstQueuedText: queuedBeforeSteer[0]?.displayText || '',
       secondQueuedText: queuedBeforeSteer[1]?.displayText || '',
       queueBadge: document.querySelector('#queue-button').dataset.count,
-      steerButtonsBeforeClick: document.querySelectorAll('.queued-steer-button').length,
+      queuePanelVisible: !queuePanel.classList.contains('hidden'),
+      queuePanelItems: queuePanel.querySelectorAll('.queued-prompt-item').length,
+      queuePanelAboveInput: queuePanel.getBoundingClientRect().bottom <= input.getBoundingClientRect().top + 1,
+      steerButtonsBeforeClick: queuePanel.querySelectorAll('.queued-steer-button').length,
+      queuedMessagesInChat: queuedBeforeSteer.filter((message) => document.querySelector('[data-message-id="' + CSS.escape(message.clientUserMessageId) + '"]')).length,
       inputAfterQueue: input.value,
     };
     state.providerEngine = 'codex';
@@ -539,6 +549,7 @@ async function run() {
       ...queued,
       queueLengthAfterSuccess,
       remainingAfterInactive: (state.messageQueues.get(state.activeThread.id) || []).length,
+      queuePanelHiddenAfterDrain: document.querySelector('#message-queue-panel').classList.contains('hidden'),
       deliveryLabels: [...document.querySelectorAll('.message-delivery-state')].map((node) => node.textContent),
       sendTitle: document.querySelector('#send-button').title,
       queueTitle: document.querySelector('#queue-button').title,
@@ -555,6 +566,21 @@ async function run() {
   deliveryModes.persistedQueueLength = persistedQueues.at(-1)?.messages?.length || 0;
   const attachments = await window.webContents.executeJavaScript(`(async () => {
     const testImage = ${JSON.stringify(conversationScreenshot)};
+    state.pendingAttachments = [];
+    renderAttachments();
+    const clipboardTransfer = new DataTransfer();
+    clipboardTransfer.items.add(new File(['clipboard-image'], 'clipboard.png', { type: 'image/png' }));
+    const pasteCanceled = !document.querySelector('#composer-input').dispatchEvent(new ClipboardEvent('paste', {
+      clipboardData: clipboardTransfer,
+      bubbles: true,
+      cancelable: true,
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const pasted = {
+      pasteCanceled,
+      pastedCount: state.pendingAttachments.length,
+      pastedFilename: document.querySelector('.attachment-copy strong')?.textContent || '',
+    };
     const result = addDroppedAttachments([testImage, 'F:\\\\codepro\\\\notes.pdf']);
     await new Promise((resolve) => setTimeout(resolve, 50));
     const tray = {
@@ -571,8 +597,9 @@ async function run() {
     window.dispatchEvent(new DragEvent('dragleave', { dataTransfer: transfer }));
     await new Promise((resolve) => setTimeout(resolve, 20));
     tray.overlayCleared = document.querySelector('#attachment-drop-overlay').classList.contains('hidden');
-    return { ...result, ...tray };
+    return { ...result, ...pasted, ...tray };
   })()`);
+  attachments.clipboardPasteRequests = clipboardPasteRequests;
   fs.writeFileSync(attachmentScreenshot, (await capturePageWithRetry(window)).toPNG());
   Object.assign(attachments, await window.webContents.executeJavaScript(`(async () => {
     document.querySelector('.attachment-remove').click();
@@ -925,9 +952,14 @@ async function run() {
   assert.equal(deliveryModes.firstQueuedText, "等当前回复完成后再执行这一条");
   assert.equal(deliveryModes.secondQueuedText, "竞态情况下也不能丢失的消息");
   assert.equal(deliveryModes.steerButtonsBeforeClick, 2);
+  assert.equal(deliveryModes.queuePanelVisible, true);
+  assert.equal(deliveryModes.queuePanelItems, 2);
+  assert.equal(deliveryModes.queuePanelAboveInput, true);
+  assert.equal(deliveryModes.queuedMessagesInChat, 0);
   assert.equal(deliveryModes.inputAfterQueue, "");
   assert.equal(deliveryModes.queueLengthAfterSuccess, 1);
   assert.equal(deliveryModes.remainingAfterInactive, 0);
+  assert.equal(deliveryModes.queuePanelHiddenAfterDrain, true);
   assert.equal(deliveryModes.nativeSteerRequests, 2);
   assert.equal(deliveryModes.interruptRequests, 0);
   assert.ok(deliveryModes.persistedQueueWrites >= 4);
@@ -937,10 +969,14 @@ async function run() {
   assert.equal(deliveryModes.inactiveStartedText, "竞态情况下也不能丢失的消息");
   assert.match(deliveryModes.sendTitle, /排队发送/);
   assert.match(deliveryModes.queueTitle, /排队发送/);
-  assert.ok(deliveryModes.deliveryLabels.some((label) => label.includes("已排队")));
+  assert.ok(deliveryModes.deliveryLabels.some((label) => label.includes("已引导")));
   assert.ok(deliveryModes.actionTopDelta <= 1);
   assert.equal(deliveryModes.footerOverflow, false);
   assert.deepEqual({ added: attachments.added, unsupported: attachments.unsupported }, { added: 1, unsupported: 1 });
+  assert.equal(attachments.pasteCanceled, true);
+  assert.equal(attachments.pastedCount, 1);
+  assert.equal(attachments.pastedFilename, "vue-renderer-conversation.png");
+  assert.equal(attachments.clipboardPasteRequests, 1);
   assert.equal(attachments.count, 1);
   assert.equal(attachments.reactiveCount, 1);
   assert.equal(attachments.filename, "vue-renderer-conversation.png");
