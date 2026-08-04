@@ -1,0 +1,69 @@
+const fs = require("node:fs");
+const path = require("node:path");
+
+const START_MENU_PARTS = ["Microsoft", "Windows", "Start Menu", "Programs"];
+
+function quoteWindowsArgument(value) {
+  return `"${String(value || "").replace(/"/g, '\\"')}"`;
+}
+
+function notificationShortcutArguments({ isPackaged, userData, applicationRoot }) {
+  if (isPackaged) return "";
+  return `--user-data-dir=${quoteWindowsArgument(userData)} ${quoteWindowsArgument(applicationRoot)}`;
+}
+
+function sameWindowsPath(left, right) {
+  if (!left || !right) return false;
+  return path.resolve(left).toLocaleLowerCase("en-US") === path.resolve(right).toLocaleLowerCase("en-US");
+}
+
+function ensureWindowsNotificationIdentity(options = {}) {
+  if ((options.platform || process.platform) !== "win32") return { status: "skipped" };
+  const fsApi = options.fsApi || fs;
+  const shellApi = options.shellApi;
+  if (!shellApi?.writeShortcutLink || !shellApi?.readShortcutLink) {
+    throw new TypeError("A Windows shortcut API is required.");
+  }
+
+  const programsDirectory = path.join(options.appData, ...START_MENU_PARTS);
+  const shortcutPath = path.join(programsDirectory, "Share Master.lnk");
+  const legacyShortcutPath = path.join(programsDirectory, "Electron.lnk");
+  fsApi.mkdirSync(programsDirectory, { recursive: true });
+
+  const shortcut = {
+    target: options.target,
+    args: options.args || "",
+    cwd: options.cwd || path.dirname(options.target),
+    description: "Share Master",
+    icon: options.icon || options.target,
+    iconIndex: 0,
+    appUserModelId: options.appUserModelId,
+    toastActivatorClsid: options.toastActivatorClsid,
+  };
+  const operation = fsApi.existsSync(shortcutPath) ? "replace" : "create";
+  if (!shellApi.writeShortcutLink(shortcutPath, operation, shortcut)) {
+    throw new Error("Unable to register the Share Master notification shortcut.");
+  }
+
+  let removedLegacy = false;
+  if (fsApi.existsSync(legacyShortcutPath)) {
+    try {
+      const legacy = shellApi.readShortcutLink(legacyShortcutPath);
+      if (legacy?.appUserModelId === options.appUserModelId
+        && sameWindowsPath(legacy.target, options.target)) {
+        fsApi.unlinkSync(legacyShortcutPath);
+        removedLegacy = true;
+      }
+    } catch {
+      // Preserve shortcuts that cannot be positively identified as ours.
+    }
+  }
+
+  return { status: "registered", shortcutPath, operation, removedLegacy };
+}
+
+module.exports = {
+  ensureWindowsNotificationIdentity,
+  notificationShortcutArguments,
+  quoteWindowsArgument,
+};

@@ -6,10 +6,22 @@ const os = require("node:os");
 const path = require("node:path");
 const { fileURLToPath } = require("node:url");
 const { APP_VERSION, LATEST_RELEASE_API, USER_AGENT, updateFromRelease } = require("./app-version");
+const {
+  ApprovalRequestRegistry,
+  approvalDecisionForNotificationAction,
+  approvalDecisionResult,
+  approvalNotificationSpec,
+} = require("./approval-request");
+const {
+  ensureWindowsNotificationIdentity,
+  notificationShortcutArguments,
+} = require("./windows-notification-identity");
 
 const WINDOWS_APP_ID = "com.sharemaster.desktop";
+const WINDOWS_TOAST_ACTIVATOR_CLSID = "{13C7CD4D-7B07-4CB4-887C-C8C9E230D863}";
 app.setName("Share Master");
 app.setAppUserModelId(WINDOWS_APP_ID);
+if (process.platform === "win32") app.setToastActivatorCLSID(WINDOWS_TOAST_ACTIVATOR_CLSID);
 if (app.isPackaged) {
   process.env.SHARE_MASTER_PACKAGED = "1";
   process.env.SHARE_MASTER_STORE_ROOT ||= path.join(app.getPath("userData"), "data");
@@ -47,6 +59,7 @@ const activeLogicalTurnsById = new Map();
 const pendingBranchCreations = new WeakMap();
 const providerRequestRuns = new WeakMap();
 const serverBranchLookups = new WeakMap();
+const approvalRequestRegistry = new ApprovalRequestRegistry();
 let conversationMirrorSync = null;
 let skillRefreshPromise = null;
 const INTERACTIVE_SERVER_REQUESTS = new Set([
@@ -96,6 +109,78 @@ function handleRendererIpc(channel, handler) {
       };
     }
   });
+}
+
+function focusApprovalWindow(sender) {
+  if (!sender || sender.isDestroyed()) return;
+  const owner = BrowserWindow.fromWebContents(sender);
+  if (!owner || owner.isDestroyed()) return;
+  if (owner.isMinimized()) owner.restore();
+  owner.show();
+  owner.focus();
+}
+
+function settleApprovalRequest(server, requestId, result, source = "renderer") {
+  const request = approvalRequestRegistry.take(server, requestId);
+  if (!request) return false;
+  request.notification?.close();
+  server.respond(request.message.id, result);
+  request.send("codex:event", {
+    method: "serverRequest/resolved",
+    params: { requestId: request.message.id, source },
+  });
+  return true;
+}
+
+function discardApprovalRequest(server, requestId) {
+  const request = approvalRequestRegistry.take(server, requestId);
+  if (!request) return false;
+  request.notification?.close();
+  return true;
+}
+
+function clearApprovalRequests(server) {
+  for (const request of approvalRequestRegistry.clear(server)) request.notification?.close();
+}
+
+function registerApprovalRequest(server, message, mappedMessage, sender, send) {
+  const request = { message, mappedMessage, sender, send, notification: null };
+  approvalRequestRegistry.replace(server, message.id, request)?.notification?.close();
+  send("codex:approval", mappedMessage);
+  if (!Notification.isSupported()) return request;
+
+  const spec = approvalNotificationSpec(mappedMessage);
+  const notification = new Notification({
+    id: `approval-${crypto.randomUUID()}`,
+    groupId: "share-master-approvals",
+    groupTitle: "Share Master 授权请求",
+    title: spec.title,
+    body: spec.body,
+    actions: spec.actions,
+    silent: false,
+    timeoutType: "never",
+  });
+  request.notification = notification;
+  notification.on("click", () => focusApprovalWindow(sender));
+  notification.on("action", (event, legacyActionIndex) => {
+    const actionIndex = Number.isInteger(event?.actionIndex) ? event.actionIndex : legacyActionIndex;
+    const decision = approvalDecisionForNotificationAction(actionIndex);
+    if (!decision) {
+      focusApprovalWindow(sender);
+      return;
+    }
+    settleApprovalRequest(
+      server,
+      message.id,
+      approvalDecisionResult(message, decision),
+      `notification:${decision}`,
+    );
+  });
+  notification.on("failed", (_event, error) => {
+    console.error(`[approval-notification] ${error}`);
+  });
+  notification.show();
+  return request;
 }
 
 function loginItemOptions(openAtLogin = undefined) {
@@ -2020,6 +2105,26 @@ app.on("open-url", (event, url) => {
 
 app.whenReady().then(async () => {
   if (!hasSingleInstanceLock) return;
+  if (process.platform === "win32" && !process.env.CODEX_DECK_QA_SCREENSHOT) {
+    try {
+      ensureWindowsNotificationIdentity({
+        appData: app.getPath("appData"),
+        appUserModelId: WINDOWS_APP_ID,
+        toastActivatorClsid: WINDOWS_TOAST_ACTIVATOR_CLSID,
+        target: process.execPath,
+        args: notificationShortcutArguments({
+          isPackaged: app.isPackaged,
+          userData: app.getPath("userData"),
+          applicationRoot: APPLICATION_ROOT,
+        }),
+        cwd: APPLICATION_ROOT,
+        icon: app.isPackaged ? process.execPath : DEVELOPMENT_ICON,
+        shellApi: shell,
+      });
+    } catch (error) {
+      console.error(`[notification-identity] ${error.message}`);
+    }
+  }
   providerStore = new ProviderStore();
   localProviderDiscovery = createLocalProviderDiscovery({
     homeDirectory: os.homedir(),
@@ -2608,6 +2713,7 @@ app.whenReady().then(async () => {
       const generation = nextConnectionGeneration(senderId);
       const previous = servers.get(senderId);
       if (previous) {
+        clearApprovalRequests(previous);
         failScheduledTasksForServer(previous, "任务使用的连接已切换。");
         previous.stop();
       }
@@ -2684,6 +2790,9 @@ app.whenReady().then(async () => {
       };
       servers.set(senderId, server);
       server.on("notification", (message) => {
+        if (message.method === "serverRequest/resolved") {
+          discardApprovalRequest(server, message.params?.requestId);
+        }
         trackProviderRequest(server, message);
         handleScheduledTaskNotification(server, message);
         send("codex:event", mappedServerMessage(server, message));
@@ -2695,7 +2804,7 @@ app.whenReady().then(async () => {
           return;
         }
         if (INTERACTIVE_SERVER_REQUESTS.has(message.method)) {
-          send("codex:approval", mappedServerMessage(server, message));
+          registerApprovalRequest(server, message, mappedServerMessage(server, message), sender, send);
           return;
         }
         server.respondError(message.id, -32601, `Share Master does not support ${message.method}.`);
@@ -2703,6 +2812,7 @@ app.whenReady().then(async () => {
       });
       server.on("diagnostic", (message) => send("codex:diagnostic", message));
       server.on("exit", (code, detail = null) => {
+        clearApprovalRequests(server);
         interruptActiveLogicalTurns(server, "server-exit");
         failScheduledTasksForServer(server, `连接已断开（退出代码 ${code ?? "未知"}）。`);
         if (!isCurrent()) return;
@@ -2903,8 +3013,8 @@ app.whenReady().then(async () => {
     return server.request("turn/interrupt", { ...payload, threadId: nativeThreadId });
   });
   handleRendererIpc("codex:approval-response", (event, payload) => {
-    serverFor(event).respond(payload.id, payload.result);
-    return true;
+    const resolved = settleApprovalRequest(serverFor(event), payload.id, payload.result, "renderer");
+    return { resolved, alreadyResolved: !resolved };
   });
 
   const initialDeepLink = shareMasterLinkFromArgs(process.argv);
@@ -2930,6 +3040,7 @@ app.whenReady().then(async () => {
 
 app.on("window-all-closed", () => {
   for (const server of servers.values()) {
+    clearApprovalRequests(server);
     failScheduledTasksForServer(server, "Share Master 已关闭。");
     server.stop();
   }

@@ -1401,6 +1401,15 @@ html[data-theme="dark"] .import-safety-note { border-color: #315e50; background:
 }
 .titlebar-brand { border-right-color: #d7dfdb; padding-inline: 14px; }
 .wordmark { gap: 9px; color: #18231f; font-size: 13px; }
+.wordmark-icon {
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  display: block;
+  border-radius: 7px;
+  box-shadow: 0 2px 7px rgba(18, 34, 29, .18);
+  user-select: none;
+}
 .wordmark-symbol {
   width: 25px;
   height: 25px;

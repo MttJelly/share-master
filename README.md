@@ -1,74 +1,127 @@
 <p align="center">
-  <img src="build/icon.png" width="96" height="96" alt="Share Master" />
+  <img src="build/icon.png" width="112" height="112" alt="Share Master" />
 </p>
 
 <h1 align="center">Share Master</h1>
 
 <p align="center">
-  一个工作区，连接 Codex、Claude、DeepSeek、Qwen 与 OpenAI 兼容模型。
+  <strong>把模型、会话和工作流放进同一个 Windows 工作台</strong>
 </p>
 
 <p align="center">
-  <a href="https://github.com/MttJelly/share-master/releases/latest"><img src="https://img.shields.io/github/v/release/MttJelly/share-master?style=flat-square&label=Release&color=167f68" alt="Release" /></a>
-  <img src="https://img.shields.io/badge/Windows-x64-167f68?style=flat-square" alt="Windows x64" />
-  <img src="https://img.shields.io/badge/Electron-43-25352f?style=flat-square" alt="Electron 43" />
-  <img src="https://img.shields.io/badge/Vue-3-25352f?style=flat-square" alt="Vue 3" />
+  在一份连续的本地会话中连接 Codex、Claude Code、DeepSeek、Qwen<br />
+  以及 OpenAI 兼容服务，同时管理项目、任务、附件、Skills 与并行回复。
 </p>
 
-Share Master 是一款面向 Windows 的多模型桌面客户端。不同模型共享 Share Master 自己的本地会话记录，同时保持账号、连接和原始客户端数据相互独立。
+<p align="center">
+  <a href="https://github.com/MttJelly/share-master/releases/latest"><img src="https://img.shields.io/github/v/release/MttJelly/share-master?style=for-the-badge&label=Latest&color=147d64" alt="Latest release" /></a>
+  <img src="https://img.shields.io/badge/Windows-x64-202a27?style=for-the-badge&logo=windows11&logoColor=white" alt="Windows x64" />
+  <img src="https://img.shields.io/badge/Vue-3-202a27?style=for-the-badge&logo=vuedotjs&logoColor=67d6ab" alt="Vue 3" />
+  <img src="https://img.shields.io/badge/Electron-43-202a27?style=for-the-badge&logo=electron&logoColor=9feaf9" alt="Electron 43" />
+</p>
 
-> [!IMPORTANT]
-> Share Master 使用独立数据目录。读取本机 Codex、Claude Code 配置与聊天记录时采用只读方式，不会修改原始客户端文件。
+<p align="center">
+  <a href="https://github.com/MttJelly/share-master/releases/latest/download/Share-Master-portable-win-x64.zip"><strong>下载 ZIP 便携版</strong></a>
+  &nbsp;&nbsp;·&nbsp;&nbsp;
+  <a href="https://github.com/MttJelly/share-master/releases/latest/download/Share-Master-setup-win-x64.msi"><strong>下载 MSI 安装版</strong></a>
+  &nbsp;&nbsp;·&nbsp;&nbsp;
+  <a href="docs/USER_GUIDE.zh-CN.md"><strong>中文使用指南</strong></a>
+</p>
 
-## 下载
+---
 
-| 版本 | 下载 | 适用场景 |
+## 一个工作区，持续完成工作
+
+Share Master 是面向 Windows 的多模型桌面客户端。你可以在同一个 Project 中保留完整上下文，按任务选择不同模型；切换会话时，正在运行的回答继续在后台完成。每个连接独立管理，Share Master 的会话、队列和任务统一保存在自己的数据目录中。
+
+```mermaid
+flowchart LR
+    A[Project 工作区] --> B[共享本地会话]
+    B --> C{选择连接}
+    C --> D[Codex / Claude Code]
+    C --> E[DeepSeek / Qwen]
+    C --> F[自定义兼容 API]
+    B --> G[消息队列与引导]
+    B --> H[附件 / Skills / MCP]
+    B --> I[已安排任务]
+```
+
+## 核心体验
+
+| | 能力 | 你可以做什么 |
 | --- | --- | --- |
-| ZIP 便携版 | [下载最新便携版](https://github.com/MttJelly/share-master/releases/latest/download/Share-Master-portable-win-x64.zip) | 免安装，解压后运行 `Share Master.exe` |
-| MSI 安装版 | [下载最新安装版](https://github.com/MttJelly/share-master/releases/latest/download/Share-Master-setup-win-x64.msi) | 标准安装，包含桌面快捷方式和卸载入口 |
+| **01** | **共享会话** | 在同一份 Share Master 会话中切换连接与模型，不必反复搬运上下文 |
+| **02** | **并行工作** | 当前回答在后台继续运行，同时打开其他会话或独立窗口处理新任务 |
+| **03** | **消息控制** | 连续输入消息，选择排队发送或立即引导当前回答，并随时停止生成 |
+| **04** | **Project 管理** | 按项目组织会话，自动按最近活动排序，支持搜索、归档、移除与恢复 |
+| **05** | **多模型连接** | 管理官方账号、API、中转服务、模型列表、健康检查、故障转移与用量 |
+| **06** | **完整输入** | 拖放、选择或粘贴图片附件，通过 `/` 使用 Skills，并连接 Prompt 与 MCP |
+| **07** | **任务安排** | 创建一次、每小时、每天、工作日、每周或每月执行的自动任务 |
+| **08** | **本地协作** | 浏览本机 Codex 与 Claude Code 会话，并按需复制到 Share Master 工作区 |
 
-<p align="center">
-  <a href="https://github.com/MttJelly/share-master/releases">查看全部版本与更新说明</a>
-</p>
+## 下载与安装
 
-## 功能概览
+| 发行包 | 使用方式 | 下载 |
+| --- | --- | --- |
+| **ZIP 便携版** | 解压后运行 `Share Master.exe`，适合免安装使用 | [下载最新便携版](https://github.com/MttJelly/share-master/releases/latest/download/Share-Master-portable-win-x64.zip) |
+| **MSI 安装版** | 标准 Windows 安装，包含桌面快捷方式和卸载入口 | [下载最新安装版](https://github.com/MttJelly/share-master/releases/latest/download/Share-Master-setup-win-x64.msi) |
 
-| 模型与会话 | 工作流与效率 |
-| --- | --- |
-| **多模型连接**<br>支持 Codex、Claude Code、DeepSeek、Qwen 和自定义 OpenAI 兼容接口 | **多会话并行**<br>切换到其他会话后，当前回复继续在后台运行 |
-| **共享聊天记录**<br>在同一份 Share Master 会话中切换模型和连接 | **消息控制**<br>支持停止、引导当前回复、排队发送和完成通知 |
-| **多账号管理**<br>独立管理官方账号、API、中转站、模型和密钥 | **Project 工作区**<br>支持项目分组、多窗口、搜索、归档、移除和恢复 |
-| **连接可靠性**<br>提供健康检查、故障转移、用量统计和价格配置 | **已安排任务**<br>支持一次、每小时、每天、工作日、每周和每月执行 |
-| **本地配置发现**<br>只读发现 Codex、Claude Code 与环境变量中的现有配置 | **附件与扩展**<br>支持图片拖放、消息引用、`/` Skill、Prompt 和 MCP |
-| **本地记录浏览**<br>只读查看并单向复制 Codex 与 Claude 会话 | **备份与同步**<br>支持本地目录和 WebDAV，同步时排除密钥与聊天正文 |
+每个 Release 同时提供带版本号的安装包、稳定下载文件名和 SHA-256 清单。历史版本与完整更新内容可在 [Releases](https://github.com/MttJelly/share-master/releases) 查看。
 
-## 使用文档 / Documentation
+## 开始使用
 
-- [中文使用指南](docs/USER_GUIDE.zh-CN.md)
-- [English User Guide](docs/USER_GUIDE.en.md)
-- [更新日志](CHANGELOG.md)
+1. 安装 MSI，或解压 ZIP 便携版。
+2. 打开 Share Master，在“连接方式”中选择现有账号或添加 API 服务。
+3. 新建 Project 和会话，选择模型后开始聊天。
+4. 在模型回复期间继续输入，按需要排队、引导或切换到其他会话。
 
-## 数据与隐私
+API Key 和 Token 只需在对应连接中保存一次。之后可以直接选择该连接，Share Master 不会把密钥写入聊天正文、配置导出或发布包。
 
-安装版和 ZIP 版默认把私有配置与聊天副本保存在：
+## 工作区能力
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>对话与模型</h3>
+      <p>共享聊天记录、多会话并行、模型切换、推理强度、流式回复、中断、重新生成、引用与分支。</p>
+    </td>
+    <td width="50%" valign="top">
+      <h3>输入与队列</h3>
+      <p>连续输入、待发送队列、即时引导、图片附件、拖放与剪贴板粘贴，以及完成后的系统通知。</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <h3>连接与配置</h3>
+      <p>多账号、多供应商、模型发现、连接测试、用量与价格、故障转移，以及本机配置只读发现。</p>
+    </td>
+    <td width="50%" valign="top">
+      <h3>组织与自动化</h3>
+      <p>Project、会话搜索、归档与恢复、多窗口、已安排任务、Skills、Prompt、MCP、备份和 WebDAV。</p>
+    </td>
+  </tr>
+</table>
+
+## 数据位置
+
+Share Master 默认将自己的配置与聊天数据保存在：
 
 ```text
 %APPDATA%\Share Master\data
 ```
 
-发布包和配置导出文件不会包含：
+本机配置发现和本地记录浏览采用只读方式。Share Master 不会修改其他客户端的程序文件，也不会删除或覆盖其原始聊天记录。卸载 Share Master 不会自动删除上述数据目录，迁移或清理前请先备份所需会话。
 
-- API Key、Token、登录凭据或 Windows 安全存储数据。
-- Share Master 私有聊天记录。
-- Codex、Claude Code 或 ChatGPT 原始聊天记录。
-- 本机测试数据、日志或用户路径配置。
+## 文档
 
-删除软件不会自动删除 `%APPDATA%\Share Master`。如需彻底清理，请在卸载并备份所需会话后手动删除该目录。
+| 文档 | 内容 |
+| --- | --- |
+| [中文使用指南](docs/USER_GUIDE.zh-CN.md) | 安装、连接、会话、附件、任务、同步与故障排查 |
+| [English User Guide](docs/USER_GUIDE.en.md) | Complete English setup and usage guide |
+| [更新日志](CHANGELOG.md) | 每个版本的新增、优化与修复 |
+| [发布维护流程](docs/RELEASE_PROCESS.md) | 版本、测试、构建与发布规范 |
 
-## 开发
-
-<details>
-<summary><strong>本地运行</strong></summary>
+## 本地开发
 
 需要 Node.js 20 或更高版本。
 
@@ -77,41 +130,22 @@ npm install
 npm start
 ```
 
-使用项目内隔离数据目录：
+使用仓库内的隔离数据目录运行：
 
 ```powershell
 & '.\Start Share Master.cmd'
 ```
 
-</details>
-
-<details>
-<summary><strong>构建 Windows 发布包</strong></summary>
+构建 Windows ZIP 和 MSI：
 
 ```powershell
-npm install
 npm run dist:win
 ```
 
-生成文件位于 `release` 目录。
-
-</details>
-
-版本发布与 GitHub 更新规则见 [发布维护流程](docs/RELEASE_PROCESS.md)。
-
-<details>
-<summary><strong>运行测试</strong></summary>
+基础验证：
 
 ```powershell
 npm run check
 npm run test:unit
 npm run test:vue-ui
-npm run test:project-actions
-npm run test:multi-window
 ```
-
-</details>
-
-## 隐私边界
-
-Share Master 是独立应用，只复用当前电脑上已安装的 CLI 或用户明确导入的配置。它不会修改原始 ChatGPT App、Codex 或 Claude Code 的程序文件，也不会删除或覆盖这些客户端的原始聊天记录。

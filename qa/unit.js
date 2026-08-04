@@ -45,6 +45,131 @@ const {
   mergeLogicalThread,
   remapBranchMessage,
 } = require("../src/conversation-branches");
+const {
+  ensureWindowsNotificationIdentity,
+  notificationShortcutArguments,
+} = require("../src/windows-notification-identity");
+const {
+  ApprovalRequestRegistry,
+  approvalDecisionForNotificationAction,
+  approvalDecisionResult,
+  approvalNotificationSpec,
+} = require("../src/approval-request");
+
+function testApprovalNotifications() {
+  const registry = new ApprovalRequestRegistry();
+  const server = {};
+  const first = { id: "first" };
+  const replacement = { id: "replacement" };
+  assert.equal(registry.replace(server, 7, first), null);
+  assert.equal(registry.replace(server, "7", replacement), first);
+  assert.equal(registry.take(server, 7), replacement);
+  assert.equal(registry.take(server, 7), null);
+  registry.replace(server, 8, first);
+  assert.deepEqual(registry.clear(server), [first]);
+  assert.deepEqual(registry.clear(server), []);
+
+  const command = {
+    method: "item/commandExecution/requestApproval",
+    params: { command: "tool.exe --api-key must-not-appear" },
+  };
+  const commandSpec = approvalNotificationSpec(command);
+  assert.equal(commandSpec.title, "Share Master 请求授权");
+  assert.equal(commandSpec.actions.length, 3);
+  assert.equal(commandSpec.body.includes("must-not-appear"), false);
+  assert.deepEqual(commandSpec.actions.map((action) => action.text), ["拒绝", "允许一次", "本会话允许"]);
+  assert.equal(approvalDecisionForNotificationAction(0), "decline");
+  assert.equal(approvalDecisionForNotificationAction(1), "accept");
+  assert.equal(approvalDecisionForNotificationAction(2), "acceptForSession");
+  assert.equal(approvalDecisionForNotificationAction(3), null);
+  assert.deepEqual(approvalDecisionResult(command, "accept"), { decision: "accept" });
+  assert.deepEqual(approvalDecisionResult({ method: "execCommandApproval" }, "acceptForSession"), {
+    decision: "approved_for_session",
+  });
+
+  const permissions = {
+    method: "item/permissions/requestApproval",
+    params: { permissions: { network: { hosts: ["example.test"] }, fileSystem: { roots: ["F:\\work"] } } },
+  };
+  assert.match(approvalNotificationSpec(permissions).body, /网络访问和文件访问/);
+  assert.deepEqual(approvalDecisionResult(permissions, "acceptForSession"), {
+    permissions: permissions.params.permissions,
+    scope: "session",
+  });
+  assert.deepEqual(approvalDecisionResult(permissions, "decline"), { permissions: {}, scope: "turn" });
+
+  const userInputSpec = approvalNotificationSpec({ method: "item/tool/requestUserInput" });
+  assert.equal(userInputSpec.actions.length, 0);
+  assert.match(userInputSpec.body, /点击通知/);
+  const mcpSpec = approvalNotificationSpec({ method: "mcpServer/elicitation/request" });
+  assert.equal(mcpSpec.actions.length, 0);
+}
+
+function testWindowsNotificationIdentity() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "share-master-notification-"));
+  const programs = path.join(root, "Microsoft", "Windows", "Start Menu", "Programs");
+  const legacyPath = path.join(programs, "Electron.lnk");
+  const target = path.join(root, "electron.exe");
+  const writes = [];
+  try {
+    fs.mkdirSync(programs, { recursive: true });
+    fs.writeFileSync(legacyPath, "legacy", "utf8");
+    const shellApi = {
+      writeShortcutLink(shortcutPath, operation, details) {
+        writes.push({ shortcutPath, operation, details });
+        fs.writeFileSync(shortcutPath, "share-master", "utf8");
+        return true;
+      },
+      readShortcutLink() {
+        return { target, appUserModelId: "com.sharemaster.desktop" };
+      },
+    };
+    const result = ensureWindowsNotificationIdentity({
+      platform: "win32",
+      appData: root,
+      appUserModelId: "com.sharemaster.desktop",
+      toastActivatorClsid: "{13C7CD4D-7B07-4CB4-887C-C8C9E230D863}",
+      target,
+      args: "--test",
+      cwd: root,
+      icon: path.join(root, "icon.ico"),
+      shellApi,
+    });
+    assert.equal(result.status, "registered");
+    assert.equal(result.removedLegacy, true);
+    assert.equal(fs.existsSync(legacyPath), false);
+    assert.equal(writes.length, 1);
+    assert.equal(path.basename(writes[0].shortcutPath), "Share Master.lnk");
+    assert.equal(writes[0].operation, "create");
+    assert.equal(writes[0].details.description, "Share Master");
+    assert.equal(writes[0].details.appUserModelId, "com.sharemaster.desktop");
+    assert.equal(writes[0].details.toastActivatorClsid, "{13C7CD4D-7B07-4CB4-887C-C8C9E230D863}");
+    fs.writeFileSync(legacyPath, "unrelated", "utf8");
+    shellApi.readShortcutLink = () => ({
+      target: path.join(root, "another-electron-app.exe"),
+      appUserModelId: "com.sharemaster.desktop",
+    });
+    const preserved = ensureWindowsNotificationIdentity({
+      platform: "win32",
+      appData: root,
+      appUserModelId: "com.sharemaster.desktop",
+      toastActivatorClsid: "{13C7CD4D-7B07-4CB4-887C-C8C9E230D863}",
+      target,
+      shellApi,
+    });
+    assert.equal(preserved.operation, "replace");
+    assert.equal(preserved.removedLegacy, false);
+    assert.equal(fs.existsSync(legacyPath), true);
+    assert.equal(notificationShortcutArguments({
+      isPackaged: false,
+      userData: "C:\\Share Master Data",
+      applicationRoot: "F:\\codepro",
+    }), '--user-data-dir="C:\\Share Master Data" "F:\\codepro"');
+    assert.equal(notificationShortcutArguments({ isPackaged: true }), "");
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
 
 function testOfficialCliArguments() {
   assert.equal(BASE_PROVIDERS.official.args.includes("--ignore-user-config"), false);
@@ -1910,6 +2035,8 @@ Promise.resolve()
   .then(testDiagnosticNormalization)
   .then(testRawCodexDiagnosticsStayInternal)
   .then(testApplicationVersioning)
+  .then(testApprovalNotifications)
+  .then(testWindowsNotificationIdentity)
   .then(testOfficialCredentialSeeding)
   .then(testIsolatedStoreDefaults)
   .then(testConversationMirror)
@@ -1959,7 +2086,7 @@ Promise.resolve()
   .then(testOpenAICompatibleCompletionValidation)
   .then(testOpenAICompatibleInterrupt)
   .then(testOpenAICompatibleSharedCodexHistory)
-  .then(() => console.log(JSON.stringify({ ok: true, tests: 52 })))
+  .then(() => console.log(JSON.stringify({ ok: true, tests: 54 })))
   .catch((error) => {
     console.error(error.stack || error.message);
     process.exitCode = 1;

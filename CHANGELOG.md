@@ -2,6 +2,23 @@
 
 本文件记录 Share Master 每个版本的用户可见变化。版本号遵循语义化版本；每次向 GitHub 推送产品更新前，必须先更新版本号和本文件。
 
+## [0.1.7] - 2026-08-05
+
+### 新增
+
+- Windows 权限通知支持直接拒绝、允许一次或在当前会话中允许，无需先切回应用窗口。
+
+### 优化
+
+- Windows 通知、开始菜单快捷方式、窗口标题栏与应用图标统一使用 Share Master 品牌标识。
+- 重构 README 信息结构，突出版本下载、核心工作流、功能边界与中英文使用文档入口。
+
+### 修复
+
+- 修复开发模式下 Windows 通知可能显示为 Electron 名称和默认图标的问题。
+- 修复从系统通知处理权限后，应用内授权框仍保持等待状态的问题。
+- 修复界面繁忙时快速选择 `/` Prompt 可能保留已输入命令前缀的问题。
+
 ## [0.1.6] - 2026-08-05
 
 ### 优化
@@ -86,3 +103,4 @@
 [0.1.4]: https://github.com/MttJelly/share-master/compare/v0.1.3...v0.1.4
 [0.1.5]: https://github.com/MttJelly/share-master/compare/v0.1.4...v0.1.5
 [0.1.6]: https://github.com/MttJelly/share-master/compare/v0.1.5...v0.1.6
+[0.1.7]: https://github.com/MttJelly/share-master/compare/v0.1.6...v0.1.7

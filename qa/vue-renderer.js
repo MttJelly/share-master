@@ -43,6 +43,7 @@ async function rendererSnapshot(window) {
     });
     return {
     vueMounted: Boolean(window.shareMasterVue),
+    wordmarkIconLoaded: Boolean(document.querySelector('.wordmark-icon')?.complete && document.querySelector('.wordmark-icon')?.naturalWidth),
     stateExposed: Boolean(window.shareMasterState),
     pending: document.querySelector('#app').classList.contains('vue-pending'),
     providerDialogVisible: !document.querySelector('#provider-overlay').classList.contains('hidden'),
@@ -151,6 +152,7 @@ async function run() {
   const persistedQueues = [];
   const claimedQueues = [];
   const windowThemeRequests = [];
+  const approvalResponses = [];
   let clipboardPasteRequests = 0;
   let pendingSteerResolve = null;
   ipcMain.handle("app:bootstrap", () => ({
@@ -291,6 +293,10 @@ async function run() {
   ipcMain.handle("codex:interrupt", (_event, input) => {
     interruptRequests.push(structuredClone(input));
     return {};
+  });
+  ipcMain.handle("codex:approval-response", (_event, input) => {
+    approvalResponses.push(structuredClone(input));
+    return { resolved: true, alreadyResolved: false };
   });
   ipcMain.handle("app:copy-text", (_event, value) => {
     copiedTexts.push(String(value || ""));
@@ -483,6 +489,32 @@ async function run() {
   })()`);
   await new Promise((resolve) => setTimeout(resolve, 250));
   fs.writeFileSync(conversationScreenshot, (await capturePageWithRetry(window)).toPNG());
+  window.webContents.send("codex:approval", {
+    id: "notification-approval-fixture",
+    method: "item/permissions/requestApproval",
+    params: {
+      threadId: "vue-conversation-fixture",
+      permissions: { network: { hosts: ["example.test"] } },
+    },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  const notificationApprovalSync = await window.webContents.executeJavaScript(`(() => ({
+    visibleBeforeResolution: !document.querySelector('#approval-banner').classList.contains('hidden'),
+    activeBeforeResolution: state.activeApproval?.id || null,
+  }))()`);
+  window.webContents.send("codex:event", {
+    method: "serverRequest/resolved",
+    params: { requestId: "notification-approval-fixture", source: "notification:accept" },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  Object.assign(
+    notificationApprovalSync,
+    await window.webContents.executeJavaScript(`(() => ({
+      hiddenAfterResolution: document.querySelector('#approval-banner').classList.contains('hidden'),
+      activeAfterResolution: state.activeApproval?.id || null,
+    }))()`),
+    { rendererResponses: approvalResponses.length },
+  );
   const conversation = await window.webContents.executeJavaScript(`(() => {
     const userBubble = document.querySelector('.message.user .message-body');
     const agentHeader = document.querySelector('.message.agent .message-header');
@@ -1176,6 +1208,7 @@ async function run() {
   }))()`);
 
   assert.equal(desktop.vueMounted, true);
+  assert.equal(desktop.wordmarkIconLoaded, true);
   assert.equal(desktop.stateExposed, true);
   assert.equal(desktop.pending, false);
   assert.equal(desktop.providerDialogVisible, true);
@@ -1188,10 +1221,16 @@ async function run() {
   assert.equal(desktop.providerActionLayout.length, 3);
   assert.equal(desktop.providerActionLayout.every((row) => row.actions === 1 && !row.overlaps), true);
   assert.equal(compact.vueMounted, true);
+  assert.equal(compact.wordmarkIconLoaded, true);
   assert.equal(compact.bodyOverflow, false);
   assert.equal(compact.providerActionLayout.every((row) => row.actions === 1 && !row.overlaps), true);
   assert.equal(compact.fatal, null);
   assert.equal(conversation.messages, 2);
+  assert.equal(notificationApprovalSync.visibleBeforeResolution, true);
+  assert.equal(notificationApprovalSync.activeBeforeResolution, "notification-approval-fixture");
+  assert.equal(notificationApprovalSync.hiddenAfterResolution, true);
+  assert.equal(notificationApprovalSync.activeAfterResolution, null);
+  assert.equal(notificationApprovalSync.rendererResponses, 0);
   assert.equal(conversation.agentHeader, "DeepSeek");
   assert.notEqual(conversation.userBubbleColor, "rgb(255, 255, 255)");
   assert.ok(conversation.composerWidth >= 600);
@@ -1410,6 +1449,7 @@ async function run() {
     desktop,
     compact,
     conversation,
+    notificationApprovalSync,
     messageFeatures,
     deliveryModes,
     restartRecovery,

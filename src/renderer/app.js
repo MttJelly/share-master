@@ -828,6 +828,10 @@ function insertCommand(command) {
   const selectionEnd = input.selectionEnd ?? selectionStart;
   let start = state.skillQueryStart;
   let prefix = "";
+  if (start === null && selectionStart === selectionEnd) {
+    const pendingCommand = input.value.slice(0, selectionStart).match(/(?:^|\s)([/\$])[\w-]*$/);
+    if (pendingCommand) start = input.value.slice(0, selectionStart).lastIndexOf(pendingCommand[1]);
+  }
   if (start === null || start > selectionStart) {
     start = selectionStart;
     if (start > 0 && !/\s/.test(input.value[start - 1])) prefix = " ";
