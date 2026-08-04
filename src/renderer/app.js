@@ -2126,10 +2126,15 @@ function renderItem(item, turnId = null) {
     }, turnId);
   }
   if (item.type === "reasoning") {
-    const summary = (item.summary || [])
-      .map((part) => typeof part === "string" ? part : part?.text || "")
-      .filter(Boolean)
-      .join("\n");
+    const summaryParts = (item.summary || [])
+      .map((part) => ({
+        type: typeof part === "string" ? null : part?.type || null,
+        text: typeof part === "string" ? part : part?.text || "",
+      }))
+      .filter((part) => part.text);
+    const isStreamedCompatibleSummary = summaryParts.length > 1
+      && summaryParts.every((part) => part.type === "summary_text");
+    const summary = summaryParts.map((part) => part.text).join(isStreamedCompatibleSummary ? "" : "\n\n");
     if (!summary) return null;
     return appendActivity({
       ...item,
@@ -2412,12 +2417,16 @@ function queuedMessageSteerKey(threadId, clientUserMessageId) {
   return `${threadId}:${clientUserMessageId}`;
 }
 
+function providerSupportsQueuedGuide() {
+  return ["codex", "openai-compatible", "claude"].includes(state.providerEngine);
+}
+
 function queuedMessageCanSteer(threadId, message) {
   const run = state.runningThreads.get(threadId);
   return Boolean(
     state.connected
     && !state.submitting
-    && state.providerEngine === "codex"
+    && providerSupportsQueuedGuide()
     && run?.turnId
     && !state.steeringThreads.has(threadId)
     && !state.queueDispatchingThreads.has(threadId)
@@ -2549,10 +2558,12 @@ function refreshQueuedSteerButtons(threadId = state.activeThread?.id) {
   const messages = new Map(queue.map((message) => [message.clientUserMessageId, message]));
   for (const button of elements.messageQueuePanel?.querySelectorAll(".queued-steer-button") || []) {
     const message = messages.get(button.dataset.clientUserMessageId);
-    const visible = Boolean(message && state.providerEngine === "codex" && state.runningThreads.get(threadId)?.turnId);
+    const visible = Boolean(message && providerSupportsQueuedGuide() && state.runningThreads.get(threadId)?.turnId);
     button.classList.toggle("hidden", !visible);
     button.disabled = !visible || !queuedMessageCanSteer(threadId, message);
-    button.title = button.disabled ? "当前回复结束后将自动发送" : "立即引导当前回复";
+    button.title = button.disabled
+      ? "当前回复结束后将自动发送"
+      : state.providerEngine === "codex" ? "立即引导当前回复" : "停止当前回复并立即按这条消息继续";
     button.setAttribute("aria-label", button.title);
   }
   const busy = queueThreadBusy(threadId);
@@ -2941,6 +2952,16 @@ async function persistMessageQueue(threadId) {
   }
 }
 
+async function waitForTurnToStop(threadId, turnId, timeoutMs = 4000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const currentTurnId = state.runningThreads.get(threadId)?.turnId || null;
+    if (!currentTurnId || currentTurnId !== turnId) return true;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return false;
+}
+
 async function steerQueuedMessage(threadId, clientUserMessageId) {
   const queue = state.messageQueues.get(threadId) || [];
   const message = queue.find((item) => item.clientUserMessageId === clientUserMessageId);
@@ -2957,6 +2978,7 @@ async function steerQueuedMessage(threadId, clientUserMessageId) {
   }
   const steerKey = queuedMessageSteerKey(threadId, clientUserMessageId);
   const expectedTurnId = run.turnId;
+  const useNativeSteer = state.providerEngine === "codex";
   const node = threadId === state.activeThread?.id
     ? appendPendingUserMessage(
       message.displayText || message.text || "",
@@ -2974,20 +2996,31 @@ async function steerQueuedMessage(threadId, clientUserMessageId) {
   renderMessageQueuePanel(threadId);
   let inactive = false;
   let steered = false;
+  let removedIndex = -1;
   try {
-    const result = await api.steerTurn({ ...message, expectedTurnId });
-    inactive = Boolean(result?.inactive || result?.steered === false);
-    if (inactive) {
-      node?.remove();
-      showDiagnostic("当前回复已结束，消息继续按队列发送。", false);
-      return;
+    if (useNativeSteer) {
+      const result = await api.steerTurn({ ...message, expectedTurnId });
+      inactive = Boolean(result?.inactive || result?.steered === false);
+      if (inactive) {
+        node?.remove();
+        showDiagnostic("当前回复已结束，消息继续按队列发送。", false);
+        return;
+      }
+    } else {
+      await api.interruptTurn({ threadId, turnId: expectedTurnId });
+      const stopped = await waitForTurnToStop(threadId, expectedTurnId);
+      if (!stopped) throw new Error("停止当前回复超时，请稍后重试。");
     }
     const currentQueue = state.messageQueues.get(threadId) || [];
     const currentIndex = currentQueue.findIndex((item) => item.clientUserMessageId === clientUserMessageId);
-    if (currentIndex >= 0) currentQueue.splice(currentIndex, 1);
+    if (currentIndex >= 0) {
+      removedIndex = currentIndex;
+      currentQueue.splice(currentIndex, 1);
+    }
     if (currentQueue.length) state.messageQueues.set(threadId, currentQueue);
     else state.messageQueues.delete(threadId);
     await persistMessageQueue(threadId);
+    if (!useNativeSteer) await beginTurn({ ...message, threadId });
     steered = true;
     if (status) status.className = "message-delivery-state delivery-steered";
     if (statusLabel) statusLabel.textContent = "已引导";
@@ -2995,6 +3028,14 @@ async function steerQueuedMessage(threadId, clientUserMessageId) {
     if (status) setTimeout(() => status.remove(), 1800);
     showDiagnostic("已引导当前回复。", false);
   } catch (error) {
+    if (removedIndex >= 0 && !steered) {
+      const currentQueue = state.messageQueues.get(threadId) || [];
+      if (!currentQueue.some((item) => item.clientUserMessageId === clientUserMessageId)) {
+        currentQueue.splice(Math.min(removedIndex, currentQueue.length), 0, message);
+        state.messageQueues.set(threadId, currentQueue);
+        await persistMessageQueue(threadId);
+      }
+    }
     node?.remove();
     showDiagnostic(`引导发送失败，消息仍在队列中：${error.message}`, true);
   } finally {
@@ -3357,7 +3398,7 @@ function syncComposerState() {
   elements.input.placeholder = state.activeArchived
     ? "当前会话为只读"
     : state.openingThread ? "正在加载会话"
-    : state.running ? "继续输入，Enter 排队；可在消息右侧点击“引导”"
+    : state.running ? "继续输入，Enter 排队；可在队列中点击“引导”"
     : hasRecoveredQueue ? "存在恢复的待发送消息，可点击队列按钮继续"
     : state.providerType === "claude"
       ? "给 Claude 发送消息"

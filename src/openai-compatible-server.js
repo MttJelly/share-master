@@ -60,6 +60,18 @@ function assistantMessageText(item) {
   return String(item?.text || "");
 }
 
+function appendReasoningSummaryDelta(item, delta) {
+  const text = String(delta || "");
+  if (!text) return;
+  const current = item.summary.at(-1);
+  if (current?.type === "summary_text") current.text = `${current.text || ""}${text}`;
+  else item.summary.push({ type: "summary_text", text });
+}
+
+function reasoningSummaryLength(item) {
+  return (item?.summary || []).reduce((total, part) => total + String(part?.text || part || "").length, 0);
+}
+
 function trimMessages(messages, maxCharacters = 100000) {
   const selected = [];
   let characters = 0;
@@ -579,7 +591,7 @@ class OpenAICompatibleServer extends EventEmitter {
     for (let index = 0; index < providers.length; index += 1) {
       const provider = providers[index];
       const contentLength = assistantItem.text.length;
-      const reasoningLength = reasoningItem.summary.length;
+      const reasoningLength = reasoningSummaryLength(reasoningItem);
       const startedAt = Date.now();
       const isPrimary = provider.id === this.provider.id;
       turn.actualProviderId = provider.id;
@@ -625,7 +637,7 @@ class OpenAICompatibleServer extends EventEmitter {
         const retryable = this.retryableProviderError(error);
         this.markProviderFailure(provider.id, error, retryable);
         this.emitHealth(provider.id, thread.id);
-        const emittedPartial = assistantItem.text.length > contentLength || reasoningItem.summary.length > reasoningLength;
+        const emittedPartial = assistantItem.text.length > contentLength || reasoningSummaryLength(reasoningItem) > reasoningLength;
         if (!retryable || emittedPartial || index === providers.length - 1) throw error;
       }
     }
@@ -658,7 +670,7 @@ class OpenAICompatibleServer extends EventEmitter {
       const reasoning = message.reasoning_content || message.reasoning || "";
       const content = typeof message.content === "string" ? message.content : "";
       if (reasoning) {
-        reasoningItem.summary.push({ type: "summary_text", text: reasoning });
+        appendReasoningSummaryDelta(reasoningItem, reasoning);
         this.emit("notification", {
           method: "item/reasoning/summaryTextDelta",
           params: { threadId: thread.id, turnId: turn.id, itemId: reasoningItem.id, delta: reasoning },
@@ -687,7 +699,7 @@ class OpenAICompatibleServer extends EventEmitter {
         const delta = choice.delta || {};
         const reasoning = delta.reasoning_content || delta.reasoning || "";
         if (reasoning) {
-          reasoningItem.summary.push({ type: "summary_text", text: reasoning });
+          appendReasoningSummaryDelta(reasoningItem, reasoning);
           this.emit("notification", {
             method: "item/reasoning/summaryTextDelta",
             params: { threadId: thread.id, turnId: turn.id, itemId: reasoningItem.id, delta: reasoning },

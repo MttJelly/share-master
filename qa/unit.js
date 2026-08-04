@@ -1014,6 +1014,7 @@ async function testOpenAICompatibleStreaming() {
     const stream = new ReadableStream({
       start(controller) {
         controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"reasoning_content":"先分析"}}]}\n\n'));
+        controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"reasoning_content":"再回答"}}]}\n\n'));
         controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"你好"}}]}\n\n'));
         controller.enqueue(encoder.encode('data: {"choices":[],"usage":{"prompt_tokens":12,"completion_tokens":7,"total_tokens":19}}\n\n'));
         controller.enqueue(encoder.encode("data: [DONE]\n\n"));
@@ -1048,7 +1049,9 @@ async function testOpenAICompatibleStreaming() {
     assert.deepEqual(requests[0].body.messages, [{ role: "user", content: "测试消息" }]);
     const read = await server.readThread(created.thread.id);
     assert.equal(read.thread.turns[0].items.find((item) => item.type === "agentMessage").text, "你好");
-    assert.equal(read.thread.turns[0].items.find((item) => item.type === "reasoning").summary[0].text, "先分析");
+    const reasoning = read.thread.turns[0].items.find((item) => item.type === "reasoning");
+    assert.equal(reasoning.summary.length, 1);
+    assert.equal(reasoning.summary[0].text, "先分析再回答");
     const secondCompleted = new Promise((resolve) => {
       const listener = (message) => {
         if (message.method !== "turn/completed") return;

@@ -425,7 +425,11 @@ async function run() {
         status: 'completed',
         items: [
           { id: 'user-1', type: 'userMessage', content: [{ type: 'text', text: '请分析当前界面，并给出可以立即实施的改进。' }] },
-          { id: 'reasoning-1', type: 'reasoning', summary: [{ text: '先检查信息层级、对比度和高频操作路径，再确定视觉调整。这个摘要故意写得更长，用于确认 DeepSeek、Codex、Claude 以及工具执行输出等过程卡片都能使用完整的会话宽度，而不会被挤成狭窄的小框。\\n\\n第二段继续验证长文本换行、可读行高和暗色主题对比度。' }] },
+          { id: 'reasoning-1', type: 'reasoning', summary: [
+            { type: 'summary_text', text: '先检查信息层级、' },
+            { type: 'summary_text', text: '对比度和高频操作路径，再确定视觉调整。这个摘要故意写得更长，用于确认 DeepSeek、Codex、Claude 以及工具执行输出等过程卡片都能使用完整的会话宽度，而不会被挤成狭窄的小框。' },
+            { type: 'summary_text', text: '\\n\\n第二段继续验证长文本换行、可读行高和暗色主题对比度。' },
+          ] },
           { id: 'agent-1', type: 'agentMessage', text: '## 优化重点\\n\\n- 收紧侧栏层级，让 Project 与会话更容易扫描。\\n- 保持输入区稳定，模型切换不应改变布局。\\n- 对运行中、已完成和错误状态使用明确但克制的提示。\\n\\n这些调整不会改变现有聊天记录或模型配置。' }
         ]
       }, {
@@ -466,6 +470,7 @@ async function run() {
       activityWidth: Math.round(activity?.getBoundingClientRect().width || 0),
       reasoningOutputWidth: Math.round(reasoningOutput?.getBoundingClientRect().width || 0),
       reasoningLineHeight: reasoningOutput ? parseFloat(getComputedStyle(reasoningOutput).lineHeight) : 0,
+      reasoningText: reasoningOutput?.textContent || '',
       thinkingVisible: Boolean(document.querySelector('.thinking-indicator')),
       thinkingText: document.querySelector('.thinking-indicator')?.textContent.replace(/\s+/g, ' ').trim() || '',
       thinkingIsLast: document.querySelector('#chat-view').lastElementChild?.classList.contains('thinking-indicator') || false,
@@ -555,6 +560,7 @@ async function run() {
       moreButtons: queuePanel.querySelectorAll('.queued-prompt-more > summary').length,
       queuePanelAboveInput: queuePanel.getBoundingClientRect().bottom <= input.getBoundingClientRect().top + 1,
       steerButtonsBeforeClick: queuePanel.querySelectorAll('.queued-steer-button').length,
+      compatibleSteerVisible: [...queuePanel.querySelectorAll('.queued-steer-button')].every((button) => !button.classList.contains('hidden')),
       queuedMessagesInChat: queuedBeforeSteer.filter((message) => document.querySelector('[data-message-id="' + CSS.escape(message.clientUserMessageId) + '"]')).length,
       inputAfterQueue: input.value,
     };
@@ -589,6 +595,48 @@ async function run() {
   deliveryModes.inactiveStartedText = startTurnRequests.at(-1)?.displayText || '';
   deliveryModes.persistedQueueWrites = persistedQueues.length;
   deliveryModes.persistedQueueLength = persistedQueues.at(-1)?.messages?.length || 0;
+  const compatibleStartOffset = startTurnRequests.length;
+  const compatibleInterruptOffset = interruptRequests.length;
+  const compatibleButton = await window.webContents.executeJavaScript(`(() => {
+    const threadId = state.activeThread.id;
+    setThreadRunning(threadId, false);
+    setThreadRunning(threadId, true, 'turn-compatible-guide');
+    state.providerEngine = 'openai-compatible';
+    state.messageQueues.set(threadId, [{
+      threadId,
+      text: '立即采用新的要求',
+      displayText: '立即采用新的要求',
+      clientUserMessageId: 'compatible-guide',
+      providerId: state.provider,
+      queuedAt: 1,
+    }]);
+    renderMessageQueuePanel(threadId);
+    const button = document.querySelector('[data-client-user-message-id="compatible-guide"] .queued-steer-button');
+    const snapshot = {
+      visible: !button.classList.contains('hidden'),
+      title: button.title,
+    };
+    button.click();
+    return snapshot;
+  })()`);
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  await window.webContents.executeJavaScript(`handleEvent({
+    method: 'turn/completed',
+    params: { threadId: state.activeThread.id, turn: { id: 'turn-compatible-guide', status: 'interrupted' } }
+  })`);
+  await new Promise((resolve) => setTimeout(resolve, 160));
+  const compatibleGuide = await window.webContents.executeJavaScript(`(() => {
+    const result = {
+      remaining: (state.messageQueues.get(state.activeThread.id) || []).length,
+      runningTurnId: state.runningThreads.get(state.activeThread.id)?.turnId || null,
+      deliveryLabels: [...document.querySelectorAll('.message-delivery-state')].map((node) => node.textContent),
+    };
+    setThreadRunning(state.activeThread.id, false);
+    return result;
+  })()`);
+  compatibleGuide.button = compatibleButton;
+  compatibleGuide.started = startTurnRequests.slice(compatibleStartOffset).map((request) => request.displayText);
+  compatibleGuide.interrupted = interruptRequests.slice(compatibleInterruptOffset).map((request) => request.turnId);
   const raceStartTurnOffset = startTurnRequests.length;
   await window.webContents.executeJavaScript(`(() => {
     const threadId = state.activeThread.id;
@@ -1013,6 +1061,8 @@ async function run() {
   assert.ok(conversation.activityWidth >= 700, `Reasoning activity remained too narrow: ${JSON.stringify(conversation)}`);
   assert.ok(conversation.reasoningOutputWidth >= 650, `Reasoning output remained too narrow: ${JSON.stringify(conversation)}`);
   assert.ok(conversation.reasoningLineHeight >= 19);
+  assert.match(conversation.reasoningText, /^先检查信息层级、对比度/);
+  assert.doesNotMatch(conversation.reasoningText, /先检查信息层级、\s+对比度/);
   assert.equal(conversation.thinkingVisible, true);
   assert.match(conversation.thinkingText, /正在思考/);
   assert.equal(conversation.thinkingIsLast, true);
@@ -1025,7 +1075,7 @@ async function run() {
   assert.equal(connectRequests.length, 1);
   assert.equal(connectRequests[0], "deepseek-fixture");
   assert.equal(startThreadRequests.length, 0);
-  assert.equal(startTurnRequests.length, 2);
+  assert.equal(startTurnRequests.length, 3);
   assert.equal(reconnect.connected, true);
   assert.equal(reconnect.reconnecting, false);
   assert.equal(reconnect.running, false);
@@ -1056,6 +1106,7 @@ async function run() {
   assert.equal(deliveryModes.firstQueuedText, "等当前回复完成后再执行这一条");
   assert.equal(deliveryModes.secondQueuedText, "竞态情况下也不能丢失的消息");
   assert.equal(deliveryModes.steerButtonsBeforeClick, 2);
+  assert.equal(deliveryModes.compatibleSteerVisible, true);
   assert.equal(deliveryModes.queuePanelVisible, true);
   assert.equal(deliveryModes.queuePanelItems, 2);
   assert.equal(deliveryModes.queueIcons, 2);
@@ -1079,6 +1130,13 @@ async function run() {
   assert.ok(deliveryModes.deliveryLabels.some((label) => label.includes("已引导")));
   assert.ok(deliveryModes.actionTopDelta <= 1);
   assert.equal(deliveryModes.footerOverflow, false);
+  assert.equal(compatibleGuide.button.visible, true);
+  assert.match(compatibleGuide.button.title, /停止当前回复并立即/);
+  assert.deepEqual(compatibleGuide.interrupted, ["turn-compatible-guide"]);
+  assert.deepEqual(compatibleGuide.started, ["立即采用新的要求"]);
+  assert.equal(compatibleGuide.remaining, 0);
+  assert.equal(compatibleGuide.runningTurnId, "unexpected-reconnect-turn");
+  assert.ok(compatibleGuide.deliveryLabels.some((label) => label.includes("已引导")));
   assert.equal(steerRace.startsWhilePending, 0);
   assert.deepEqual(steerRace.startedAfterResolve, ["只发送一次的下一条"]);
   assert.deepEqual(steerRace.remaining, []);
