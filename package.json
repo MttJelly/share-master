@@ -1,7 +1,7 @@
 {
   "name": "share-master",
   "productName": "Share Master",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "author": "Share Master",
   "private": true,
   "description": "Share Master: a multi-account, multi-provider desktop client with shared local conversations.",

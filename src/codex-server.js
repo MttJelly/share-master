@@ -178,11 +178,7 @@ class CodexServer extends EventEmitter {
     this.lines.on("line", (line) => this.handleLine(line));
     this.process.stderr.on("data", (chunk) => {
       const text = normalizeDiagnostic(chunk);
-      if (text) {
-        this.diagnostics.push(text);
-        this.diagnostics = this.diagnostics.slice(-5);
-        this.emit("diagnostic", text);
-      }
+      if (text) this.recordDiagnostic(text);
     });
     this.process.on("error", (error) => this.failAll(error));
     this.process.on("exit", (code) => {
@@ -200,13 +196,21 @@ class CodexServer extends EventEmitter {
     this.ready = true;
   }
 
+  recordDiagnostic(value) {
+    const text = normalizeDiagnostic(value);
+    if (!text) return;
+    this.diagnostics.push(text);
+    this.diagnostics = this.diagnostics.slice(-5);
+    this.emit("server-log", text);
+  }
+
   handleLine(line) {
     let message;
     try {
       message = JSON.parse(line);
     } catch {
       const diagnostic = normalizeDiagnostic(line);
-      if (diagnostic) this.emit("diagnostic", diagnostic);
+      if (diagnostic) this.recordDiagnostic(diagnostic);
       return;
     }
     if (message.id !== undefined && !message.method) {

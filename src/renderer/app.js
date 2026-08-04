@@ -120,10 +120,11 @@ window.shareMasterState = state;
 
 const INITIAL_VISIBLE_TURNS = 40;
 const EARLIER_TURN_BATCH = 40;
-const STREAM_RENDER_INTERVAL_MS = 48;
-const COMPOSER_ACTIVITY_WINDOW_MS = 180;
+const STREAM_RENDER_INTERVAL_MS = 80;
+const COMPOSER_ACTIVITY_WINDOW_MS = 600;
 const pendingAgentStreamRenders = new Map();
 const pendingActivityStreamDeltas = new Map();
+const streamTextChunks = new WeakMap();
 let streamRenderTimer = null;
 let scrollFrame = null;
 let composerInputFrame = null;
@@ -2838,9 +2839,16 @@ function appendMessage(role, text, id = crypto.randomUUID(), phase = null, sourc
     target.appendChild(node);
   }
   const body = node.querySelector(".message-body");
-  if (role === "agent" && streaming) body.textContent = String(text || "");
-  else body.innerHTML = role === "agent" ? renderMarkdown(text) : `<p>${escapeHtml(text).replaceAll("\n", "<br>")}</p>`;
-  node.dataset.rawText = String(text || "");
+  if (role === "agent" && streaming) {
+    const initialText = String(text || "");
+    body.textContent = initialText;
+    streamTextChunks.set(node, initialText ? [initialText] : []);
+    delete node.dataset.rawText;
+  } else {
+    body.innerHTML = role === "agent" ? renderMarkdown(text) : `<p>${escapeHtml(text).replaceAll("\n", "<br>")}</p>`;
+    node.dataset.rawText = String(text || "");
+    streamTextChunks.delete(node);
+  }
   node.classList.toggle("streaming", role === "agent" && streaming);
   if (role === "agent" && streaming) {
     node.setAttribute("aria-busy", "true");
@@ -2923,9 +2931,38 @@ function renderActivityDelta(itemId, turnId, label, delta, icon = "terminal") {
     output.className = "activity-output";
     row.appendChild(output);
   }
-  output.textContent += delta || "";
+  appendTextDelta(output, delta);
   if (!row.querySelector("svg")) row.insertAdjacentHTML("afterbegin", `<span data-lucide="${icon}"></span>`);
-  scrollToBottom();
+}
+
+function appendTextDelta(node, value) {
+  const text = String(value || "");
+  if (!text) return;
+  const last = node.lastChild;
+  if (last?.nodeType === Node.TEXT_NODE) last.appendData(text);
+  else node.append(document.createTextNode(text));
+}
+
+function streamingText(node) {
+  const chunks = streamTextChunks.get(node);
+  return chunks ? chunks.join("") : node.dataset.rawText || "";
+}
+
+function finalizeStreamingNode(node) {
+  const body = node.querySelector(".message-body");
+  const text = streamingText(node);
+  node.dataset.rawText = text;
+  body.innerHTML = renderMarkdown(text);
+  streamTextChunks.delete(node);
+  node.classList.remove("streaming");
+  node.removeAttribute("aria-busy");
+  ensureMessageActions(node, "agent");
+}
+
+function shouldAutoScrollStream() {
+  if (performance.now() - lastComposerInputAt < COMPOSER_ACTIVITY_WINDOW_MS) return false;
+  const gap = elements.chat.scrollHeight - elements.chat.scrollTop - elements.chat.clientHeight;
+  return elements.chat.clientHeight <= 0 || gap < 420;
 }
 
 function flushPendingStreamUpdates(itemId = null, finalize = false) {
@@ -2933,29 +2970,32 @@ function flushPendingStreamUpdates(itemId = null, finalize = false) {
     clearTimeout(streamRenderTimer);
     streamRenderTimer = null;
   }
+  const shouldScroll = shouldAutoScrollStream();
+  const finalizedNodes = new Set();
   for (const [id, pending] of [...pendingAgentStreamRenders]) {
     if (itemId !== null && id !== itemId) continue;
     pendingAgentStreamRenders.delete(id);
     if (!pending.node.isConnected) continue;
     const body = pending.node.querySelector(".message-body");
-    if (finalize) body.innerHTML = renderMarkdown(pending.node.dataset.rawText || "");
-    else if (pending.delta) body.append(document.createTextNode(pending.delta));
+    if (finalize) {
+      finalizeStreamingNode(pending.node);
+      finalizedNodes.add(pending.node);
+    } else {
+      appendTextDelta(body, pending.deltas.join(""));
+    }
   }
   for (const [id, pending] of [...pendingActivityStreamDeltas]) {
     if (itemId !== null && id !== itemId) continue;
     pendingActivityStreamDeltas.delete(id);
     if (pending.threadId && pending.threadId !== state.activeThread?.id) continue;
-    renderActivityDelta(id, pending.turnId, pending.label, pending.delta, pending.icon);
+    renderActivityDelta(id, pending.turnId, pending.label, pending.deltas.join(""), pending.icon);
   }
   if (finalize) {
     for (const node of elements.chat.querySelectorAll(".message.agent.streaming")) {
-      node.querySelector(".message-body").innerHTML = renderMarkdown(node.dataset.rawText || "");
-      node.classList.remove("streaming");
-      node.removeAttribute("aria-busy");
-      ensureMessageActions(node, "agent");
+      if (!finalizedNodes.has(node)) finalizeStreamingNode(node);
     }
   }
-  scrollToBottom();
+  if (shouldScroll) scrollToBottom();
 }
 
 function scheduleStreamUpdateFlush() {
@@ -2973,22 +3013,26 @@ function appendAgentMessageDelta(itemId, delta) {
     node.setAttribute("aria-busy", "true");
     node.querySelector(".message-actions")?.remove();
   }
-  const text = `${node.dataset.rawText || ""}${delta || ""}`;
-  node.dataset.rawText = text;
-  const pending = pendingAgentStreamRenders.get(itemId);
-  pendingAgentStreamRenders.set(itemId, { node, delta: `${pending?.delta || ""}${delta || ""}` });
+  const value = String(delta || "");
+  if (!streamTextChunks.has(node)) streamTextChunks.set(node, node.dataset.rawText ? [node.dataset.rawText] : []);
+  if (value) streamTextChunks.get(node).push(value);
+  const pending = pendingAgentStreamRenders.get(itemId) || { node, deltas: [] };
+  if (value) pending.deltas.push(value);
+  pendingAgentStreamRenders.set(itemId, pending);
   scheduleStreamUpdateFlush();
 }
 
 function appendActivityDelta(itemId, turnId, label, delta, icon = "terminal", threadId = state.activeThread?.id) {
-  const pending = pendingActivityStreamDeltas.get(itemId);
-  pendingActivityStreamDeltas.set(itemId, {
+  const pending = pendingActivityStreamDeltas.get(itemId) || {
     threadId,
     turnId,
     label,
     icon,
-    delta: `${pending?.delta || ""}${delta || ""}`,
-  });
+    deltas: [],
+  };
+  const value = String(delta || "");
+  if (value) pending.deltas.push(value);
+  pendingActivityStreamDeltas.set(itemId, pending);
   scheduleStreamUpdateFlush();
 }
 

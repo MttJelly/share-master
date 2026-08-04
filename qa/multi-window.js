@@ -58,6 +58,7 @@ const result = spawnSync(electron, [
 if (result.error) throw result.error;
 if (result.status !== 0) throw new Error(result.stderr || result.stdout || `Electron exited with ${result.status}.`);
 assert.doesNotMatch(result.stderr, /Error occurred in handler for 'provider:claude-models'/);
+assert.doesNotMatch(result.stderr, /Error occurred in handler/);
 const line = result.stdout.split(/\r?\n/).find((value) => value.startsWith('{"ok":true'));
 if (!line) throw new Error(`Multi-window result was not found.\n${result.stdout}\n${result.stderr}`);
 const summary = JSON.parse(line);

@@ -2,6 +2,19 @@
 
 本文件记录 Share Master 每个版本的用户可见变化。版本号遵循语义化版本；每次向 GitHub 推送产品更新前，必须先更新版本号和本文件。
 
+## [0.1.4] - 2026-08-04
+
+### 优化
+
+- 缓存流式事件的共享会话映射，避免回答期间按片段同步读取和解析配置文件。
+- 回答正文与思考摘要改为分块缓冲和增量文本更新，输入时暂停自动滚动布局，降低长会话输入卡顿和整机负载。
+
+### 修复
+
+- 底层 Codex 与 Claude 运行日志不再直接显示为用户错误弹层；真实失败仍通过会话状态和断线详情呈现。
+- 聊天连接、发送、引导和中断请求改用结构化 IPC 错误，避免 Electron 输出 `Error occurred in handler` 技术窗口。
+- 增加流式 DOM 写入和底层诊断隔离回归测试。
+
 ## [0.1.3] - 2026-08-04
 
 ### 修复
@@ -49,3 +62,4 @@
 [0.1.1]: https://github.com/MttJelly/share-master/compare/v0.1.0...v0.1.1
 [0.1.2]: https://github.com/MttJelly/share-master/compare/v0.1.1...v0.1.2
 [0.1.3]: https://github.com/MttJelly/share-master/compare/v0.1.2...v0.1.3
+[0.1.4]: https://github.com/MttJelly/share-master/compare/v0.1.3...v0.1.4

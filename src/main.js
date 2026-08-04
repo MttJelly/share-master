@@ -42,6 +42,7 @@ const pendingTurnDisplays = new Map();
 const pendingSteerDisplays = new Map();
 const pendingBranchCreations = new WeakMap();
 const providerRequestRuns = new WeakMap();
+const serverBranchLookups = new WeakMap();
 let conversationMirrorSync = null;
 let skillRefreshPromise = null;
 const INTERACTIVE_SERVER_REQUESTS = new Set([
@@ -69,6 +70,24 @@ const APPLICATION_ROOT = path.resolve(__dirname, "..");
 const DEFAULT_WORKSPACE = app.isPackaged ? os.homedir() : APPLICATION_ROOT;
 let applicationUpdateCheck = null;
 const localHistoryReader = createLocalHistoryReader({ homeDirectory: os.homedir() });
+
+function handleRendererIpc(channel, handler) {
+  ipcMain.handle(channel, async (...args) => {
+    try {
+      return await handler(...args);
+    } catch (error) {
+      return {
+        __shareMasterIpcError: {
+          message: String(error?.message || error || "未知错误").slice(0, 2000),
+          code: error?.code || null,
+          status: Number.isFinite(Number(error?.status)) ? Number(error.status) : null,
+          requestId: error?.requestId || null,
+          finishReason: error?.finishReason || null,
+        },
+      };
+    }
+  });
+}
 
 function loginItemOptions(openAtLogin = undefined) {
   if (app.isPackaged) {
@@ -983,6 +1002,35 @@ function currentProviderId(server) {
   return String(server?.provider?.id || "").trim();
 }
 
+function eventBranchForServer(server, nativeThreadId) {
+  const branchId = String(nativeThreadId || "").trim();
+  if (!branchId) return { logicalId: null, branch: null };
+  let lookup = serverBranchLookups.get(server);
+  if (!lookup) {
+    lookup = new Map();
+    serverBranchLookups.set(server, lookup);
+  }
+  if (lookup.has(branchId)) return lookup.get(branchId);
+  const providerId = currentProviderId(server);
+  const logicalId = providerStore.logicalThreadIdForBranch(providerId, branchId);
+  const value = {
+    logicalId,
+    branch: logicalId ? providerStore.threadBranch(logicalId, providerId) : null,
+  };
+  lookup.set(branchId, value);
+  return value;
+}
+
+function rememberEventBranch(server, logicalId, branch) {
+  if (!branch?.threadId) return;
+  let lookup = serverBranchLookups.get(server);
+  if (!lookup) {
+    lookup = new Map();
+    serverBranchLookups.set(server, lookup);
+  }
+  lookup.set(branch.threadId, { logicalId, branch: { ...branch } });
+}
+
 function logicalThreadId(server, nativeThreadId) {
   return providerStore.logicalThreadIdForBranch(currentProviderId(server), nativeThreadId)
     || providerStore.logicalThreadIdForAnyBranch(nativeThreadId)
@@ -1170,22 +1218,24 @@ function mappedServerMessage(server, message) {
     || message?.params?.thread?.id
     || null;
   if (!nativeId) return message;
-  const pendingKey = `${currentProviderId(server)}:${nativeId}`;
+  const providerId = currentProviderId(server);
+  const pendingKey = `${providerId}:${nativeId}`;
   const pending = pendingTurnDisplays.get(pendingKey) || null;
   const isUserItem = ["item/started", "item/completed"].includes(message.method)
     && message.params?.item?.type === "userMessage";
   const steerQueue = pendingSteerDisplays.get(pendingKey) || [];
   const pendingSteer = isUserItem ? steerQueue[0] || null : null;
   const pendingCreation = pendingBranchCreations.get(server) || null;
-  const logicalId = providerStore.logicalThreadIdForBranch(currentProviderId(server), nativeId)
+  const eventBranch = eventBranchForServer(server, nativeId);
+  const logicalId = eventBranch.logicalId
     || pendingSteer?.logicalId
     || pending?.logicalId
     || pendingCreation?.logicalId
     || null;
   if (!logicalId) return message;
-  const branch = providerStore.threadBranch(logicalId, currentProviderId(server));
+  const branch = eventBranch.logicalId === logicalId ? eventBranch.branch : null;
   if (message.method === "turn/completed") {
-    providerStore.touchThreadBranch(logicalId, currentProviderId(server));
+    providerStore.touchThreadBranch(logicalId, providerId);
     const turnId = message.params?.turn?.id;
     if (turnId) {
       providerStore.recordLogicalTurn(logicalId, {
@@ -1341,6 +1391,7 @@ async function startLogicalTurn(server, payload = {}) {
           firstClientUserMessageId: payload.clientUserMessageId,
           seeded: false,
         });
+        rememberEventBranch(server, logicalId, branch);
       } finally {
         pendingBranchCreations.delete(server);
       }
@@ -1371,6 +1422,7 @@ async function startLogicalTurn(server, payload = {}) {
       firstClientUserMessageId: payload.clientUserMessageId,
       seeded: false,
     });
+    rememberEventBranch(server, logicalId, branch);
   }
 
   const pendingKey = `${providerId}:${nativeThreadId}`;
@@ -1399,11 +1451,12 @@ async function startLogicalTurn(server, payload = {}) {
     throw error;
   }
   if (branch) {
-    providerStore.saveThreadBranch(logicalId, providerId, nativeThreadId, {
+    branch = providerStore.saveThreadBranch(logicalId, providerId, nativeThreadId, {
       ...branch,
       engine: branch.engine || serverEngine(server),
       seeded: true,
     });
+    rememberEventBranch(server, logicalId, branch);
   }
   if (result.turn?.id) {
     providerStore.recordLogicalTurn(logicalId, {
@@ -2462,7 +2515,7 @@ app.whenReady().then(async () => {
     return true;
   });
 
-  ipcMain.handle("codex:connect", async (event, providerId) => {
+  handleRendererIpc("codex:connect", async (event, providerId) => {
     const sender = event.sender;
     const senderId = sender.id;
     const pendingAttempt = connectionAttempts.get(senderId);
@@ -2641,12 +2694,12 @@ app.whenReady().then(async () => {
     }
   });
 
-  ipcMain.handle("codex:list", (event, query) => sharedListThreads(
+  handleRendererIpc("codex:list", (event, query) => sharedListThreads(
     serverFor(event),
     query?.search,
     Boolean(query?.archived),
   ));
-  ipcMain.handle("codex:models", async (event) => {
+  handleRendererIpc("codex:models", async (event) => {
     const server = serverFor(event);
     if (server.provider.type !== "claude") {
       const response = await server.listModels();
@@ -2708,7 +2761,7 @@ app.whenReady().then(async () => {
     }
     return { data, nextCursor: null, warning: catalog.warning, status: catalog.status };
   });
-  ipcMain.handle("codex:skills", async (event, payload = {}) => {
+  handleRendererIpc("codex:skills", async (event, payload = {}) => {
     const server = serverFor(event);
     if (server.provider.engine === "claude") return { data: [], warning: "Claude 连接不使用 Codex Skills。" };
     if (server.provider.engine === "openai-compatible") {
@@ -2727,18 +2780,18 @@ app.whenReady().then(async () => {
       })),
     };
   });
-  ipcMain.handle("codex:read", async (event, threadId) => (
+  handleRendererIpc("codex:read", async (event, threadId) => (
     rendererThreadWindow(await sharedReadThread(serverFor(event), threadId))
   ));
-  ipcMain.handle("codex:search", (event, query) => searchSharedThreads(serverFor(event), query));
-  ipcMain.handle("codex:read-window", async (event, payload) => (
+  handleRendererIpc("codex:search", (event, query) => searchSharedThreads(serverFor(event), query));
+  handleRendererIpc("codex:read-window", async (event, payload) => (
     rendererThreadWindow(
       await sharedReadThread(serverFor(event), payload?.threadId),
       payload?.turnCount,
     )
   ));
-  ipcMain.handle("codex:account-status", (event) => accountSnapshot(serverFor(event)));
-  ipcMain.handle("codex:resume", async (event, payload) => {
+  handleRendererIpc("codex:account-status", (event) => accountSnapshot(serverFor(event)));
+  handleRendererIpc("codex:resume", async (event, payload) => {
     const server = serverFor(event);
     try {
       return rendererThreadWindow(await resumeLogicalThread(server, payload));
@@ -2746,26 +2799,26 @@ app.whenReady().then(async () => {
       return rendererThreadWindow(await sharedReadThread(server, payload.threadId));
     }
   });
-  ipcMain.handle("codex:start-thread", (event, payload) => serverFor(event).startThread(
+  handleRendererIpc("codex:start-thread", (event, payload) => serverFor(event).startThread(
     payload?.cwd,
     payload?.model || null,
     { approvalMode: payload?.approvalMode || "ask" },
   ));
-  ipcMain.handle("codex:start-turn", (event, payload) => startLogicalTurn(serverFor(event), payload));
-  ipcMain.handle("codex:steer", (event, payload) => steerLogicalTurn(serverFor(event), payload));
-  ipcMain.handle("codex:rename", (event, payload) => {
+  handleRendererIpc("codex:start-turn", (event, payload) => startLogicalTurn(serverFor(event), payload));
+  handleRendererIpc("codex:steer", (event, payload) => steerLogicalTurn(serverFor(event), payload));
+  handleRendererIpc("codex:rename", (event, payload) => {
     const server = serverFor(event);
     const logicalId = logicalThreadId(server, payload.threadId);
     const nativeThreadId = branchForServer(server, logicalId)?.threadId || logicalId;
     return server.renameThread(nativeThreadId, payload.name);
   });
-  ipcMain.handle("codex:interrupt", (event, payload) => {
+  handleRendererIpc("codex:interrupt", (event, payload) => {
     const server = serverFor(event);
     const logicalId = logicalThreadId(server, payload.threadId);
     const nativeThreadId = branchForServer(server, logicalId)?.threadId || logicalId;
     return server.request("turn/interrupt", { ...payload, threadId: nativeThreadId });
   });
-  ipcMain.handle("codex:approval-response", (event, payload) => {
+  handleRendererIpc("codex:approval-response", (event, payload) => {
     serverFor(event).respond(payload.id, payload.result);
     return true;
   });

@@ -810,7 +810,6 @@ class OpenAICompatibleServer extends EventEmitter {
     thread.updatedAt = Math.floor(Date.now() / 1000);
     thread.recencyAt = thread.updatedAt;
     this.saveThread(thread);
-    if (error && status === "failed") this.emit("diagnostic", error.message);
     this.emit("notification", {
       method: "turn/completed",
       params: {

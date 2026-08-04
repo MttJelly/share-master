@@ -150,7 +150,15 @@ async function run() {
     state.renderedThreadId = state.activeThread.id;
     document.querySelector('#chat-view').replaceChildren();
     const started = performance.now();
-    for (let index = 0; index < 1200; index += 1) {
+    appendAgentMessageDelta('stream-agent-performance', 'token ');
+    appendActivityDelta('stream-reasoning-performance', 'stream-turn', '思考过程', 'step ', 'brain', state.activeThread.id);
+    const streamingNode = document.querySelector('[data-message-id="stream-agent-performance"]');
+    let rawTextAttributeWrites = 0;
+    const rawTextObserver = new MutationObserver((records) => {
+      rawTextAttributeWrites += records.filter((record) => record.attributeName === 'data-raw-text').length;
+    });
+    rawTextObserver.observe(streamingNode, { attributes: true, attributeFilter: ['data-raw-text'] });
+    for (let index = 1; index < 1200; index += 1) {
       appendAgentMessageDelta('stream-agent-performance', 'token ');
       appendActivityDelta('stream-reasoning-performance', 'stream-turn', '思考过程', 'step ', 'brain', state.activeThread.id);
     }
@@ -168,7 +176,8 @@ async function run() {
     }
     const inputDispatchMs = performance.now() - inputStarted;
     await new Promise((resolve) => setTimeout(resolve, STREAM_RENDER_INTERVAL_MS * 3));
-    const completedText = agent.dataset.rawText;
+    rawTextObserver.disconnect();
+    const completedText = streamingText(agent);
     handleEvent({
       method: 'item/completed',
       params: {
@@ -180,6 +189,7 @@ async function run() {
     return {
       dispatchMs,
       inputDispatchMs,
+      rawTextAttributeWrites,
       pendingBeforeFlush,
       pendingAfterFlush: pendingAgentStreamRenders.size + pendingActivityStreamDeltas.size,
       agentTextLength: agent?.textContent.length || 0,
@@ -194,6 +204,7 @@ async function run() {
   assert.equal(streaming.pendingAfterFlush, 0);
   assert.ok(streaming.agentTextLength >= 7200);
   assert.ok(streaming.reasoningTextLength >= 6000);
+  assert.ok(streaming.rawTextAttributeWrites <= 1, `Streaming rewrote cumulative DOM text ${streaming.rawTextAttributeWrites} times.`);
   assert.equal(streaming.actionsWhileStreaming, 0);
   assert.equal(streaming.actionsAfterCompletion, 3);
   assert.equal(streaming.streamingAfterCompletion, false);

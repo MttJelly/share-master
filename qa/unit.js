@@ -62,6 +62,19 @@ function testDiagnosticNormalization() {
   assert.equal(normalizeDiagnostic(diagnostic), "2026-07-26T09:42:17Z ERROR\nfailed to refresh models");
 }
 
+function testRawCodexDiagnosticsStayInternal() {
+  const server = new CodexServer(BASE_PROVIDERS.hexuan, {});
+  const visible = [];
+  const internal = [];
+  server.on("diagnostic", (message) => visible.push(message));
+  server.on("server-log", (message) => internal.push(message));
+  server.recordDiagnostic("2026-08-04T13:02:29Z ERROR custom tool output is missing");
+  server.handleLine("plain app-server stderr-like output");
+  assert.deepEqual(visible, []);
+  assert.equal(internal.length, 2);
+  assert.match(server.diagnostics.at(-1), /plain app-server/);
+}
+
 function testApplicationVersioning() {
   assert.equal(APP_VERSION, require("../package.json").version);
   assert.equal(USER_AGENT, `Share-Master/${APP_VERSION}`);
@@ -1868,6 +1881,7 @@ async function testInterruptedToolCallRepair() {
 Promise.resolve()
   .then(testOfficialCliArguments)
   .then(testDiagnosticNormalization)
+  .then(testRawCodexDiagnosticsStayInternal)
   .then(testApplicationVersioning)
   .then(testOfficialCredentialSeeding)
   .then(testIsolatedStoreDefaults)
@@ -1918,7 +1932,7 @@ Promise.resolve()
   .then(testOpenAICompatibleCompletionValidation)
   .then(testOpenAICompatibleInterrupt)
   .then(testOpenAICompatibleSharedCodexHistory)
-  .then(() => console.log(JSON.stringify({ ok: true, tests: 51 })))
+  .then(() => console.log(JSON.stringify({ ok: true, tests: 52 })))
   .catch((error) => {
     console.error(error.stack || error.message);
     process.exitCode = 1;

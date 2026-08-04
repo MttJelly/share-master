@@ -415,7 +415,13 @@ class ClaudeServer extends EventEmitter {
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     });
-    this.processes.set(threadId, { process: processHandle, turnId, requestedModel: selectedModel, completed: false });
+    this.processes.set(threadId, {
+      process: processHandle,
+      turnId,
+      requestedModel: selectedModel,
+      completed: false,
+      stderr: "",
+    });
     this.emit("notification", {
       method: "turn/started",
       params: { threadId, turn: { id: turnId, status: "inProgress" } },
@@ -433,13 +439,20 @@ class ClaudeServer extends EventEmitter {
     lines.on("line", (line) => this.handleStreamLine(threadId, turnId, line));
     processHandle.stderr.on("data", (chunk) => {
       const message = chunk.toString().trim();
-      if (message) this.emit("diagnostic", message);
+      const active = this.processes.get(threadId);
+      if (message && active) active.stderr = `${active.stderr || ""}\n${message}`.trim().slice(-2000);
     });
     processHandle.on("error", (error) => this.finishTurn(threadId, turnId, "failed", error.message));
     processHandle.on("exit", (code) => {
       const active = this.processes.get(threadId);
       if (active && !active.completed) {
-        this.finishTurn(threadId, turnId, code === 0 ? "completed" : "failed", code === 0 ? null : `Claude Code exited with code ${code}.`);
+        const detail = active.stderr ? `：${active.stderr}` : "";
+        this.finishTurn(
+          threadId,
+          turnId,
+          code === 0 ? "completed" : "failed",
+          code === 0 ? null : `Claude Code exited with code ${code}${detail}`,
+        );
       }
     });
     return Promise.resolve({ turn: { id: turnId, status: "inProgress" } });
@@ -508,7 +521,6 @@ class ClaudeServer extends EventEmitter {
     active.completed = true;
     this.processes.delete(threadId);
     this.pendingThreads.delete(threadId);
-    if (diagnostic) this.emit("diagnostic", diagnostic);
     this.emit("notification", {
       method: "turn/completed",
       params: {

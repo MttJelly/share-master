@@ -2,6 +2,17 @@ const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
 const pendingNavigation = [];
 const navigationHandlers = new Set();
+async function invokeRendererIpc(channel, ...args) {
+  const result = await ipcRenderer.invoke(channel, ...args);
+  const payload = result?.__shareMasterIpcError;
+  if (!payload) return result;
+  const error = new Error(payload.message || "Share Master 请求失败。");
+  if (payload.code) error.code = payload.code;
+  if (payload.status !== null && payload.status !== undefined) error.status = payload.status;
+  if (payload.requestId) error.requestId = payload.requestId;
+  if (payload.finishReason) error.finishReason = payload.finishReason;
+  throw error;
+}
 ipcRenderer.on("app:navigate", (_event, value) => {
   if (!navigationHandlers.size) pendingNavigation.push(value);
   else navigationHandlers.forEach((handler) => handler(value));
@@ -73,10 +84,10 @@ contextBridge.exposeInMainWorld("codexDeck", {
   setScheduledTaskEnabled: (input) => ipcRenderer.invoke("task:set-enabled", input),
   runScheduledTaskNow: (taskId) => ipcRenderer.invoke("task:run-now", taskId),
   openExternal: (target) => ipcRenderer.invoke("url:open", target),
-  connect: (provider) => ipcRenderer.invoke("codex:connect", provider),
-  listThreads: (query) => ipcRenderer.invoke("codex:list", query),
-  listModels: () => ipcRenderer.invoke("codex:models"),
-  listSkills: (payload) => ipcRenderer.invoke("codex:skills", payload),
+  connect: (provider) => invokeRendererIpc("codex:connect", provider),
+  listThreads: (query) => invokeRendererIpc("codex:list", query),
+  listModels: () => invokeRendererIpc("codex:models"),
+  listSkills: (payload) => invokeRendererIpc("codex:skills", payload),
   listExtensions: () => ipcRenderer.invoke("extension:list"),
   refreshSkills: () => ipcRenderer.invoke("extension:refresh-skills"),
   installSkill: (input) => ipcRenderer.invoke("extension:install-skill", input),
@@ -87,17 +98,17 @@ contextBridge.exposeInMainWorld("codexDeck", {
   saveMcp: (input) => ipcRenderer.invoke("mcp:save", input),
   removeMcp: (id) => ipcRenderer.invoke("mcp:remove", id),
   testMcp: (id) => ipcRenderer.invoke("mcp:test", id),
-  readThread: (threadId) => ipcRenderer.invoke("codex:read", threadId),
-  readThreadWindow: (payload) => ipcRenderer.invoke("codex:read-window", payload),
-  searchThreads: (query) => ipcRenderer.invoke("codex:search", query),
-  accountStatus: () => ipcRenderer.invoke("codex:account-status"),
-  resumeThread: (payload) => ipcRenderer.invoke("codex:resume", payload),
-  startThread: (payload) => ipcRenderer.invoke("codex:start-thread", payload),
-  startTurn: (payload) => ipcRenderer.invoke("codex:start-turn", payload),
-  steerTurn: (payload) => ipcRenderer.invoke("codex:steer", payload),
-  renameThread: (payload) => ipcRenderer.invoke("codex:rename", payload),
-  interruptTurn: (payload) => ipcRenderer.invoke("codex:interrupt", payload),
-  answerApproval: (payload) => ipcRenderer.invoke("codex:approval-response", payload),
+  readThread: (threadId) => invokeRendererIpc("codex:read", threadId),
+  readThreadWindow: (payload) => invokeRendererIpc("codex:read-window", payload),
+  searchThreads: (query) => invokeRendererIpc("codex:search", query),
+  accountStatus: () => invokeRendererIpc("codex:account-status"),
+  resumeThread: (payload) => invokeRendererIpc("codex:resume", payload),
+  startThread: (payload) => invokeRendererIpc("codex:start-thread", payload),
+  startTurn: (payload) => invokeRendererIpc("codex:start-turn", payload),
+  steerTurn: (payload) => invokeRendererIpc("codex:steer", payload),
+  renameThread: (payload) => invokeRendererIpc("codex:rename", payload),
+  interruptTurn: (payload) => invokeRendererIpc("codex:interrupt", payload),
+  answerApproval: (payload) => invokeRendererIpc("codex:approval-response", payload),
   onEvent: (handler) => ipcRenderer.on("codex:event", (_event, value) => handler(value)),
   onApproval: (handler) => ipcRenderer.on("codex:approval", (_event, value) => handler(value)),
   onDiagnostic: (handler) => ipcRenderer.on("codex:diagnostic", (_event, value) => handler(value)),
