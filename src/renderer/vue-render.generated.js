@@ -1893,20 +1893,30 @@ export function render(_ctx, _cache) {
             ]),
             _createElementVNode("span", { class: "update-copy" }, [
               _createElementVNode("strong", { id: "update-panel-title" }, "应用更新"),
-              _createElementVNode("small", { id: "update-status" }, "通过私有 GitHub 仓库安全检查，不会覆盖未提交改动")
+              _createElementVNode("small", { id: "update-status" }, "检查 GitHub Release，不会自动覆盖本地数据")
             ]),
-            _createElementVNode("button", {
-              id: "check-update-button",
-              class: "secondary-command",
-              type: "button"
-            }, [
-              _createElementVNode("span", { "data-lucide": "refresh-cw" }),
-              _createTextVNode("检查更新")
+            _createElementVNode("span", { class: "update-actions" }, [
+              _createElementVNode("button", {
+                id: "download-update-button",
+                class: "secondary-command hidden",
+                type: "button"
+              }, [
+                _createElementVNode("span", { "data-lucide": "external-link" }),
+                _createTextVNode("查看下载")
+              ]),
+              _createElementVNode("button", {
+                id: "check-update-button",
+                class: "secondary-command",
+                type: "button"
+              }, [
+                _createElementVNode("span", { "data-lucide": "refresh-cw" }),
+                _createTextVNode("检查更新")
+              ])
             ]),
             _createElementVNode("span", {
               id: "app-version",
               class: "version-badge"
-            }, "v0.1.0")
+            }, "v--")
           ]),
           _createElementVNode("div", { class: "form-actions" }, [
             _createElementVNode("span", {

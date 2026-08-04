@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { fileURLToPath } = require("node:url");
+const { APP_VERSION, LATEST_RELEASE_API, USER_AGENT, updateFromRelease } = require("./app-version");
 
 app.setName("Share Master");
 if (app.isPackaged) {
@@ -145,35 +146,12 @@ async function providerEnvironment() {
 async function checkApplicationUpdate() {
   if (applicationUpdateCheck) return applicationUpdateCheck;
   applicationUpdateCheck = (async () => {
-    if (!fs.existsSync(path.join(APPLICATION_ROOT, ".git"))) {
-      return { status: "unmanaged", checkedAt: Date.now(), message: "当前版本不是 Git 工作副本。" };
-    }
-    const runGit = async (...args) => (await execFilePromise("git.exe", args, {
-      cwd: APPLICATION_ROOT,
-      timeout: 60000,
-    })).stdout.trim();
     try {
-      const branch = await runGit("branch", "--show-current") || "main";
-      const currentRevision = await runGit("rev-parse", "HEAD");
-      const dirty = Boolean(await runGit("status", "--porcelain", "--untracked-files=normal"));
-      await runGit("fetch", "--quiet", "--no-tags", "origin", branch);
-      const remoteRevision = await runGit("rev-parse", `origin/${branch}`);
-      const counts = (await runGit("rev-list", "--left-right", "--count", `HEAD...origin/${branch}`))
-        .split(/\s+/).map((value) => Number(value) || 0);
-      const [ahead, behind] = counts;
-      const status = behind > 0 ? dirty ? "blocked" : "available" : ahead > 0 ? "ahead" : "current";
-      const messages = {
-        blocked: `发现 ${behind} 个远端更新，但本地有未提交改动，已禁止自动更新。`,
-        available: `发现 ${behind} 个远端更新。`,
-        ahead: `本地领先远端 ${ahead} 个提交。`,
-        current: "当前已是最新版本。",
-      };
-      return {
-        status, branch, dirty, ahead, behind, checkedAt: Date.now(),
-        currentRevision: currentRevision.slice(0, 10),
-        remoteRevision: remoteRevision.slice(0, 10),
-        message: messages[status],
-      };
+      const response = await net.fetch(LATEST_RELEASE_API, {
+        headers: { Accept: "application/vnd.github+json", "User-Agent": USER_AGENT },
+      });
+      if (!response.ok) throw new Error(`GitHub Release 请求失败（HTTP ${response.status}）`);
+      return { ...updateFromRelease(APP_VERSION, await response.json()), checkedAt: Date.now() };
     } catch (error) {
       return {
         status: "error",
@@ -261,6 +239,7 @@ function createWindow(providerId = null, projectRoot = null, threadId = null, pr
     minWidth: 900,
     minHeight: 640,
     backgroundColor: "#f5f6f7",
+    ...(!app.isPackaged ? { icon: path.join(APPLICATION_ROOT, "build", "icon.png") } : {}),
     titleBarStyle: "hidden",
     titleBarOverlay: { color: "#f5f6f7", symbolColor: "#1d2329", height: 42 },
     webPreferences: {
@@ -782,7 +761,10 @@ function refreshTrayMenu() {
 
 async function createTray() {
   if (tray || process.env.CODEX_DECK_QA_SCREENSHOT) return;
-  const icon = await app.getFileIcon(process.execPath, { size: "small" });
+  const developmentIcon = path.join(APPLICATION_ROOT, "build", "icon.png");
+  const icon = !app.isPackaged && fs.existsSync(developmentIcon)
+    ? nativeImage.createFromPath(developmentIcon).resize({ width: 32, height: 32, quality: "best" })
+    : await app.getFileIcon(process.execPath, { size: "small" });
   tray = new Tray(icon);
   tray.setToolTip("Share Master");
   tray.on("click", () => showAppWindow());

@@ -320,9 +320,15 @@ async function run() {
     result: { status: "success", direction: mode === "pull" ? "pull" : "push", message: "同步完成。" },
     conflict: false,
   }));
-  ipcMain.handle("app:settings", () => ({ launchAtLogin: false, closeToTray: true }));
+  ipcMain.handle("app:settings", () => ({ launchAtLogin: false, closeToTray: true, version: "0.1.2" }));
   ipcMain.handle("app:save-settings", (_event, input) => ({ ...input }));
-  ipcMain.handle("app:check-update", () => ({ status: "blocked", dirty: true, behind: 2, currentRevision: "1234567890", remoteRevision: "abcdef1234", message: "发现 2 个远端更新，但本地有未提交改动，已禁止自动更新。" }));
+  ipcMain.handle("app:check-update", () => ({
+    status: "available",
+    currentVersion: "0.1.2",
+    latestVersion: "0.2.0",
+    releaseUrl: "https://github.com/MttJelly/share-master/releases/tag/v0.2.0",
+    message: "发现新版本 v0.2.0，当前为 v0.1.2。",
+  }));
   ipcMain.handle("local-history:sources", () => ([
     { id: "codex", label: "Codex", description: "Codex CLI 与桌面客户端", available: true },
     { id: "claude", label: "Claude Code", description: "Claude Code 本地项目会话", available: true },
@@ -923,6 +929,8 @@ async function run() {
     return {
       updateState: document.querySelector('#update-status').dataset.state,
       updateMessage: document.querySelector('#update-status').textContent,
+      updateDownloadVisible: !document.querySelector('#download-update-button').classList.contains('hidden'),
+      versionLabel: document.querySelector('#app-version').textContent,
     };
   })()`));
   await window.webContents.executeJavaScript(`(() => {
@@ -1280,8 +1288,10 @@ async function run() {
   assert.equal(sync.dialogOverflow, false);
   assert.deepEqual({ visible: appSettings.visible, toggles: appSettings.toggles, closeToTray: appSettings.closeToTray }, { visible: true, toggles: 2, closeToTray: true });
   assert.equal(appSettings.bodyOverflow, false);
-  assert.equal(appSettings.updateState, "blocked");
-  assert.match(appSettings.updateMessage, /禁止自动更新/);
+  assert.equal(appSettings.updateState, "available");
+  assert.match(appSettings.updateMessage, /v0\.2\.0/);
+  assert.equal(appSettings.updateDownloadVisible, true);
+  assert.equal(appSettings.versionLabel, "v0.1.2");
   assert.equal(importPreview.visible, true);
   assert.equal(importPreview.rows, 4);
   assert.match(importPreview.safety, /敏感信息不会从链接导入/);

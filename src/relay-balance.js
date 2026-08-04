@@ -1,3 +1,5 @@
+const { USER_AGENT } = require("./app-version");
+
 function safeNumber(value) {
   if (value === null || value === undefined || value === "") return null;
   const number = Number(value);
@@ -25,7 +27,7 @@ async function fetchRelayBalance(provider, apiKey, fetchImpl = globalThis.fetch)
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 15000);
   try {
-    const clientHeaders = { "User-Agent": "Share-Master/0.1.0", Accept: "application/json" };
+    const clientHeaders = { "User-Agent": USER_AGENT, Accept: "application/json" };
     const headers = { ...clientHeaders, Authorization: `Bearer ${apiKey}` };
     const [usageResponse, statusResponse] = await Promise.all([
       fetchImpl(`${origin}/api/usage/token/`, { headers, signal: controller.signal }),

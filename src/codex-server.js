@@ -6,6 +6,7 @@ const readline = require("node:readline");
 const path = require("node:path");
 const { findExecutable, userExecutableCandidates } = require("./cli-discovery");
 const { repairInterruptedToolCallsForThread } = require("./conversation-integrity");
+const { APP_VERSION } = require("./app-version");
 
 const LEGACY_CODEX_HOME = "G:\\FIle\\codex-file";
 const CODEX_HOME = process.env.CODEX_HOME
@@ -192,7 +193,7 @@ class CodexServer extends EventEmitter {
     });
 
     await this.request("initialize", {
-      clientInfo: { name: "share_master", title: "Share Master", version: "0.1.0" },
+      clientInfo: { name: "share_master", title: "Share Master", version: APP_VERSION },
       capabilities: { experimentalApi: true },
     }, STARTUP_TIMEOUT_MS);
     this.notify("initialized", {});

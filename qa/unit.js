@@ -39,6 +39,7 @@ const { installSkillSource, listManagedSkills, syncManagedSkills, syncSkillRoots
 const { parseShareMasterLink, shareMasterLinkFromArgs } = require("../src/deep-link");
 const { createLocalHistoryReader } = require("../src/local-conversation-history");
 const { createLocalProviderDiscovery, parseCodexConfig } = require("../src/local-provider-discovery");
+const { APP_VERSION, USER_AGENT, compareVersions, updateFromRelease } = require("../src/app-version");
 const {
   buildContinuationPrompt,
   mergeLogicalThread,
@@ -59,6 +60,23 @@ function testOfficialCliArguments() {
 function testDiagnosticNormalization() {
   const diagnostic = "\u001b[2m2026-07-26T09:42:17Z\u001b[0m \u001b[31mERROR\u001b[0m\r\nfailed to refresh models\u0007";
   assert.equal(normalizeDiagnostic(diagnostic), "2026-07-26T09:42:17Z ERROR\nfailed to refresh models");
+}
+
+function testApplicationVersioning() {
+  assert.equal(APP_VERSION, require("../package.json").version);
+  assert.equal(USER_AGENT, `Share-Master/${APP_VERSION}`);
+  assert.equal(compareVersions("0.1.2", "0.1.1"), 1);
+  assert.equal(compareVersions("v0.1.2", "0.1.2"), 0);
+  assert.equal(compareVersions("0.1.1", "0.1.2"), -1);
+  const release = { tag_name: "v0.2.0", html_url: "https://github.com/MttJelly/share-master/releases/tag/v0.2.0" };
+  assert.deepEqual(updateFromRelease("0.1.2", release), {
+    status: "available",
+    currentVersion: "0.1.2",
+    latestVersion: "0.2.0",
+    releaseUrl: release.html_url,
+    publishedAt: null,
+    message: "发现新版本 v0.2.0，当前为 v0.1.2。",
+  });
 }
 
 function testOfficialCredentialSeeding() {
@@ -1850,6 +1868,7 @@ async function testInterruptedToolCallRepair() {
 Promise.resolve()
   .then(testOfficialCliArguments)
   .then(testDiagnosticNormalization)
+  .then(testApplicationVersioning)
   .then(testOfficialCredentialSeeding)
   .then(testIsolatedStoreDefaults)
   .then(testConversationMirror)
@@ -1899,7 +1918,7 @@ Promise.resolve()
   .then(testOpenAICompatibleCompletionValidation)
   .then(testOpenAICompatibleInterrupt)
   .then(testOpenAICompatibleSharedCodexHistory)
-  .then(() => console.log(JSON.stringify({ ok: true, tests: 50 })))
+  .then(() => console.log(JSON.stringify({ ok: true, tests: 51 })))
   .catch((error) => {
     console.error(error.stack || error.message);
     process.exitCode = 1;

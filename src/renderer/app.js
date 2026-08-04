@@ -4753,9 +4753,11 @@ async function openAppSettingsDialog() {
     const settings = await api.appSettings();
     elements.appSettingsForm.elements.launchAtLogin.checked = Boolean(settings.launchAtLogin);
     elements.appSettingsForm.elements.closeToTray.checked = settings.closeToTray !== false;
-    $("#app-version").textContent = `v${settings.version || "0.1.0"}`;
-    $("#update-status").textContent = "通过私有 GitHub 仓库安全检查，不会覆盖未提交改动";
+    $("#app-version").textContent = settings.version ? `v${settings.version}` : "v--";
+    $("#update-status").textContent = "检查 GitHub Release，不会自动覆盖本地数据";
     $("#update-status").dataset.state = "idle";
+    $("#download-update-button").classList.add("hidden");
+    $("#download-update-button").dataset.url = "";
   } catch (error) {
     $("#app-settings-status").textContent = error.message;
   }
@@ -5990,15 +5992,21 @@ $("#check-update-button").addEventListener("click", async (event) => {
     const result = await api.checkForUpdates();
     status.textContent = result.message;
     status.dataset.state = result.status;
-    if (result.currentRevision && result.remoteRevision) {
-      status.title = `本机 ${result.currentRevision} · 远端 ${result.remoteRevision}`;
-    }
+    const download = $("#download-update-button");
+    download.dataset.url = result.releaseUrl || "";
+    download.classList.toggle("hidden", result.status !== "available" || !result.releaseUrl);
+    status.title = result.latestVersion ? `当前 v${result.currentVersion} · 最新 v${result.latestVersion}` : "";
+    refreshIcons();
   } catch (error) {
     status.textContent = error.message;
     status.dataset.state = "error";
   } finally {
     button.disabled = false;
   }
+});
+$("#download-update-button").addEventListener("click", (event) => {
+  const target = event.currentTarget.dataset.url;
+  if (target) api.openExternal(target).catch(showActionError);
 });
 $("#import-preview-close-button").addEventListener("click", closeDeepLinkImportPreview);
 $("#import-preview-cancel-button").addEventListener("click", closeDeepLinkImportPreview);

@@ -24,8 +24,8 @@ Share Master 是一款面向 Windows 的多模型桌面客户端。不同模型�
 
 | 版本 | 下载 | 适用场景 |
 | --- | --- | --- |
-| ZIP 便携版 | [下载 `Share-Master-0.1.0-portable-win-x64.zip`](https://github.com/MttJelly/share-master/releases/download/v0.1.0/Share-Master-0.1.0-portable-win-x64.zip) | 免安装，解压后运行 `Share Master.exe` |
-| MSI 安装版 | [下载 `Share-Master-0.1.0-setup-win-x64.msi`](https://github.com/MttJelly/share-master/releases/download/v0.1.0/Share-Master-0.1.0-setup-win-x64.msi) | 标准安装，包含桌面快捷方式和卸载入口 |
+| ZIP 便携版 | [下载最新便携版](https://github.com/MttJelly/share-master/releases/latest/download/Share-Master-portable-win-x64.zip) | 免安装，解压后运行 `Share Master.exe` |
+| MSI 安装版 | [下载最新安装版](https://github.com/MttJelly/share-master/releases/latest/download/Share-Master-setup-win-x64.msi) | 标准安装，包含桌面快捷方式和卸载入口 |
 
 <p align="center">
   <a href="https://github.com/MttJelly/share-master/releases">查看全部版本与更新说明</a>

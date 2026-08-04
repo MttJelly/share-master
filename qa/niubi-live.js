@@ -4,6 +4,7 @@ const crypto = require("node:crypto");
 const { CodexServer } = require("../src/codex-server");
 const { ProviderStore } = require("../src/provider-store");
 const { fetchRelayBalance } = require("../src/relay-balance");
+const { USER_AGENT } = require("../src/app-version");
 
 app.setName("Share Master");
 
@@ -27,7 +28,7 @@ async function run() {
     headers: {
       Authorization: `Bearer ${apiKey}`,
       Accept: "application/json",
-      "User-Agent": "Share-Master/0.1.0",
+      "User-Agent": USER_AGENT,
     },
   });
   const modelsPayload = await modelsResponse.json().catch(() => null);
@@ -45,7 +46,7 @@ async function run() {
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
         Accept: "application/json",
-        "User-Agent": "Share-Master/0.1.0",
+        "User-Agent": USER_AGENT,
       },
       body: JSON.stringify({
         model: provider.model,

@@ -1,3 +1,5 @@
+const { USER_AGENT } = require("./app-version");
+
 function normalizeBaseUrl(value) {
   const parsed = new URL(String(value || "").trim());
   if (!["http:", "https:"].includes(parsed.protocol) || parsed.username || parsed.password) {
@@ -34,7 +36,7 @@ async function fetchClaudeModels(baseUrl, apiKey, fetchImpl = globalThis.fetch) 
       "x-api-key": apiKey,
       "anthropic-version": "2023-06-01",
       Accept: "application/json",
-      "User-Agent": "Share-Master/0.1.0",
+      "User-Agent": USER_AGENT,
     },
   });
   const payload = await responseJson(response);

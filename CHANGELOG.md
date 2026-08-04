@@ -2,6 +2,23 @@
 
 本文件记录 Share Master 每个版本的用户可见变化。版本号遵循语义化版本；每次向 GitHub 推送产品更新前，必须先更新版本号和本文件。
 
+## [0.1.2] - 2026-08-04
+
+### 新增
+
+- 全新 Share Master 应用图标，并提供可重复生成 PNG/ICO 的矢量母版与构建脚本。
+- 设置页可按 GitHub Release 检查最新发布版本，并在有更新时直接打开下载页面。
+
+### 优化
+
+- README 下载地址改为稳定的 Latest Release 链接，版本升级后不再需要手工替换 URL。
+- 发布流程同时生成带版本号文件、稳定下载别名和 SHA-256 清单。
+
+### 修复
+
+- 统一应用版本来源，修复 Codex 客户端标识、Claude 请求和中转请求仍停留在旧版本的问题。
+- 增加发布元数据检查，阻止 package、lockfile、更新日志和下载链接版本维护不一致。
+
 ## [0.1.1] - 2026-08-04
 
 ### 新增
@@ -23,3 +40,4 @@
 - 修复恢复会话时 `Custom tool call output is missing` 导致连接失败的问题。
 
 [0.1.1]: https://github.com/MttJelly/share-master/compare/v0.1.0...v0.1.1
+[0.1.2]: https://github.com/MttJelly/share-master/compare/v0.1.1...v0.1.2

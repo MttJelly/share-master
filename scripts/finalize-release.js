@@ -1,5 +1,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
+const crypto = require("node:crypto");
 const { version } = require("../package.json");
 
 const releaseRoot = path.resolve(__dirname, "..", "release");
@@ -20,4 +21,26 @@ renameArtifact(
 renameArtifact(
   `Share-Master-${version}-win-x64.msi`,
   `Share-Master-${version}-setup-win-x64.msi`,
+);
+
+const aliases = [
+  [`Share-Master-${version}-portable-win-x64.zip`, "Share-Master-portable-win-x64.zip"],
+  [`Share-Master-${version}-setup-win-x64.msi`, "Share-Master-setup-win-x64.msi"],
+];
+for (const [versionedName, stableName] of aliases) {
+  const source = path.join(releaseRoot, versionedName);
+  if (fs.existsSync(source)) fs.copyFileSync(source, path.join(releaseRoot, stableName));
+}
+
+const files = aliases.flatMap(([versionedName, stableName]) => [versionedName, stableName])
+  .flatMap((name) => {
+    const file = path.join(releaseRoot, name);
+    if (!fs.existsSync(file)) return [];
+    const content = fs.readFileSync(file);
+    return [{ name, size: content.length, sha256: crypto.createHash("sha256").update(content).digest("hex") }];
+  });
+fs.writeFileSync(
+  path.join(releaseRoot, "release-manifest.json"),
+  `${JSON.stringify({ version, files }, null, 2)}\n`,
+  "utf8",
 );

@@ -1,0 +1,33 @@
+name: Share Master Quality
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      SHARE_MASTER_BASE_REVISION: ${{ github.event.before }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Validate release metadata
+        run: npm run check:release
+      - name: Validate source
+        run: npm run check
+      - name: Run unit tests
+        run: npm run test:unit

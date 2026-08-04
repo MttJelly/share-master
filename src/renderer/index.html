@@ -516,9 +516,12 @@
           </label>
           <section class="update-panel" aria-labelledby="update-panel-title">
             <span class="settings-toggle-icon update-icon"><span data-lucide="git-compare-arrows"></span></span>
-            <span class="update-copy"><strong id="update-panel-title">应用更新</strong><small id="update-status">通过私有 GitHub 仓库安全检查，不会覆盖未提交改动</small></span>
-            <button id="check-update-button" class="secondary-command" type="button"><span data-lucide="refresh-cw"></span>检查更新</button>
-            <span id="app-version" class="version-badge">v0.1.0</span>
+            <span class="update-copy"><strong id="update-panel-title">应用更新</strong><small id="update-status">检查 GitHub Release，不会自动覆盖本地数据</small></span>
+            <span class="update-actions">
+              <button id="download-update-button" class="secondary-command hidden" type="button"><span data-lucide="external-link"></span>查看下载</button>
+              <button id="check-update-button" class="secondary-command" type="button"><span data-lucide="refresh-cw"></span>检查更新</button>
+            </span>
+            <span id="app-version" class="version-badge">v--</span>
           </section>
           <div class="form-actions"><span id="app-settings-status" class="provider-error"></span><button class="primary-command" type="submit"><span data-lucide="save"></span>保存设置</button></div>
         </form>

@@ -1335,7 +1335,8 @@ body.non-composer-view .chat-view { padding-bottom: 32px; }
 .update-copy small[data-state="available"] { color: #8d5916; }
 .update-copy small[data-state="blocked"], .update-copy small[data-state="error"] { color: var(--danger); }
 .update-copy small[data-state="current"], .update-copy small[data-state="ahead"] { color: var(--teal); }
-.update-panel .secondary-command { grid-column: 3; grid-row: 1 / span 2; white-space: nowrap; }
+.update-actions { grid-column: 3; grid-row: 1 / span 2; display: flex; gap: 6px; align-items: center; }
+.update-panel .secondary-command { white-space: nowrap; }
 .version-badge { grid-column: 2; color: var(--subtle); font: 10px/1.2 Consolas, monospace; }
 
 .import-preview-dialog { width: min(640px, calc(100% - 28px)); }
@@ -1365,7 +1366,7 @@ html[data-theme="dark"] .import-safety-note { border-color: #315e50; background:
 
 @media (max-width: 680px) {
   .update-panel { grid-template-columns: 36px minmax(0, 1fr); }
-  .update-panel .secondary-command { grid-column: 1 / -1; grid-row: auto; justify-content: center; }
+  .update-actions { grid-column: 1 / -1; grid-row: auto; justify-content: flex-end; }
   .version-badge { grid-column: 2; }
   .import-preview-row { grid-template-columns: 1fr; gap: 5px; }
 }
