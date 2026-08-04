@@ -8,6 +8,11 @@ const {
   approvalSettings,
   normalizeDiagnostic,
 } = require("../src/codex-server");
+const {
+  INTERRUPTED_TOOL_OUTPUT,
+  interruptedToolCalls,
+  repairInterruptedToolCallsForThread,
+} = require("../src/conversation-integrity");
 const providerStoreTestRoot = fs.mkdtempSync(path.join(os.tmpdir(), "share-master-store-unit-"));
 process.env.SHARE_MASTER_STORE_ROOT = providerStoreTestRoot;
 const {
@@ -1801,6 +1806,47 @@ function testPersistedMessageQueues() {
   assert.equal(Object.hasOwn(store.messageQueues(), threadId), false);
 }
 
+async function testInterruptedToolCallRepair() {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "share-master-integrity-"));
+  const threadId = "thread-integrity-fixture";
+  const directory = path.join(home, "sessions", "2026", "08", "04");
+  const file = path.join(directory, `rollout-2026-08-04T00-00-00-${threadId}.jsonl`);
+  const records = [
+    { timestamp: "2026-08-04T00:00:00.000Z", type: "response_item", payload: { type: "custom_tool_call", call_id: "call_interrupted", name: "exec", internal_chat_message_metadata_passthrough: { turn_id: "turn-old" } } },
+    { timestamp: "2026-08-04T00:00:01.000Z", type: "turn_context", payload: { turn_id: "turn-new" } },
+    { timestamp: "2026-08-04T00:00:02.000Z", type: "response_item", payload: { type: "custom_tool_call", call_id: "call_active", name: "exec" } },
+  ];
+  const original = `${records.slice(0, 1).map(JSON.stringify).join("\n")}\nmalformed-json\n${records.slice(1).map(JSON.stringify).join("\n")}`;
+  try {
+    fs.mkdirSync(directory, { recursive: true });
+    fs.writeFileSync(file, original, "utf8");
+    assert.deepEqual(interruptedToolCalls(original).map((item) => item.callId), ["call_interrupted"]);
+    const repaired = repairInterruptedToolCallsForThread(home, threadId, () => new Date("2026-08-04T00:01:00.000Z"));
+    assert.deepEqual(repaired.map((item) => item.callId), ["call_interrupted"]);
+    const after = fs.readFileSync(file, "utf8");
+    assert.equal(after.startsWith(original), true);
+    const output = after.split(/\r?\n/).filter(Boolean).flatMap((line) => {
+      try { return [JSON.parse(line)]; } catch { return []; }
+    }).find((item) => item.payload?.type === "custom_tool_call_output");
+    assert.equal(output.payload.call_id, "call_interrupted");
+    assert.equal(output.payload.output[0].text, INTERRUPTED_TOOL_OUTPUT);
+    assert.equal(output.payload.internal_chat_message_metadata_passthrough.turn_id, "turn-old");
+    assert.deepEqual(interruptedToolCalls(after), []);
+    assert.deepEqual(repairInterruptedToolCallsForThread(home, threadId), []);
+
+    const server = Object.create(CodexServer.prototype);
+    server.provider = { codexHome: home };
+    let requests = 0;
+    server.request = async () => { requests += 1; return { thread: { id: threadId } }; };
+    await server.resumeThread(threadId);
+    await server.resumeThread(threadId);
+    assert.equal(requests, 2);
+    assert.equal(server.integrityCheckedThreads.has(threadId), true);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+}
+
 Promise.resolve()
   .then(testOfficialCliArguments)
   .then(testDiagnosticNormalization)
@@ -1846,13 +1892,14 @@ Promise.resolve()
   .then(testLocalConversationHistoryReader)
   .then(testLocalProviderDiscovery)
   .then(testPersistedMessageQueues)
+  .then(testInterruptedToolCallRepair)
   .then(testClaudeThreadDeletion)
   .then(testOpenAICompatibleStreaming)
   .then(testOpenAICompatibleFailover)
   .then(testOpenAICompatibleCompletionValidation)
   .then(testOpenAICompatibleInterrupt)
   .then(testOpenAICompatibleSharedCodexHistory)
-  .then(() => console.log(JSON.stringify({ ok: true, tests: 49 })))
+  .then(() => console.log(JSON.stringify({ ok: true, tests: 50 })))
   .catch((error) => {
     console.error(error.stack || error.message);
     process.exitCode = 1;

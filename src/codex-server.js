@@ -5,6 +5,7 @@ const os = require("node:os");
 const readline = require("node:readline");
 const path = require("node:path");
 const { findExecutable, userExecutableCandidates } = require("./cli-discovery");
+const { repairInterruptedToolCallsForThread } = require("./conversation-integrity");
 
 const LEGACY_CODEX_HOME = "G:\\FIle\\codex-file";
 const CODEX_HOME = process.env.CODEX_HOME
@@ -159,6 +160,7 @@ class CodexServer extends EventEmitter {
     this.nextId = 1;
     this.ready = false;
     this.diagnostics = [];
+    this.integrityCheckedThreads = new Set();
   }
 
   async start() {
@@ -322,7 +324,18 @@ class CodexServer extends EventEmitter {
     return this.request("thread/delete", { threadId }, 30000);
   }
 
-  resumeThread(threadId, cwd = null, modelProvider = null, model = null, options = {}) {
+  async resumeThread(threadId, cwd = null, modelProvider = null, model = null, options = {}) {
+    this.integrityCheckedThreads ||= new Set();
+    const privateHome = this.provider?.codexHome;
+    if (privateHome && !this.integrityCheckedThreads.has(threadId)) {
+      try {
+        const repaired = repairInterruptedToolCallsForThread(privateHome, threadId);
+        this.integrityCheckedThreads.add(threadId);
+        if (repaired.length) this.emit("diagnostic", `已修复 ${repaired.length} 条因上次退出而中断的工具调用。`);
+      } catch (error) {
+        this.emit("diagnostic", `会话完整性检查失败，已继续恢复：${error.message}`);
+      }
+    }
     return this.request("thread/resume", {
       threadId,
       cwd,
