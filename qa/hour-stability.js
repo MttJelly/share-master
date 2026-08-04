@@ -89,6 +89,12 @@ function registerHandlers(counters) {
     counters.queueSaves += 1;
     return [];
   });
+  ipcMain.handle("thread:claim-message-queue", (_event, input) => ({
+    busy: false,
+    message: structuredClone(input.message),
+    messages: structuredClone(input.remainingMessages || []),
+  }));
+  ipcMain.handle("thread:restore-message-queue", (_event, input) => [structuredClone(input.message)]);
   ipcMain.handle("codex:start-turn", () => {
     counters.turns += 1;
     return { turn: { id: `soak-queued-turn-${counters.turns}` } };

@@ -1833,8 +1833,35 @@ function testPersistedMessageQueues() {
   const restored = new ProviderStore().messageQueues();
   assert.equal(restored[threadId][0].text, "恢复后发送这条消息");
   assert.equal(JSON.stringify(restored).includes("must-not-persist"), false);
+  const claimed = store.claimMessageQueue(threadId, "client-fixture");
+  assert.equal(claimed.message.clientUserMessageId, "client-fixture");
+  assert.deepEqual(claimed.messages, []);
+  assert.equal(Object.hasOwn(store.messageQueues(), threadId), false);
+  const restoredClaim = store.restoreClaimedMessage(threadId, claimed.message);
+  assert.equal(restoredClaim.length, 1);
+  assert.equal(store.restoreClaimedMessage(threadId, claimed.message).length, 1);
   assert.deepEqual(store.saveMessageQueue(threadId, []), []);
   assert.equal(Object.hasOwn(store.messageQueues(), threadId), false);
+
+  const interruptedThreadId = `interrupted-unit-${Date.now()}`;
+  store.recordLogicalTurn(interruptedThreadId, {
+    turnId: "turn-before-restart",
+    nativeThreadId: interruptedThreadId,
+    providerId: "deepseek-fixture",
+    engine: "openai-compatible",
+    status: "inProgress",
+  });
+  const restartedStore = new ProviderStore();
+  assert.equal(restartedStore.threadTimeline(interruptedThreadId)[0].status, "interrupted");
+  assert.equal(restartedStore.recoverableInterruptedTurns().some((turn) => turn.threadId === interruptedThreadId), true);
+  restartedStore.recordLogicalTurn(interruptedThreadId, {
+    turnId: "turn-before-restart",
+    nativeThreadId: interruptedThreadId,
+    providerId: "deepseek-fixture",
+    status: "completed",
+  });
+  assert.equal(restartedStore.recoverableInterruptedTurns().some((turn) => turn.threadId === interruptedThreadId), false);
+  restartedStore.deleteThreadNow(interruptedThreadId);
 }
 
 async function testInterruptedToolCallRepair() {

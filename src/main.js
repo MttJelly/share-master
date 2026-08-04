@@ -42,6 +42,8 @@ const runningScheduledTasks = new Set();
 const scheduledTaskRuns = new Map();
 const pendingTurnDisplays = new Map();
 const pendingSteerDisplays = new Map();
+const activeLogicalTurns = new Map();
+const activeLogicalTurnsById = new Map();
 const pendingBranchCreations = new WeakMap();
 const providerRequestRuns = new WeakMap();
 const serverBranchLookups = new WeakMap();
@@ -71,6 +73,10 @@ const DEFAULT_RENDERER_THREAD_TURNS = 40;
 const APPLICATION_ROOT = path.resolve(__dirname, "..");
 const DEVELOPMENT_ICON = path.join(APPLICATION_ROOT, "build", "icon.ico");
 const DEFAULT_WORKSPACE = app.isPackaged ? os.homedir() : APPLICATION_ROOT;
+const TITLE_BAR_OVERLAYS = Object.freeze({
+  light: { color: "#f9fbfa", symbolColor: "#1d2925", height: 48 },
+  dark: { color: "#1d221f", symbolColor: "#edf1ef", height: 48 },
+});
 let applicationUpdateCheck = null;
 const localHistoryReader = createLocalHistoryReader({ homeDirectory: os.homedir() });
 
@@ -255,15 +261,16 @@ async function loginOfficialAccount(provider) {
 }
 
 function createWindow(providerId = null, projectRoot = null, threadId = null, projectId = null, workspace = null) {
+  const initialTitleBar = TITLE_BAR_OVERLAYS.light;
   const window = new BrowserWindow({
     width: Number(process.env.CODEX_DECK_QA_WIDTH || 1380),
     height: Number(process.env.CODEX_DECK_QA_HEIGHT || 900),
     minWidth: 900,
     minHeight: 640,
-    backgroundColor: "#f5f6f7",
+    backgroundColor: initialTitleBar.color,
     ...(!app.isPackaged && fs.existsSync(DEVELOPMENT_ICON) ? { icon: DEVELOPMENT_ICON } : {}),
     titleBarStyle: "hidden",
-    titleBarOverlay: { color: "#f5f6f7", symbolColor: "#1d2329", height: 42 },
+    titleBarOverlay: initialTitleBar,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -1216,11 +1223,48 @@ async function searchSharedThreads(server, rawQuery) {
   return matches.sort((left, right) => left.rank - right.rank).slice(0, 80).map(({ rank, ...match }) => match);
 }
 
+function rememberActiveLogicalTurn(server, input) {
+  const record = { ...input, server };
+  activeLogicalTurns.set(record.logicalId, record);
+  activeLogicalTurnsById.set(record.turnId, record);
+}
+
+function forgetActiveLogicalTurn(turnId) {
+  const record = activeLogicalTurnsById.get(turnId);
+  if (!record) return null;
+  activeLogicalTurnsById.delete(turnId);
+  if (activeLogicalTurns.get(record.logicalId)?.turnId === turnId) activeLogicalTurns.delete(record.logicalId);
+  return record;
+}
+
+function interruptActiveLogicalTurns(server, reason) {
+  let changed = false;
+  const recoveredAt = Date.now();
+  for (const record of [...activeLogicalTurnsById.values()]) {
+    if (record.server !== server) continue;
+    providerStore.recordLogicalTurn(record.logicalId, {
+      turnId: record.turnId,
+      nativeThreadId: record.nativeThreadId,
+      providerId: record.providerId,
+      engine: record.engine,
+      status: "interrupted",
+      interruptionReason: reason || "server-exit",
+      recoveredAt,
+    });
+    forgetActiveLogicalTurn(record.turnId);
+    changed = true;
+  }
+  if (changed) broadcastStoreSnapshot();
+}
+
 function mappedServerMessage(server, message) {
-  const nativeId = message?.params?.threadId
+  let nativeId = message?.params?.threadId
     || message?.params?.conversationId
     || message?.params?.thread?.id
     || null;
+  const eventTurnId = message?.params?.turn?.id || message?.params?.turnId || null;
+  const activeTurn = eventTurnId ? activeLogicalTurnsById.get(eventTurnId) || null : null;
+  nativeId ||= activeTurn?.nativeThreadId || null;
   if (!nativeId) return message;
   const providerId = currentProviderId(server);
   const pendingKey = `${providerId}:${nativeId}`;
@@ -1232,6 +1276,7 @@ function mappedServerMessage(server, message) {
   const pendingCreation = pendingBranchCreations.get(server) || null;
   const eventBranch = eventBranchForServer(server, nativeId);
   const logicalId = eventBranch.logicalId
+    || activeTurn?.logicalId
     || pendingSteer?.logicalId
     || pending?.logicalId
     || pendingCreation?.logicalId
@@ -1249,6 +1294,7 @@ function mappedServerMessage(server, message) {
         engine: serverEngine(server),
         status: message.params?.turn?.status || "completed",
       });
+      forgetActiveLogicalTurn(turnId);
     }
   }
   const itemClientId = message.params?.item?.clientId || null;
@@ -1473,6 +1519,13 @@ async function startLogicalTurn(server, payload = {}) {
       displayText,
       clientUserMessageId: payload.clientUserMessageId,
     });
+    rememberActiveLogicalTurn(server, {
+      logicalId,
+      turnId: result.turn.id,
+      nativeThreadId,
+      providerId,
+      engine: serverEngine(server),
+    });
   }
   return result;
 }
@@ -1538,6 +1591,7 @@ function publicStoreSnapshot() {
     pendingDeletions: metadata.pendingDeletions.map((entry) => ({ ...entry })),
     scheduledTasks: providerStore.scheduledTasks(),
     messageQueues: providerStore.messageQueues(),
+    recoveredTurns: providerStore.recoverableInterruptedTurns(),
     promptTemplates: providerStore.promptTemplates(),
     mcpServers: providerStore.mcpServers(),
     runningTaskIds: [...runningScheduledTasks],
@@ -2143,6 +2197,15 @@ app.whenReady().then(async () => {
     return true;
   });
 
+  ipcMain.on("window:set-theme", (event, requestedTheme) => {
+    const theme = requestedTheme === "dark" ? "dark" : "light";
+    const overlay = TITLE_BAR_OVERLAYS[theme];
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    if (!owner || owner.isDestroyed()) return;
+    owner.setTitleBarOverlay(overlay);
+    owner.setBackgroundColor(overlay.color);
+  });
+
   ipcMain.handle("dialog:workspace", async (event, currentPath) => {
     const owner = BrowserWindow.fromWebContents(event.sender);
     const result = await dialog.showOpenDialog(owner, {
@@ -2462,9 +2525,25 @@ app.whenReady().then(async () => {
     broadcastThreadDeleted(threadId);
     return deletedIds;
   });
-  ipcMain.handle("thread:save-message-queue", (_event, input) => (
-    providerStore.saveMessageQueue(input?.threadId, input?.messages)
-  ));
+  ipcMain.handle("thread:save-message-queue", (_event, input) => {
+    const messages = providerStore.saveMessageQueue(input?.threadId, input?.messages);
+    broadcastStoreSnapshot();
+    return messages;
+  });
+  ipcMain.handle("thread:claim-message-queue", (_event, input) => {
+    const threadId = String(input?.threadId || "").trim();
+    if (activeLogicalTurns.has(threadId)) {
+      return { busy: true, message: null, messages: providerStore.messageQueues()[threadId] || [] };
+    }
+    const claimed = providerStore.claimMessageQueue(threadId, input?.clientUserMessageId);
+    broadcastStoreSnapshot();
+    return { busy: false, ...claimed };
+  });
+  ipcMain.handle("thread:restore-message-queue", (_event, input) => {
+    const messages = providerStore.restoreClaimedMessage(input?.threadId, input?.message);
+    broadcastStoreSnapshot();
+    return messages;
+  });
   ipcMain.handle("task:save", (_event, input) => {
     ensureScheduledTaskIdle(input?.id);
     const task = providerStore.saveScheduledTask(input);
@@ -2624,6 +2703,7 @@ app.whenReady().then(async () => {
       });
       server.on("diagnostic", (message) => send("codex:diagnostic", message));
       server.on("exit", (code, detail = null) => {
+        interruptActiveLogicalTurns(server, "server-exit");
         failScheduledTasksForServer(server, `连接已断开（退出代码 ${code ?? "未知"}）。`);
         if (!isCurrent()) return;
         send("codex:disconnected", {

@@ -650,6 +650,18 @@ class ProviderStore {
       metadata.deletionMigrationVersion = 2;
       changed = true;
     }
+    const recoveredAt = Date.now();
+    for (const timeline of Object.values(metadata.threadTimeline)) {
+      if (!Array.isArray(timeline)) continue;
+      for (const entry of timeline) {
+        if (entry?.status !== "inProgress") continue;
+        entry.status = "interrupted";
+        entry.updatedAt = recoveredAt;
+        entry.recoveredAt = recoveredAt;
+        entry.interruptionReason = "app-restarted";
+        changed = true;
+      }
+    }
     if (changed) {
       writeJson(METADATA_FILE, metadata);
     }
@@ -830,6 +842,36 @@ class ProviderStore {
     return structuredClone(this.metadata().messageQueues);
   }
 
+  claimMessageQueue(threadId, expectedClientUserMessageId = null) {
+    const id = String(threadId || "").trim().slice(0, 200);
+    if (!id) throw new Error("无效的会话 ID。");
+    const expectedId = String(expectedClientUserMessageId || "").trim().slice(0, 100);
+    const metadata = this.metadata();
+    const queue = metadata.messageQueues[id] || [];
+    const message = queue[0] || null;
+    if (!message || (expectedId && message.clientUserMessageId !== expectedId)) {
+      return { message: null, messages: queue.map((item) => ({ ...item })) };
+    }
+    queue.shift();
+    if (queue.length) metadata.messageQueues[id] = queue;
+    else delete metadata.messageQueues[id];
+    writeJson(METADATA_FILE, metadata);
+    return { message: { ...message }, messages: queue.map((item) => ({ ...item })) };
+  }
+
+  restoreClaimedMessage(threadId, message) {
+    const id = String(threadId || "").trim().slice(0, 200);
+    if (!id) throw new Error("无效的会话 ID。");
+    const restored = cleanQueuedMessage(message);
+    if (!restored) throw new Error("无法恢复无效的队列消息。");
+    const metadata = this.metadata();
+    const queue = metadata.messageQueues[id] || [];
+    if (!queue.some((item) => item.clientUserMessageId === restored.clientUserMessageId)) queue.unshift(restored);
+    metadata.messageQueues[id] = queue.slice(0, 50);
+    writeJson(METADATA_FILE, metadata);
+    return metadata.messageQueues[id].map((item) => ({ ...item }));
+  }
+
   saveMessageQueue(threadId, messages) {
     const id = String(threadId || "").trim().slice(0, 200);
     if (!id) throw new Error("无效的会话 ID。");
@@ -923,7 +965,15 @@ class ProviderStore {
     ));
     if (existing) {
       existing.updatedAt = Number(input.updatedAt) || Date.now();
-      if (input.status) existing.status = String(input.status);
+      if (input.status) {
+        existing.status = String(input.status);
+        if (existing.status !== "interrupted") {
+          delete existing.recoveredAt;
+          delete existing.interruptionReason;
+        }
+      }
+      if (input.interruptionReason) existing.interruptionReason = String(input.interruptionReason).slice(0, 100);
+      if (input.recoveredAt) existing.recoveredAt = Number(input.recoveredAt);
       if (typeof input.displayText === "string") existing.displayText = input.displayText.slice(0, 100000);
       if (input.clientUserMessageId) existing.clientUserMessageId = String(input.clientUserMessageId);
     } else {
@@ -942,6 +992,17 @@ class ProviderStore {
     metadata.threadTimeline[logicalId].sort((left, right) => left.startedAt - right.startedAt);
     writeJson(METADATA_FILE, metadata);
     return metadata.threadTimeline[logicalId].map((entry) => ({ ...entry }));
+  }
+
+  recoverableInterruptedTurns() {
+    const result = [];
+    for (const [threadId, timeline] of Object.entries(this.metadata().threadTimeline)) {
+      if (!Array.isArray(timeline) || !timeline.length) continue;
+      const latest = [...timeline].sort((left, right) => Number(left.startedAt) - Number(right.startedAt)).at(-1);
+      if (latest?.status !== "interrupted" || !latest.interruptionReason) continue;
+      result.push({ threadId, ...latest });
+    }
+    return result;
   }
 
   recordProviderRequest(input = {}) {

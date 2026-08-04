@@ -64,6 +64,12 @@ async function run() {
     return { turn: { id: `queued-turn-${startTurnCalls}` } };
   });
   ipcMain.handle("thread:save-message-queue", (_event, input) => input.messages || []);
+  ipcMain.handle("thread:claim-message-queue", (_event, input) => ({
+    busy: false,
+    message: structuredClone(input.message),
+    messages: structuredClone(input.remainingMessages || []),
+  }));
+  ipcMain.handle("thread:restore-message-queue", (_event, input) => [structuredClone(input.message)]);
   ipcMain.handle("app:notify", () => {
     notificationCalls += 1;
     return true;

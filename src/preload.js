@@ -21,6 +21,7 @@ ipcRenderer.on("app:navigate", (_event, value) => {
 contextBridge.exposeInMainWorld("codexDeck", {
   bootstrap: () => ipcRenderer.invoke("app:bootstrap"),
   newWindow: (payload) => ipcRenderer.invoke("window:new", payload),
+  setWindowTheme: (theme) => ipcRenderer.send("window:set-theme", theme),
   chooseWorkspace: (current) => ipcRenderer.invoke("dialog:workspace", current),
   chooseRecordHome: (current) => ipcRenderer.invoke("dialog:record-home", current),
   chooseSyncDirectory: (current) => ipcRenderer.invoke("dialog:sync-directory", current),
@@ -79,6 +80,8 @@ contextBridge.exposeInMainWorld("codexDeck", {
   restoreThread: (threadId) => ipcRenderer.invoke("thread:restore", threadId),
   deleteThreadNow: (threadId) => ipcRenderer.invoke("thread:delete-now", threadId),
   saveMessageQueue: (input) => ipcRenderer.invoke("thread:save-message-queue", input),
+  claimMessageQueue: (input) => ipcRenderer.invoke("thread:claim-message-queue", input),
+  restoreMessageQueue: (input) => ipcRenderer.invoke("thread:restore-message-queue", input),
   saveScheduledTask: (input) => ipcRenderer.invoke("task:save", input),
   removeScheduledTask: (taskId) => ipcRenderer.invoke("task:remove", taskId),
   setScheduledTaskEnabled: (input) => ipcRenderer.invoke("task:set-enabled", input),

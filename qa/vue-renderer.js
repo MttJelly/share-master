@@ -149,6 +149,8 @@ async function run() {
   const copiedTexts = [];
   const copiedImages = [];
   const persistedQueues = [];
+  const claimedQueues = [];
+  const windowThemeRequests = [];
   let clipboardPasteRequests = 0;
   let pendingSteerResolve = null;
   ipcMain.handle("app:bootstrap", () => ({
@@ -186,6 +188,7 @@ async function run() {
     runningTaskIds: [],
     recordHome: path.join(root, "share-master-data", "conversations"),
   }));
+  ipcMain.on("window:set-theme", (_event, theme) => windowThemeRequests.push(theme));
   ipcMain.handle("extension:list", () => structuredClone(extensionFixture));
   ipcMain.handle("extension:refresh-skills", () => ({ result: { activated: 1 }, ...structuredClone(extensionFixture) }));
   ipcMain.handle("extension:install-skill", () => ({ installed: [{ name: "installed-skill" }], ...structuredClone(extensionFixture) }));
@@ -268,6 +271,9 @@ async function run() {
     startThreadRequests.push(structuredClone(input));
     return { thread: { id: "unexpected-reconnect-thread", turns: [] } };
   });
+  ipcMain.handle("codex:resume", (_event, input) => ({
+    thread: { id: input.threadId, name: "界面优化讨论", cwd: "F:\\codepro", turns: [] },
+  }));
   ipcMain.handle("codex:start-turn", (_event, input) => {
     startTurnRequests.push(structuredClone(input));
     return { turn: { id: "unexpected-reconnect-turn" } };
@@ -303,6 +309,15 @@ async function run() {
     persistedQueues.push(structuredClone(input));
     return input.messages || [];
   });
+  ipcMain.handle("thread:claim-message-queue", (_event, input) => {
+    claimedQueues.push(structuredClone(input));
+    return {
+      busy: false,
+      message: structuredClone(input.message),
+      messages: structuredClone(input.remainingMessages || []),
+    };
+  });
+  ipcMain.handle("thread:restore-message-queue", (_event, input) => [structuredClone(input.message)]);
   ipcMain.handle("codex:search", (_event, query) => ([{
     id: "vue-conversation-fixture",
     snippet: `消息正文命中：${query}`,
@@ -489,6 +504,8 @@ async function run() {
       thinkingVisible: Boolean(document.querySelector('.thinking-indicator')),
       thinkingText: document.querySelector('.thinking-indicator')?.textContent.replace(/\s+/g, ' ').trim() || '',
       thinkingIsLast: document.querySelector('#chat-view').lastElementChild?.classList.contains('thinking-indicator') || false,
+      thinkingWidth: Math.round(document.querySelector('.thinking-indicator')?.getBoundingClientRect().width || 0),
+      thinkingHeight: Math.round(document.querySelector('.thinking-indicator')?.getBoundingClientRect().height || 0),
       interruptionVisible: Boolean(document.querySelector('.turn-interruption')),
       interruptionText: document.querySelector('.turn-interruption')?.textContent.replace(/\\s+/g, ' ').trim() || '',
       interruptionButtons: document.querySelectorAll('.continue-interrupted-turn').length,
@@ -626,6 +643,7 @@ async function run() {
       queueLengthBeforeSteer: queuedBeforeSteer.length,
       firstQueuedText: queuedBeforeSteer[0]?.displayText || '',
       secondQueuedText: queuedBeforeSteer[1]?.displayText || '',
+      secondQueuedId: queuedBeforeSteer[1]?.clientUserMessageId || '',
       queueButtonRemoved: !document.querySelector('#queue-button'),
       queuePanelVisible: !queuePanel.classList.contains('hidden'),
       queuePanelItems: queuePanel.querySelectorAll('.queued-prompt-item').length,
@@ -668,6 +686,8 @@ async function run() {
   deliveryModes.inactiveStartedText = startTurnRequests.at(-1)?.displayText || '';
   deliveryModes.persistedQueueWrites = persistedQueues.length;
   deliveryModes.persistedQueueLength = persistedQueues.at(-1)?.messages?.length || 0;
+  deliveryModes.queueClaimCount = claimedQueues.length;
+  deliveryModes.claimedMessageIds = claimedQueues.map((claim) => claim.clientUserMessageId);
   const compatibleStartOffset = startTurnRequests.length;
   const compatibleInterruptOffset = interruptRequests.length;
   const compatibleButton = await window.webContents.executeJavaScript(`(() => {
@@ -775,6 +795,49 @@ async function run() {
     syncComposerState();
     return result;
   })()`);
+  const recoveryStartOffset = startTurnRequests.length;
+  const recoveryClaimOffset = claimedQueues.length;
+  const recoveryBefore = await window.webContents.executeJavaScript(`(async () => {
+    const thread = { id: 'vue-conversation-fixture', name: '界面优化讨论', cwd: 'F:\\codepro', turns: [] };
+    state.activeThread = thread;
+    state.activeThreads = [thread];
+    state.allThreads = [thread];
+    state.threadResumed = false;
+    setThreadRunning(thread.id, false);
+    state.messageQueues.set(thread.id, [{
+      threadId: thread.id,
+      text: '重启后只发送一次',
+      displayText: '重启后只发送一次',
+      clientUserMessageId: 'restart-queue-message',
+      providerId: state.provider,
+      queuedAt: 1,
+    }]);
+    syncRecoveredTurns([{
+      threadId: thread.id,
+      turnId: 'turn-before-restart',
+      status: 'interrupted',
+      interruptionReason: 'app-restarted',
+    }]);
+    renderConversation(thread);
+    const result = {
+      interruptionVisibleBeforeOpen: Boolean(document.querySelector('.turn-interruption')),
+      interruptionText: document.querySelector('.turn-interruption')?.textContent.replace(/\\s+/g, ' ').trim() || '',
+      queuedBeforeOpen: (state.messageQueues.get(thread.id) || []).length,
+    };
+    await openThread(thread);
+    return result;
+  })()`);
+  await new Promise((resolve) => setTimeout(resolve, 140));
+  const restartRecovery = await window.webContents.executeJavaScript(`(() => ({
+    queueLength: (state.messageQueues.get(state.activeThread.id) || []).length,
+    interruptionVisibleAfterOpen: Boolean(document.querySelector('.turn-interruption')),
+    running: state.runningThreads.has(state.activeThread.id),
+    panelHidden: document.querySelector('#message-queue-panel').classList.contains('hidden'),
+  }))()`);
+  Object.assign(restartRecovery, recoveryBefore, {
+    started: startTurnRequests.slice(recoveryStartOffset).map((request) => request.displayText),
+    claimed: claimedQueues.slice(recoveryClaimOffset).map((claim) => claim.clientUserMessageId),
+  });
   const attachments = await window.webContents.executeJavaScript(`(async () => {
     const testImage = ${JSON.stringify(conversationScreenshot)};
     state.pendingAttachments = [];
@@ -1037,7 +1100,7 @@ async function run() {
       bodyOverflow: document.body.scrollWidth > document.body.clientWidth || document.body.scrollHeight > document.body.clientHeight,
     };
   })()`);
-  await window.webContents.executeJavaScript("applyTheme('dark'); openExtensionsDialog('mcp')");
+  await window.webContents.executeJavaScript("applyTheme('light'); applyTheme('dark'); openExtensionsDialog('mcp')");
   await new Promise((resolve) => setTimeout(resolve, 120));
   fs.writeFileSync(darkExtensionsScreenshot, (await capturePageWithRetry(window)).toPNG());
   const darkTheme = await window.webContents.executeJavaScript(`(() => ({
@@ -1141,6 +1204,8 @@ async function run() {
   assert.equal(conversation.thinkingVisible, true);
   assert.match(conversation.thinkingText, /正在思考/);
   assert.equal(conversation.thinkingIsLast, true);
+  assert.ok(conversation.thinkingWidth >= 750, `Thinking indicator remained too short: ${JSON.stringify(conversation)}`);
+  assert.ok(conversation.thinkingHeight >= 62, `Thinking indicator remained too low: ${JSON.stringify(conversation)}`);
   assert.equal(conversation.thinkingHiddenAfterCompletion, true);
   assert.equal(conversation.interruptionVisible, true);
   assert.match(conversation.interruptionText, /回答中途断开/);
@@ -1150,7 +1215,7 @@ async function run() {
   assert.equal(connectRequests.length, 1);
   assert.equal(connectRequests[0], "deepseek-fixture");
   assert.equal(startThreadRequests.length, 0);
-  assert.equal(startTurnRequests.length, 3);
+  assert.equal(startTurnRequests.length, 4);
   assert.equal(reconnect.connected, true);
   assert.equal(reconnect.reconnecting, false);
   assert.equal(reconnect.running, false);
@@ -1212,8 +1277,10 @@ async function run() {
   assert.equal(deliveryModes.queuePanelHiddenAfterDrain, true);
   assert.equal(deliveryModes.nativeSteerRequests, 2);
   assert.equal(deliveryModes.interruptRequests, 1);
-  assert.ok(deliveryModes.persistedQueueWrites >= 4);
-  assert.equal(deliveryModes.persistedQueueLength, 0);
+  assert.ok(deliveryModes.persistedQueueWrites >= 3);
+  assert.equal(deliveryModes.persistedQueueLength, 1);
+  assert.equal(deliveryModes.queueClaimCount, 1);
+  assert.deepEqual(deliveryModes.claimedMessageIds, [deliveryModes.secondQueuedId]);
   assert.equal(deliveryModes.nativeExpectedTurnId, "turn-running");
   assert.equal(deliveryModes.inactiveExpectedTurnId, "turn-running");
   assert.equal(deliveryModes.inactiveStartedText, "竞态情况下也不能丢失的消息");
@@ -1239,6 +1306,15 @@ async function run() {
   assert.equal(queueActions.restoredText, "编辑我");
   assert.deepEqual(queueActions.restoredAttachments, [conversationScreenshot]);
   assert.equal(queueActions.panelHidden, true);
+  assert.equal(restartRecovery.interruptionVisibleBeforeOpen, true);
+  assert.match(restartRecovery.interruptionText, /上次在回答完成前关闭/);
+  assert.equal(restartRecovery.queuedBeforeOpen, 1);
+  assert.equal(restartRecovery.queueLength, 0);
+  assert.equal(restartRecovery.interruptionVisibleAfterOpen, false);
+  assert.equal(restartRecovery.running, true);
+  assert.equal(restartRecovery.panelHidden, true);
+  assert.deepEqual(restartRecovery.started, ["重启后只发送一次"]);
+  assert.deepEqual(restartRecovery.claimed, ["restart-queue-message"]);
   assert.deepEqual({ added: attachments.added, unsupported: attachments.unsupported }, { added: 1, unsupported: 1 });
   assert.equal(attachments.pasteCanceled, true);
   assert.equal(attachments.pastedCount, 1);
@@ -1316,6 +1392,8 @@ async function run() {
   assert.equal(extensions.insertedPrompt, "请提炼当前内容的关键结论。\n");
   assert.equal(extensions.bodyOverflow, false);
   assert.equal(darkTheme.theme, "dark");
+  assert.equal(windowThemeRequests.includes("light"), true);
+  assert.equal(windowThemeRequests.at(-1), "dark");
   assert.equal(darkTheme.bodyOverflow, false);
   assert.equal(
     interactiveLayoutAudits.every((audit) => audit.overlaps.length === 0),
@@ -1334,6 +1412,7 @@ async function run() {
     conversation,
     messageFeatures,
     deliveryModes,
+    restartRecovery,
     attachments,
     localHistory,
     localProviders,
@@ -1346,6 +1425,7 @@ async function run() {
     health,
     extensions,
     darkTheme,
+    windowThemeRequests,
     interactiveLayoutAudits,
     errors,
     screenshots: [desktopScreenshot, compactScreenshot, conversationScreenshot, attachmentScreenshot, localHistoryScreenshot, localProviderScreenshot, usageScreenshot, usageCompactScreenshot, backupScreenshot, syncScreenshot, appSettingsScreenshot, importPreviewScreenshot, healthScreenshot, extensionsScreenshot, skillInstallScreenshot, darkExtensionsScreenshot],

@@ -12,6 +12,7 @@ const resolvedTheme = savedTheme === "system"
   : savedTheme;
 document.documentElement.dataset.theme = resolvedTheme;
 document.documentElement.style.colorScheme = resolvedTheme;
+window.codexDeck.setWindowTheme(resolvedTheme);
 
 const attachmentUi = reactive({
   items: [],

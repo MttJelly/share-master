@@ -224,6 +224,7 @@ function applyTheme(theme, persist = true) {
   state.theme = preference;
   document.documentElement.dataset.theme = resolved;
   document.documentElement.style.colorScheme = resolved;
+  window.codexDeck.setWindowTheme(resolved);
   if (persist) localStorage.setItem("share-master-theme", preference);
   const labels = { system: "跟随系统", light: "浅色", dark: "深色" };
   const icons = { system: "monitor", light: "sun", dark: "moon" };
@@ -1806,6 +1807,7 @@ function applyStoreSnapshot(snapshot) {
   if (snapshot.messageQueues && typeof snapshot.messageQueues === "object") {
     state.messageQueues = restoredMessageQueues(snapshot.messageQueues);
   }
+  syncRecoveredTurns(snapshot.recoveredTurns);
   if (Array.isArray(snapshot.promptTemplates)) state.promptTemplates = snapshot.promptTemplates;
   if (Array.isArray(snapshot.mcpServers)) state.mcpServers = snapshot.mcpServers;
   state.runningTaskIds = new Set(snapshot.runningTaskIds || []);
@@ -1929,6 +1931,8 @@ async function openThread(thread) {
       renderConversation(result.thread);
       if (result.thread._crossModelReadOnly) {
         showDiagnostic("该会话来自其他模型，当前以只读方式打开；跨模型接续分支正在启用中。", false);
+      } else if ((state.messageQueues.get(thread.id) || []).length) {
+        setTimeout(() => startNextQueuedMessage(thread.id), 0);
       }
     } catch (error) {
       if (!isCurrent()) return;
@@ -3055,6 +3059,39 @@ function restoredMessageQueues(value) {
   }));
 }
 
+function restoreRecoveredTurns(value) {
+  const recovered = new Map();
+  for (const turn of Array.isArray(value) ? value : []) {
+    const threadId = String(turn?.threadId || "").trim();
+    if (!threadId) continue;
+    const restarted = turn.interruptionReason === "app-restarted";
+    recovered.set(threadId, {
+      id: turn.turnId || `restart-${threadId}`,
+      status: "failed",
+      error: {
+        code: restarted ? "APP_RESTARTED" : "SERVER_DISCONNECTED",
+        message: restarted
+          ? "Share Master 上次在回答完成前关闭。当前会话记录和待发送消息均已保留，可以继续生成或让队列继续发送。"
+          : "模型连接在回答完成前退出。当前会话记录和待发送消息均已保留，可以继续生成或让队列继续发送。",
+      },
+    });
+  }
+  return recovered;
+}
+
+function syncRecoveredTurns(value) {
+  if (!Array.isArray(value)) return;
+  const recovered = restoreRecoveredTurns(value);
+  for (const [threadId, turn] of state.interruptedTurns) {
+    if (["APP_RESTARTED", "SERVER_DISCONNECTED"].includes(turn?.error?.code) && !recovered.has(threadId)) {
+      state.interruptedTurns.delete(threadId);
+    }
+  }
+  for (const [threadId, turn] of recovered) {
+    if (!state.runningThreads.has(threadId)) state.interruptedTurns.set(threadId, turn);
+  }
+}
+
 async function persistMessageQueue(threadId) {
   if (!threadId) return;
   try {
@@ -3289,6 +3326,10 @@ async function beginTurn(payload) {
     const result = await api.startTurn(payload);
     const run = state.runningThreads.get(threadId);
     if (run) run.turnId = result.turn?.id || run.turnId || null;
+    state.interruptedTurns.delete(threadId);
+    if (threadId === state.activeThread?.id) {
+      elements.chat.querySelectorAll(".turn-interruption").forEach((node) => node.remove());
+    }
     if (threadId === state.activeThread?.id) syncActiveRunState();
     flushPendingInterrupt(threadId);
     return result;
@@ -3306,6 +3347,7 @@ async function startNextQueuedMessage(threadId) {
   state.queueDispatchingThreads.add(threadId);
   let optimistic = null;
   let next = null;
+  let claimed = false;
   try {
     const queue = state.messageQueues.get(threadId) || [];
     next = queue[0] || null;
@@ -3319,11 +3361,23 @@ async function startNextQueuedMessage(threadId) {
       syncActiveRunState();
       return;
     }
-    queue.shift();
-    if (!queue.length) state.messageQueues.delete(threadId);
-    else state.messageQueues.set(threadId, queue);
+    const result = await api.claimMessageQueue({
+      threadId,
+      clientUserMessageId: next.clientUserMessageId,
+      message: next,
+      remainingMessages: queue.slice(1),
+    });
+    if (result?.busy) {
+      showDiagnostic("这个会话正在另一个窗口中回答，待发送消息会在回答完成后继续。", false);
+      return;
+    }
+    next = result?.message || null;
+    const remaining = Array.isArray(result?.messages) ? result.messages : [];
+    if (remaining.length) state.messageQueues.set(threadId, remaining);
+    else state.messageQueues.delete(threadId);
     renderMessageQueuePanel(threadId);
-    await persistMessageQueue(threadId);
+    if (!next) return;
+    claimed = true;
     if (threadId === state.activeThread?.id) {
       optimistic = appendPendingUserMessage(
         next.displayText || next.text || "",
@@ -3336,13 +3390,11 @@ async function startNextQueuedMessage(threadId) {
     await beginTurn({ ...next, threadId });
   } catch (error) {
     optimistic?.remove();
-    const pending = state.messageQueues.get(threadId) || [];
-    if (next && !pending.some((message) => message.clientUserMessageId === next.clientUserMessageId)) {
-      pending.unshift(next);
-      state.messageQueues.set(threadId, pending);
+    if (claimed && next) {
+      const restored = await api.restoreMessageQueue({ threadId, message: next }).catch(() => null);
+      if (Array.isArray(restored)) state.messageQueues.set(threadId, restored);
     }
     renderMessageQueuePanel(threadId);
-    await persistMessageQueue(threadId);
     showDiagnostic(`排队消息发送失败：${error.message}`, true);
     api.notify({ title: "Share Master", body: `排队消息发送失败：${error.message}` }).catch(() => {});
   } finally {
@@ -6374,6 +6426,7 @@ setInterval(() => {
     state.pendingDeletions = bootstrap.pendingDeletions || [];
     state.scheduledTasks = bootstrap.scheduledTasks || [];
     state.messageQueues = restoredMessageQueues(bootstrap.messageQueues);
+    syncRecoveredTurns(bootstrap.recoveredTurns);
     state.promptTemplates = bootstrap.promptTemplates || [];
     state.mcpServers = bootstrap.mcpServers || [];
     state.runningTaskIds = new Set(bootstrap.runningTaskIds || []);
