@@ -1596,15 +1596,22 @@ function renderProviderOptions() {
           : health?.status === "configuration-error" ? "连接配置错误"
             : route?.enabled ? `自动切换 · ${route.fallbackProviderIds?.length || 0} 个备用` : null;
     const detail = [baseDetail, healthLabel].filter(Boolean).join(" · ");
-    const trailing = healthLabel
-      ? `<span class="provider-health ${health?.openUntil > Date.now() ? "open" : health?.status || "route"}" title="${escapeHtml(healthLabel)}"></span>`
-      : '<span data-lucide="chevron-right"></span>';
-    option.innerHTML = `<span class="provider-icon ${visual.className}" aria-label="${escapeHtml(visual.label)}">${visual.markup}</span><span><strong>${escapeHtml(provider.connectionLabel || provider.label)}</strong><small>${escapeHtml(detail)}</small></span>${trailing}`;
+    option.innerHTML = `<span class="provider-icon ${visual.className}" aria-label="${escapeHtml(visual.label)}">${visual.markup}</span><span><strong>${escapeHtml(provider.connectionLabel || provider.label)}</strong><small>${escapeHtml(detail)}</small></span>`;
     option.addEventListener("click", () => {
       if (provider.id === "claude" && !provider.hasStoredKey) openClaudeDialog(provider);
       else connect(provider.id);
     });
-    row.append(drag, option);
+    const actions = document.createElement("div");
+    actions.className = "provider-row-actions";
+    const trailing = document.createElement("span");
+    trailing.className = "provider-trailing";
+    if (healthLabel) {
+      trailing.innerHTML = `<span class="provider-health ${health?.openUntil > Date.now() ? "open" : health?.status || "route"}" title="${escapeHtml(healthLabel)}"></span>`;
+    } else {
+      trailing.innerHTML = '<span data-lucide="chevron-right"></span>';
+    }
+    actions.appendChild(trailing);
+    row.append(drag, option, actions);
     if (provider.id === "claude" || provider.type === "relay") {
       row.classList.add("configurable");
       const configure = document.createElement("button");
@@ -1616,7 +1623,7 @@ function renderProviderOptions() {
       configure.addEventListener("click", () => (
         provider.type === "relay" ? openRelayDialog(provider) : openClaudeDialog(provider)
       ));
-      row.appendChild(configure);
+      actions.appendChild(configure);
     }
     if (provider.deletable) {
       row.classList.add("deletable");
@@ -1627,7 +1634,7 @@ function renderProviderOptions() {
       remove.setAttribute("aria-label", remove.title);
       remove.innerHTML = '<span data-lucide="trash-2"></span>';
       remove.addEventListener("click", () => removeProviderConnection(provider, remove));
-      row.appendChild(remove);
+      actions.appendChild(remove);
     }
     container.appendChild(row);
   }

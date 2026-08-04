@@ -21,10 +21,26 @@ const healthScreenshot = path.join(artifactRoot, "vue-renderer-health.png");
 const extensionsScreenshot = path.join(artifactRoot, "vue-renderer-extensions.png");
 const skillInstallScreenshot = path.join(artifactRoot, "vue-renderer-skill-install.png");
 const darkExtensionsScreenshot = path.join(artifactRoot, "vue-renderer-extensions-dark.png");
+const interactiveLayoutAudits = [];
 app.setPath("userData", path.join(__dirname, ".vue-renderer-profile"));
 
 async function rendererSnapshot(window) {
-  return window.webContents.executeJavaScript(`({
+  return window.webContents.executeJavaScript(`(() => {
+    const providerRows = [...document.querySelectorAll('.provider-option-row')];
+    const providerActionLayout = providerRows.map((row) => {
+      const controls = [...row.querySelectorAll('.provider-trailing, .provider-configure, .provider-delete')];
+      const boxes = controls.map((control) => {
+        const rect = control.getBoundingClientRect();
+        return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
+      });
+      return {
+        actions: row.querySelectorAll('.provider-row-actions').length,
+        overlaps: boxes.some((box, index) => boxes.slice(index + 1).some((other) => !(
+          box.right <= other.left || other.right <= box.left || box.bottom <= other.top || other.bottom <= box.top
+        )))
+      };
+    });
+    return {
     vueMounted: Boolean(window.shareMasterVue),
     stateExposed: Boolean(window.shareMasterState),
     pending: document.querySelector('#app').classList.contains('vue-pending'),
@@ -36,11 +52,52 @@ async function rendererSnapshot(window) {
     relayColumns: getComputedStyle(document.querySelector('#relay-form')).gridTemplateColumns,
     formActionsBackground: getComputedStyle(document.querySelector('#relay-form .form-actions')).backgroundColor,
     providerGroups: [...document.querySelectorAll('.provider-group-label')].map((node) => node.textContent),
+    providerActionLayout,
     fatal: document.querySelector('.renderer-fatal')?.textContent || null
-  })`);
+    };
+  })()`);
 }
 
 async function capturePageWithRetry(window) {
+  interactiveLayoutAudits.push(await window.webContents.executeJavaScript(`(() => {
+    const visible = (node) => {
+      const rect = node.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return false;
+      for (let current = node; current; current = current.parentElement) {
+        const style = getComputedStyle(current);
+        if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) <= 0) return false;
+      }
+      return true;
+    };
+    const overlays = [...document.querySelectorAll('.overlay:not(.hidden)')].filter(visible);
+    const scope = overlays.at(-1) || document;
+    const controls = [...new Set(scope.querySelectorAll('button, input, select, textarea, a[href], [role="button"]'))]
+      .filter(visible)
+      .map((node) => {
+        const rect = node.getBoundingClientRect();
+        return {
+          node,
+          rect,
+          name: node.id ? '#' + node.id : node.getAttribute('aria-label') || node.title || node.className || node.tagName
+        };
+      });
+    const overlaps = [];
+    for (let index = 0; index < controls.length; index += 1) {
+      const left = controls[index];
+      for (const right of controls.slice(index + 1)) {
+        if (left.node.contains(right.node) || right.node.contains(left.node)) continue;
+        const overlapWidth = Math.min(left.rect.right, right.rect.right) - Math.max(left.rect.left, right.rect.left);
+        const overlapHeight = Math.min(left.rect.bottom, right.rect.bottom) - Math.max(left.rect.top, right.rect.top);
+        if (overlapWidth > 1 && overlapHeight > 1) overlaps.push([left.name, right.name]);
+      }
+    }
+    return {
+      capture: ${interactiveLayoutAudits.length + 1},
+      scope: scope.id ? '#' + scope.id : 'document',
+      controls: controls.length,
+      overlaps
+    };
+  })()`));
   let lastError;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
@@ -295,7 +352,7 @@ async function run() {
       }
     }, 50);
   })`);
-  await window.webContents.executeJavaScript("applyTheme('dark'); document.querySelector('#add-connection-button').click()");
+  await window.webContents.executeJavaScript("applyTheme('dark')");
   await new Promise((resolve) => setTimeout(resolve, 150));
   const desktop = await rendererSnapshot(window);
   fs.mkdirSync(artifactRoot, { recursive: true });
@@ -686,14 +743,18 @@ async function run() {
   assert.equal(desktop.vueMounted, true);
   assert.equal(desktop.stateExposed, true);
   assert.equal(desktop.pending, false);
-  assert.equal(desktop.connectionDialogVisible, true);
+  assert.equal(desktop.providerDialogVisible, true);
+  assert.equal(desktop.connectionDialogVisible, false);
   assert.equal(desktop.composerOverflow, false);
   assert.equal(desktop.bodyOverflow, false);
   assert.equal(desktop.fatal, null);
   assert.notEqual(desktop.formActionsBackground, "rgb(255, 255, 255)");
   assert.deepEqual(desktop.providerGroups, ["OpenAI 账号", "Chat Completions 模型"]);
+  assert.equal(desktop.providerActionLayout.length, 3);
+  assert.equal(desktop.providerActionLayout.every((row) => row.actions === 1 && !row.overlaps), true);
   assert.equal(compact.vueMounted, true);
   assert.equal(compact.bodyOverflow, false);
+  assert.equal(compact.providerActionLayout.every((row) => row.actions === 1 && !row.overlaps), true);
   assert.equal(compact.fatal, null);
   assert.equal(conversation.messages, 2);
   assert.equal(conversation.agentHeader, "DeepSeek");
@@ -802,6 +863,11 @@ async function run() {
   assert.equal(extensions.bodyOverflow, false);
   assert.equal(darkTheme.theme, "dark");
   assert.equal(darkTheme.bodyOverflow, false);
+  assert.equal(
+    interactiveLayoutAudits.every((audit) => audit.overlaps.length === 0),
+    true,
+    `Interactive controls overlap: ${JSON.stringify(interactiveLayoutAudits.filter((audit) => audit.overlaps.length))}`,
+  );
   assert.notEqual(darkTheme.bodyBackground, "rgb(255, 255, 255)");
   assert.notEqual(darkTheme.dialogBackground, "rgb(255, 255, 255)");
   assert.notEqual(darkTheme.inputBackground, "rgb(255, 255, 255)");
@@ -826,6 +892,7 @@ async function run() {
     health,
     extensions,
     darkTheme,
+    interactiveLayoutAudits,
     errors,
     screenshots: [desktopScreenshot, compactScreenshot, conversationScreenshot, attachmentScreenshot, localHistoryScreenshot, localProviderScreenshot, usageScreenshot, usageCompactScreenshot, backupScreenshot, syncScreenshot, appSettingsScreenshot, importPreviewScreenshot, healthScreenshot, extensionsScreenshot, skillInstallScreenshot, darkExtensionsScreenshot],
   }));

@@ -455,17 +455,40 @@ async function run() {
   assert.equal(summary.inferredCountAfterDelete, summary.inferredCountBeforeDelete - 1);
   assert.deepEqual(rendererErrors, []);
 
-  await window.webContents.executeJavaScript(`(async () => {
+  const projectLayout = await window.webContents.executeJavaScript(`(async () => {
     document.querySelector('#provider-overlay').classList.add('hidden');
     document.querySelector('#project-overlay').classList.add('hidden');
+    const label = document.querySelector('.project-row.active .project-select strong');
+    label.textContent = '这是一个用于验证紧凑侧栏尾部按钮不会互相重叠的超长 Project 名称';
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const row = label.closest('.project-row');
+    const boxes = [...row.querySelectorAll(':scope > button')].map((node) => node.getBoundingClientRect());
+    return {
+      clipped: label.scrollWidth > label.clientWidth,
+      overlaps: boxes.some((box, index) => boxes.slice(index + 1).some((other) => !(
+        box.right <= other.left || other.right <= box.left || box.bottom <= other.top || other.bottom <= box.top
+      )))
+    };
   })()`);
+  assert.deepEqual(projectLayout, { clipped: true, overlaps: false });
   fs.mkdirSync(path.dirname(screenshot), { recursive: true });
   fs.writeFileSync(screenshot, (await window.webContents.capturePage()).toPNG());
-  await window.webContents.executeJavaScript(`(async () => {
+  const scheduledLayout = await window.webContents.executeJavaScript(`(async () => {
     document.querySelector('[data-thread-view="scheduled"]').click();
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const label = document.querySelector('.task-main strong');
+    label.textContent = '这是一个用于验证运行暂停删除按钮不会重叠的超长已安排任务标题';
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const row = label.closest('.task-item');
+    const boxes = [...row.querySelectorAll(':scope > button')].map((node) => node.getBoundingClientRect());
+    return {
+      clipped: label.scrollWidth > label.clientWidth,
+      overlaps: boxes.some((box, index) => boxes.slice(index + 1).some((other) => !(
+        box.right <= other.left || other.right <= box.left || box.bottom <= other.top || other.bottom <= box.top
+      )))
+    };
   })()`);
+  assert.deepEqual(scheduledLayout, { clipped: true, overlaps: false });
   fs.writeFileSync(scheduledScreenshot, (await window.webContents.capturePage()).toPNG());
   await window.webContents.executeJavaScript(`(async () => {
     document.querySelector('.task-main').click();
@@ -482,6 +505,8 @@ async function run() {
     deleteCalls,
     taskSaveCalls,
     taskRunCalls,
+    projectLayout,
+    scheduledLayout,
     ...summary,
     screenshot,
     scheduledScreenshot,

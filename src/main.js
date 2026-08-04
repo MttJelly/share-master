@@ -4,6 +4,13 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+
+app.setName("Share Master");
+if (app.isPackaged) {
+  process.env.SHARE_MASTER_PACKAGED = "1";
+  process.env.SHARE_MASTER_STORE_ROOT ||= path.join(app.getPath("userData"), "data");
+}
+
 const { CodexServer, CODEX_HOME } = require("./codex-server");
 const { ClaudeServer } = require("./claude-server");
 const { OpenAICompatibleServer } = require("./openai-compatible-server");
@@ -23,7 +30,6 @@ const {
   remapBranchMessage,
 } = require("./conversation-branches");
 
-app.setName("Share Master");
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 const servers = new Map();
 const connectionGenerations = new Map();
@@ -58,10 +64,18 @@ let lastActiveWindow = null;
 const pendingDeepLinks = [];
 const DEFAULT_RENDERER_THREAD_TURNS = 40;
 const APPLICATION_ROOT = path.resolve(__dirname, "..");
+const DEFAULT_WORKSPACE = app.isPackaged ? os.homedir() : APPLICATION_ROOT;
 let applicationUpdateCheck = null;
 const localHistoryReader = createLocalHistoryReader({ homeDirectory: os.homedir() });
 
 function loginItemOptions(openAtLogin = undefined) {
+  if (app.isPackaged) {
+    return {
+      ...(typeof openAtLogin === "boolean" ? { openAtLogin } : {}),
+      path: process.execPath,
+      args: [],
+    };
+  }
   const launcher = path.join(path.resolve(__dirname, ".."), "Start Share Master.cmd");
   return {
     ...(typeof openAtLogin === "boolean" ? { openAtLogin } : {}),
@@ -1891,7 +1905,7 @@ app.whenReady().then(async () => {
   }
   ipcMain.handle("app:bootstrap", async () => ({
     codexHome: providerStore.conversationHome(),
-    defaultWorkspace: APPLICATION_ROOT,
+    defaultWorkspace: DEFAULT_WORKSPACE,
     ...publicStoreSnapshot(),
   }));
   ipcMain.handle("app:settings", () => ({
@@ -1998,7 +2012,7 @@ app.whenReady().then(async () => {
     const owner = BrowserWindow.fromWebContents(event.sender);
     const result = await dialog.showOpenDialog(owner, {
       title: "Choose working directory",
-      defaultPath: currentPath || APPLICATION_ROOT,
+      defaultPath: currentPath || DEFAULT_WORKSPACE,
       properties: ["openDirectory", "createDirectory"],
     });
     return result.canceled ? null : result.filePaths[0];

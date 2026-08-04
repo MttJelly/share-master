@@ -1,10 +1,24 @@
 const { EventEmitter } = require("node:events");
 const { spawn, spawnSync } = require("node:child_process");
+const fs = require("node:fs");
+const os = require("node:os");
 const readline = require("node:readline");
 const path = require("node:path");
+const { findExecutable, userExecutableCandidates } = require("./cli-discovery");
 
-const CODEX_HOME = "G:\\FIle\\codex-file";
-const CODEX_EXE = "C:\\Users\\PC\\AppData\\Local\\Programs\\OpenAI\\Codex\\bin\\codex.exe";
+const LEGACY_CODEX_HOME = "G:\\FIle\\codex-file";
+const CODEX_HOME = process.env.CODEX_HOME
+  || (process.env.SHARE_MASTER_PACKAGED !== "1" && fs.existsSync(LEGACY_CODEX_HOME)
+    ? LEGACY_CODEX_HOME
+    : path.join(os.homedir(), ".codex"));
+const CODEX_EXE = findExecutable({
+  override: process.env.SHARE_MASTER_CODEX_EXE,
+  candidates: [
+    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, "Programs", "OpenAI", "Codex", "bin", "codex.exe") : null,
+    ...userExecutableCandidates("codex"),
+  ],
+  commands: ["codex.exe", "codex"],
+});
 const BUILTIN_MODEL_CATALOG = path.join(__dirname, "model-catalog.json");
 const STARTUP_TIMEOUT_MS = 120000;
 const ANSI_ESCAPE_PATTERN = /[\u001B\u009B][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[-a-zA-Z\d/#&.:=?%@~_]+)*)?\u0007)|(?:(?:\d{1,4}(?:[;:]\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g;
@@ -149,6 +163,9 @@ class CodexServer extends EventEmitter {
 
   async start() {
     if (this.process) return;
+    if (!CODEX_EXE) {
+      throw new Error("未找到 Codex CLI。请先安装 Codex，并确保 codex 命令已加入 PATH。");
+    }
     this.process = spawn(CODEX_EXE, this.provider.args, {
       env: this.env,
       stdio: ["pipe", "pipe", "pipe"],

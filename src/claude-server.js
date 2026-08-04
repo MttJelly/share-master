@@ -5,8 +5,14 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const readline = require("node:readline");
+const { findExecutable, userExecutableCandidates } = require("./cli-discovery");
 
-const CLAUDE_EXE = "C:\\Users\\PC\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Anthropic.ClaudeCode_Microsoft.Winget.Source_8wekyb3d8bbwe\\claude.exe";
+const CLAUDE_EXE = findExecutable({
+  override: process.env.SHARE_MASTER_CLAUDE_EXE,
+  candidates: userExecutableCandidates("claude"),
+  commands: ["claude.exe", "claude"],
+  winget: { packagePrefix: "Anthropic.ClaudeCode_", executable: "claude.exe" },
+});
 const ISOLATED_STORE = Boolean(process.env.SHARE_MASTER_STORE_ROOT);
 
 function readJsonLines(file) {
@@ -113,7 +119,9 @@ class ClaudeServer extends EventEmitter {
   }
 
   async start() {
-    if (!fs.existsSync(CLAUDE_EXE)) throw new Error("未找到 Claude Code CLI，请先安装 Claude Code。");
+    if (!CLAUDE_EXE || !fs.existsSync(CLAUDE_EXE)) {
+      throw new Error("未找到 Claude Code CLI。请先安装 Claude Code，并确保 claude 命令已加入 PATH。");
+    }
     if (!this.provider.env?.[this.provider.envKey]) throw new Error(`${this.provider.envKey} 未配置。`);
     fs.mkdirSync(this.configDir, { recursive: true });
     if (new URL(this.provider.baseUrl).hostname.toLowerCase() === "ai.hexuan.cc") {
