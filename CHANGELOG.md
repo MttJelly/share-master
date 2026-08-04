@@ -2,6 +2,13 @@
 
 本文件记录 Share Master 每个版本的用户可见变化。版本号遵循语义化版本；每次向 GitHub 推送产品更新前，必须先更新版本号和本文件。
 
+## [0.1.3] - 2026-08-04
+
+### 修复
+
+- 修复 GitHub Actions 在 Windows CRLF 检出环境中误报 Vue 生成文件过期的问题。
+- UI 测试改为读取统一应用版本源，减少后续版本升级时的重复维护。
+
 ## [0.1.2] - 2026-08-04
 
 ### 新增
@@ -41,3 +48,4 @@
 
 [0.1.1]: https://github.com/MttJelly/share-master/compare/v0.1.0...v0.1.1
 [0.1.2]: https://github.com/MttJelly/share-master/compare/v0.1.1...v0.1.2
+[0.1.3]: https://github.com/MttJelly/share-master/compare/v0.1.2...v0.1.3

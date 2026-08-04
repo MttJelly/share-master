@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const { app, BrowserWindow, ipcMain } = require("electron");
+const { APP_VERSION } = require("../src/app-version");
 
 const root = path.resolve(__dirname, "..");
 const artifactRoot = path.join(__dirname, "multi-window-artifacts");
@@ -320,14 +321,14 @@ async function run() {
     result: { status: "success", direction: mode === "pull" ? "pull" : "push", message: "同步完成。" },
     conflict: false,
   }));
-  ipcMain.handle("app:settings", () => ({ launchAtLogin: false, closeToTray: true, version: "0.1.2" }));
+  ipcMain.handle("app:settings", () => ({ launchAtLogin: false, closeToTray: true, version: APP_VERSION }));
   ipcMain.handle("app:save-settings", (_event, input) => ({ ...input }));
   ipcMain.handle("app:check-update", () => ({
     status: "available",
-    currentVersion: "0.1.2",
+    currentVersion: APP_VERSION,
     latestVersion: "0.2.0",
     releaseUrl: "https://github.com/MttJelly/share-master/releases/tag/v0.2.0",
-    message: "发现新版本 v0.2.0，当前为 v0.1.2。",
+    message: `发现新版本 v0.2.0，当前为 v${APP_VERSION}。`,
   }));
   ipcMain.handle("local-history:sources", () => ([
     { id: "codex", label: "Codex", description: "Codex CLI 与桌面客户端", available: true },
@@ -1291,7 +1292,7 @@ async function run() {
   assert.equal(appSettings.updateState, "available");
   assert.match(appSettings.updateMessage, /v0\.2\.0/);
   assert.equal(appSettings.updateDownloadVisible, true);
-  assert.equal(appSettings.versionLabel, "v0.1.2");
+  assert.equal(appSettings.versionLabel, `v${APP_VERSION}`);
   assert.equal(importPreview.visible, true);
   assert.equal(importPreview.rows, 4);
   assert.match(importPreview.safety, /敏感信息不会从链接导入/);
