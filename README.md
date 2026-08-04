@@ -20,13 +20,15 @@ Share Master 是一款面向 Windows 的多模型桌面客户端。它把 Codex�
 
 ## 下载与安装
 
+查看全部版本：[GitHub Releases](https://github.com/MttJelly/share-master/releases)
+
 ### ZIP 便携版
 
-下载 `Share-Master-0.1.0-portable-win-x64.zip`，解压到任意目录后运行 `Share Master.exe`。ZIP 版本无需安装，删除解压目录即可移除程序。
+下载 [Share-Master-0.1.0-portable-win-x64.zip](https://github.com/MttJelly/share-master/releases/download/v0.1.0/Share-Master-0.1.0-portable-win-x64.zip)，解压到任意目录后运行 `Share Master.exe`。ZIP 版本无需安装，删除解压目录即可移除程序。
 
 ### MSI 安装版
 
-运行 `Share-Master-0.1.0-setup-win-x64.msi`，按安装向导完成安装。安装程序会创建开始菜单和桌面快捷方式，可从 Windows“已安装的应用”中卸载。
+下载并运行 [Share-Master-0.1.0-setup-win-x64.msi](https://github.com/MttJelly/share-master/releases/download/v0.1.0/Share-Master-0.1.0-setup-win-x64.msi)，按安装向导完成安装。安装程序会创建开始菜单和桌面快捷方式，可从 Windows“已安装的应用”中卸载。
 
 当前构建为 x64 Windows 版本。软件暂未进行商业代码签名，Windows SmartScreen 首次运行时可能要求确认来源。
 
