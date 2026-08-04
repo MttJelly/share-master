@@ -186,7 +186,7 @@ class CodexServer extends EventEmitter {
       this.ready = false;
       const detail = this.diagnostics.at(-1);
       this.failAll(new Error(`Codex app-server exited with code ${code}${detail ? `: ${detail}` : ""}`));
-      this.emit("exit", code);
+      this.emit("exit", code, detail || null);
     });
 
     await this.request("initialize", {

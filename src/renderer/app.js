@@ -61,6 +61,7 @@ const state = ShareMasterVueRuntime.shallowReactive({
   stopRequested: false,
   interruptingTurnId: null,
   runningThreads: new Map(),
+  interruptedTurns: new Map(),
   messageQueues: new Map(),
   threadSearchHits: new Map(),
   threadSearchGeneration: 0,
@@ -108,6 +109,9 @@ const state = ShareMasterVueRuntime.shallowReactive({
   selectedLocalProviderIds: new Set(),
   localProviderLoading: false,
   localProviderGeneration: 0,
+  reconnectAttempt: 0,
+  reconnectTimer: null,
+  reconnecting: false,
 });
 window.shareMasterState = state;
 
@@ -553,7 +557,15 @@ function setConnected(connected, label = "") {
   syncComposerState();
 }
 
-function connect(provider, closeOverlay = true) {
+function clearReconnectTimer(resetAttempt = false) {
+  if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
+  state.reconnectTimer = null;
+  state.reconnecting = false;
+  if (resetAttempt) state.reconnectAttempt = 0;
+}
+
+function connect(provider, closeOverlay = true, reconnecting = false) {
+  if (!reconnecting) clearReconnectTimer(true);
   if (state.connectionPromise && state.connectingProvider === provider) {
     return state.connectionPromise;
   }
@@ -581,6 +593,7 @@ function connect(provider, closeOverlay = true) {
       state.relayBalance = null;
       applyAccountSnapshot(result);
       setConnected(true, result.label);
+      clearReconnectTimer(true);
       const visual = providerVisual(currentProviderDefinition() || {
         brand: result.brand,
         preset: result.providerPreset,
@@ -597,6 +610,7 @@ function connect(provider, closeOverlay = true) {
       if (result.modelWarning) {
         showDiagnostic(`中转站模型列表不可用，已退回配置模型：${result.modelWarning}`, true);
       }
+      if (reconnecting) showDiagnostic("模型连接已自动恢复，可以继续刚才的会话。", false);
       if (["api", "relay"].includes(state.providerType)
         && currentProviderDefinition()?.protocol !== "chat_completions") refreshRelayBalance();
       return generation === state.connectionGeneration;
@@ -623,6 +637,53 @@ function connect(provider, closeOverlay = true) {
     }
   });
   return task;
+}
+
+function scheduleReconnect(provider, disconnect = {}) {
+  if (!provider || state.reconnectTimer || state.connectionPromise) return;
+  const delays = [1000, 3000, 8000];
+  if (state.reconnectAttempt >= delays.length) {
+    state.reconnecting = false;
+    elements.providerState.textContent = "自动重连失败，请手动重试";
+    showDiagnostic("模型连接连续恢复失败。已保留当前会话，请点击左下角连接重新尝试。", true);
+    return;
+  }
+  const delay = delays[state.reconnectAttempt];
+  state.reconnecting = true;
+  elements.providerState.textContent = `${Math.ceil(delay / 1000)} 秒后自动重连`;
+  const detail = disconnect.detail ? `：${disconnect.detail}` : "";
+  showDiagnostic(`模型连接意外断开，正在准备第 ${state.reconnectAttempt + 1} 次重连${detail}`, true);
+  state.reconnectTimer = setTimeout(async () => {
+    state.reconnectTimer = null;
+    state.reconnectAttempt += 1;
+    elements.providerState.textContent = "正在自动重连…";
+    const connected = await connect(provider, false, true);
+    if (!connected) scheduleReconnect(provider, disconnect);
+  }, delay);
+}
+
+function handleConnectionDisconnect(payload = {}) {
+  const provider = payload.providerId || state.provider;
+  for (const [threadId, run] of state.runningThreads) {
+    const interruption = {
+      id: run.turnId || `connection-${threadId}-${Date.now()}`,
+      status: "failed",
+      error: {
+        code: "SERVER_DISCONNECTED",
+        message: payload.detail
+          ? `模型连接在回答完成前退出：${payload.detail}`
+          : "模型连接在回答完成前退出。已保留当前内容，连接恢复后可以继续生成。",
+      },
+    };
+    state.interruptedTurns.set(threadId, interruption);
+    if (threadId === state.activeThread?.id) appendTurnInterruption(interruption, threadId);
+  }
+  setConnected(false);
+  resetAllRuns();
+  state.activeApproval = null;
+  state.approvalQueue = [];
+  elements.approval.classList.add("hidden");
+  if (payload.reconnectable !== false && payload.reason === "server-exit") scheduleReconnect(provider, payload);
 }
 
 async function loadThreads() {
@@ -1980,7 +2041,10 @@ function renderConversation(thread) {
   try {
     for (const turn of turns.slice(firstVisibleTurn)) {
       for (const item of turn.items || []) renderItem(item, turn.id);
+      if (turn.status === "failed") appendTurnInterruption(turn, thread.id);
     }
+    const pendingInterruption = state.interruptedTurns.get(thread.id);
+    if (pendingInterruption) appendTurnInterruption(pendingInterruption, thread.id);
   } finally {
     state.renderTarget = null;
   }
@@ -2077,6 +2141,100 @@ function renderItem(item, turnId = null) {
       status: item.status,
     }, turnId);
   }
+}
+
+function interruptionCopy(turn = {}) {
+  const code = String(turn.error?.code || "").trim();
+  if (code === "OUTPUT_TRUNCATED") {
+    return {
+      title: "回答达到长度上限",
+      detail: turn.error?.message || "模型达到输出长度上限，当前回答可能不完整。",
+      icon: "text-cursor-input",
+    };
+  }
+  if (code === "CONTENT_FILTERED") {
+    return {
+      title: "回答被提前中止",
+      detail: turn.error?.message || "模型供应商因内容过滤提前结束了回答。",
+      icon: "shield-alert",
+    };
+  }
+  return {
+    title: "回答中途断开",
+    detail: turn.error?.message || "模型连接在生成完成前结束。已生成的内容已经保留。",
+    icon: "wifi-off",
+  };
+}
+
+function appendTurnInterruption(turn = {}, threadId = state.activeThread?.id) {
+  if (!threadId) return null;
+  const target = conversationTarget();
+  const turnId = String(turn.id || `connection-${threadId}`);
+  let node = target.querySelector(`[data-interrupted-turn-id="${CSS.escape(turnId)}"]`);
+  if (node) return node;
+  const copy = interruptionCopy(turn);
+  const requestId = String(turn.error?.requestId || turn.requestId || "").trim();
+  node = document.createElement("section");
+  node.className = "turn-interruption";
+  node.dataset.interruptedTurnId = turnId;
+  node.dataset.threadId = threadId;
+  node.innerHTML = `
+    <span class="turn-interruption-icon"><span data-lucide="${copy.icon}"></span></span>
+    <span class="turn-interruption-copy">
+      <strong>${escapeHtml(copy.title)}</strong>
+      <span>${escapeHtml(copy.detail)}</span>
+      ${requestId ? `<small>请求 ID：${escapeHtml(requestId)}</small>` : ""}
+    </span>
+    <span class="turn-interruption-actions">
+      <button class="secondary-command continue-interrupted-turn" type="button"><span data-lucide="corner-down-right"></span>继续生成</button>
+    </span>`;
+  node.querySelector(".continue-interrupted-turn").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    if (state.activeThread?.id !== threadId) return;
+    if (!state.connected) {
+      showDiagnostic("连接尚未恢复，请等待自动重连或重新选择连接。", true);
+      return;
+    }
+    if (state.running || state.submitting) {
+      showDiagnostic("当前会话仍在运行，请先等待或停止当前回复。", true);
+      return;
+    }
+    button.disabled = true;
+    button.innerHTML = '<span data-lucide="loader-circle"></span>正在继续';
+    button.classList.add("working");
+    refreshIcons();
+    const savedDraft = elements.input.value;
+    const savedAttachments = [...state.pendingAttachments];
+    elements.input.value = "请从刚才中断的位置继续。先检查已经完成的操作，不要重复已完成的文件修改、工具调用或已经输出的内容。";
+    state.pendingAttachments = [];
+    renderAttachments();
+    elements.input.dispatchEvent(new Event("input", { bubbles: true }));
+    await sendMessage("auto");
+    if (state.activeThread?.id === threadId) {
+      const currentDraft = elements.input.value.trim();
+      elements.input.value = [savedDraft.trim(), currentDraft].filter(Boolean).join("\n");
+      state.pendingAttachments = [...new Set([...savedAttachments, ...state.pendingAttachments])];
+      renderAttachments();
+      resizeComposer();
+      syncComposerState();
+    }
+    if (state.runningThreads.has(threadId)) {
+      state.interruptedTurns.delete(threadId);
+      button.innerHTML = '<span data-lucide="check"></span>已继续';
+    } else {
+      button.disabled = false;
+      button.classList.remove("working");
+      button.innerHTML = '<span data-lucide="corner-down-right"></span>继续生成';
+    }
+    refreshIcons();
+  });
+  target.appendChild(node);
+  if (!state.renderTarget) {
+    syncThinkingIndicator();
+    refreshIcons();
+    scrollToBottom();
+  }
+  return node;
 }
 
 function localImageUrl(filePath) {
@@ -2843,6 +3001,8 @@ function notifyThreadCompletion(threadId, turn) {
 function completeThreadRun(threadId, turn) {
   const wasBackground = threadId !== state.activeThread?.id || document.hidden;
   setThreadRunning(threadId, false);
+  if (turn?.status === "failed") state.interruptedTurns.set(threadId, { ...turn });
+  else if (turn?.status === "completed") state.interruptedTurns.delete(threadId);
   const queue = state.messageQueues.get(threadId) || [];
   if (queue.length) {
     setTimeout(() => startNextQueuedMessage(threadId), 0);
@@ -2850,7 +3010,10 @@ function completeThreadRun(threadId, turn) {
     notifyThreadCompletion(threadId, turn);
   }
   if (threadId === state.activeThread?.id) {
-    if (turn?.status === "failed") showDiagnostic(turn.error?.message || "本轮执行失败。", true);
+    if (turn?.status === "failed") {
+      appendTurnInterruption(turn, threadId);
+      showDiagnostic(turn.error?.message || "回答中途断开，已保留当前内容。", true);
+    }
     if (turn?.status === "interrupted") showDiagnostic("本轮已停止。", false);
   }
   scheduleThreadRefresh();
@@ -3774,6 +3937,9 @@ function renderUsage(usage) {
     const row = document.createElement("div");
     row.className = "usage-log-row";
     const statusLabel = log.status === "failed" ? "失败" : log.status === "interrupted" ? "已停止" : "完成";
+    const diagnostic = [log.errorMessage, log.requestId ? `请求 ID：${log.requestId}` : null, log.finishReason ? `结束原因：${log.finishReason}` : null]
+      .filter(Boolean).join("\n");
+    if (diagnostic) row.title = diagnostic;
     row.innerHTML = [
       `<span class="usage-log-provider"><strong>${escapeHtml(providerUsageLabel(log.providerId))}</strong><br>${escapeHtml(new Date(log.finishedAt).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }))}</span>`,
       `<span title="${escapeHtml(log.model)}">${escapeHtml(log.model)}</span>`,
@@ -5594,13 +5760,7 @@ elements.taskOverlay.addEventListener("click", (event) => {
 api.onEvent(handleEvent);
 api.onApproval(showApproval);
 api.onDiagnostic((message) => showDiagnostic(message));
-api.onDisconnected(() => {
-  setConnected(false);
-  resetAllRuns();
-  state.activeApproval = null;
-  state.approvalQueue = [];
-  elements.approval.classList.add("hidden");
-});
+api.onDisconnected(handleConnectionDisconnect);
 api.onStoreChanged(applyStoreSnapshot);
 api.onExtensionsChanged((snapshot) => applyExtensionSnapshot(snapshot));
 api.onNavigate((payload = {}) => {

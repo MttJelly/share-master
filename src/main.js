@@ -1290,6 +1290,10 @@ function trackProviderRequest(server, message) {
       finishedAt,
       durationMs: finishedAt - startedAt,
       status: turn.status,
+      errorCode: turn.error?.code || null,
+      errorMessage: turn.error?.message || (turn.status === "failed" ? "模型回答在完成前失败，服务端未提供详细原因。" : null),
+      requestId: turn.error?.requestId || turn.requestId || null,
+      finishReason: turn.error?.finishReason || turn.finishReason || null,
       inputTokens,
       outputTokens,
       cachedInputTokens,
@@ -2476,10 +2480,16 @@ app.whenReady().then(async () => {
         send("codex:diagnostic", `已安全取消不支持的 Codex 请求：${message.method}`);
       });
       server.on("diagnostic", (message) => send("codex:diagnostic", message));
-      server.on("exit", (code) => {
+      server.on("exit", (code, detail = null) => {
         failScheduledTasksForServer(server, `连接已断开（退出代码 ${code ?? "未知"}）。`);
         if (!isCurrent()) return;
-        send("codex:disconnected", { code });
+        send("codex:disconnected", {
+          code,
+          reason: "server-exit",
+          providerId: currentProviderId(server),
+          detail: detail ? String(detail).slice(0, 1000) : null,
+          reconnectable: true,
+        });
         servers.delete(senderId);
       });
       try {

@@ -242,22 +242,37 @@ async function consumeSse(response, visitor) {
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let receivedDone = false;
+  let eventCount = 0;
+  let malformedBlocks = 0;
+  const visitBlock = (block) => {
+    const event = parseSseBlock(block);
+    if (event === "[DONE]") {
+      receivedDone = true;
+      return true;
+    }
+    if (event) {
+      eventCount += 1;
+      visitor(event);
+    } else if (block.split(/\r?\n/).some((line) => line.startsWith("data:") && line.slice(5).trim())) {
+      malformedBlocks += 1;
+    }
+    return false;
+  };
   while (true) {
     const { done, value } = await reader.read();
     buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
     const blocks = buffer.split(/\r?\n\r?\n/);
     buffer = blocks.pop() || "";
     for (const block of blocks) {
-      const event = parseSseBlock(block);
-      if (event === "[DONE]") return;
-      if (event) visitor(event);
+      if (visitBlock(block)) return { receivedDone, eventCount, malformedBlocks };
     }
     if (done) break;
   }
   if (buffer.trim()) {
-    const event = parseSseBlock(buffer);
-    if (event && event !== "[DONE]") visitor(event);
+    visitBlock(buffer);
   }
+  return { receivedDone, eventCount, malformedBlocks };
 }
 
 function responseError(status, statusText, text) {
@@ -277,6 +292,46 @@ function emptyResponseError() {
   const error = new Error("模型接口返回了空响应。");
   error.code = "EMPTY_RESPONSE";
   return error;
+}
+
+function providerRequestId(response) {
+  for (const name of ["x-request-id", "request-id", "x-amzn-requestid", "cf-ray"]) {
+    const value = String(response?.headers?.get(name) || "").trim();
+    if (value) return value.slice(0, 240);
+  }
+  return null;
+}
+
+function completionError(code, message, details = {}) {
+  const error = new Error(message);
+  error.code = code;
+  error.requestId = details.requestId || null;
+  error.finishReason = details.finishReason || null;
+  return error;
+}
+
+function assertCompletionReason(finishReason, requestId) {
+  const reason = String(finishReason || "").trim().toLowerCase();
+  if (!reason || ["stop", "tool_calls", "function_call"].includes(reason)) return;
+  if (reason === "length" || reason === "max_tokens") {
+    throw completionError(
+      "OUTPUT_TRUNCATED",
+      "模型达到输出长度上限，回答没有完整结束。已保留当前内容，可点击“继续生成”。",
+      { requestId, finishReason: reason },
+    );
+  }
+  if (reason === "content_filter") {
+    throw completionError(
+      "CONTENT_FILTERED",
+      "模型供应商因内容过滤提前结束了回答。已保留允许显示的部分内容。",
+      { requestId, finishReason: reason },
+    );
+  }
+  throw completionError(
+    "INCOMPLETE_STREAM",
+    `模型以未识别的结束原因“${reason}”停止，回答可能不完整。`,
+    { requestId, finishReason: reason },
+  );
 }
 
 class OpenAICompatibleServer extends EventEmitter {
@@ -592,11 +647,14 @@ class OpenAICompatibleServer extends EventEmitter {
       }),
       signal: controller.signal,
     });
+    const requestId = providerRequestId(response);
+    if (requestId) turn.requestId = requestId;
     if (!response.ok) throw responseError(response.status, response.statusText, await response.text());
     if (response.headers.get("content-type")?.includes("application/json")) {
       const payload = await response.json();
       if (payload?.usage && typeof payload.usage === "object") turn.usage = { ...payload.usage };
-      const message = payload?.choices?.[0]?.message || payload?.choices?.[0]?.delta || {};
+      const choice = payload?.choices?.[0] || {};
+      const message = choice.message || choice.delta || {};
       const reasoning = message.reasoning_content || message.reasoning || "";
       const content = typeof message.content === "string" ? message.content : "";
       if (reasoning) {
@@ -614,40 +672,81 @@ class OpenAICompatibleServer extends EventEmitter {
         });
       }
       if (!content && !reasoning) throw emptyResponseError();
+      turn.finishReason = choice.finish_reason || choice.finishReason || null;
+      assertCompletionReason(turn.finishReason, requestId);
       return;
     }
-    await consumeSse(response, (event) => {
-      if (event?.usage && typeof event.usage === "object") turn.usage = { ...event.usage };
-      const delta = event?.choices?.[0]?.delta || {};
-      const reasoning = delta.reasoning_content || delta.reasoning || "";
-      if (reasoning) {
-        reasoningItem.summary.push({ type: "summary_text", text: reasoning });
-        this.emit("notification", {
-          method: "item/reasoning/summaryTextDelta",
-          params: { threadId: thread.id, turnId: turn.id, itemId: reasoningItem.id, delta: reasoning },
-        });
+    let finishReason = null;
+    let streamResult;
+    try {
+      streamResult = await consumeSse(response, (event) => {
+        if (event?.usage && typeof event.usage === "object") turn.usage = { ...event.usage };
+        const choice = event?.choices?.[0] || {};
+        if (choice.finish_reason !== undefined && choice.finish_reason !== null) finishReason = choice.finish_reason;
+        if (choice.finishReason !== undefined && choice.finishReason !== null) finishReason = choice.finishReason;
+        const delta = choice.delta || {};
+        const reasoning = delta.reasoning_content || delta.reasoning || "";
+        if (reasoning) {
+          reasoningItem.summary.push({ type: "summary_text", text: reasoning });
+          this.emit("notification", {
+            method: "item/reasoning/summaryTextDelta",
+            params: { threadId: thread.id, turnId: turn.id, itemId: reasoningItem.id, delta: reasoning },
+          });
+        }
+        if (delta.content) {
+          assistantItem.text += delta.content;
+          this.emit("notification", {
+            method: "item/agentMessage/delta",
+            params: { threadId: thread.id, turnId: turn.id, itemId: assistantItem.id, delta: delta.content },
+          });
+        }
+      });
+    } catch (error) {
+      if (error?.name === "AbortError" || finishReason && ["stop", "tool_calls", "function_call"].includes(String(finishReason).toLowerCase())) {
+        if (error?.name === "AbortError") throw error;
+      } else {
+        throw completionError(
+          "INCOMPLETE_STREAM",
+          `模型流式连接在完成前中断。已保留当前内容，可点击“继续生成”。${error?.message ? `（${error.message}）` : ""}`,
+          { requestId, finishReason },
+        );
       }
-      if (delta.content) {
-        assistantItem.text += delta.content;
-        this.emit("notification", {
-          method: "item/agentMessage/delta",
-          params: { threadId: thread.id, turnId: turn.id, itemId: assistantItem.id, delta: delta.content },
-        });
-      }
-    });
+    }
     if (!assistantItem.text && !reasoningItem.summary.length) throw emptyResponseError();
+    turn.finishReason = finishReason || null;
+    assertCompletionReason(turn.finishReason, requestId);
+    if (!streamResult?.receivedDone && !turn.finishReason) {
+      const detail = streamResult?.malformedBlocks
+        ? `，并包含 ${streamResult.malformedBlocks} 个无法解析的数据块`
+        : "";
+      throw completionError(
+        "INCOMPLETE_STREAM",
+        `模型流式连接在完成标记前关闭${detail}。已保留当前内容，可点击“继续生成”。`,
+        { requestId },
+      );
+    }
   }
 
   retryableProviderError(error) {
     const status = Number(error?.status);
     return error instanceof TypeError
       || error?.code === "EMPTY_RESPONSE"
+      || error?.code === "INCOMPLETE_STREAM"
       || [408, 409, 425, 429].includes(status)
       || status >= 500;
   }
 
   markProviderFailure(providerId, error, retryable) {
     const previous = this.providerHealth.get(providerId) || { failures: 0, openUntil: 0 };
+    if (["OUTPUT_TRUNCATED", "CONTENT_FILTERED"].includes(error?.code)) {
+      this.providerHealth.set(providerId, {
+        ...previous,
+        lastFailureAt: Date.now(),
+        lastError: String(error?.message || error).slice(0, 500),
+        status: error.code === "OUTPUT_TRUNCATED" ? "limited" : "content-filtered",
+      });
+      return;
+    }
     const failures = retryable ? previous.failures + 1 : previous.failures;
     const threshold = Math.max(1, Number(this.failover?.failureThreshold) || 2);
     const cooldownMs = Math.max(5000, Number(this.failover?.cooldownMs) || 60000);
@@ -688,7 +787,14 @@ class OpenAICompatibleServer extends EventEmitter {
     if (assistantItem.text) turn.items.push(assistantItem);
     this.emit("notification", { method: "item/completed", params: { threadId: thread.id, turnId: turn.id, item: assistantItem } });
     turn.status = status;
-    if (error && status === "failed") turn.error = { message: error.message };
+    if (error && status === "failed") {
+      turn.error = {
+        message: error.message,
+        code: error.code || null,
+        requestId: error.requestId || turn.requestId || null,
+        finishReason: error.finishReason || turn.finishReason || null,
+      };
+    }
     thread.updatedAt = Math.floor(Date.now() / 1000);
     thread.recencyAt = thread.updatedAt;
     this.saveThread(thread);
@@ -703,6 +809,8 @@ class OpenAICompatibleServer extends EventEmitter {
           model: turn.actualModel || thread.model || this.provider.model,
           providerId: turn.actualProviderId || this.provider.id,
           ...(turn.usage ? { usage: turn.usage } : {}),
+          ...(turn.requestId ? { requestId: turn.requestId } : {}),
+          ...(turn.finishReason ? { finishReason: turn.finishReason } : {}),
           ...(turn.error ? { error: turn.error } : {}),
         },
       },

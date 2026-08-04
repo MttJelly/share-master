@@ -90,6 +90,8 @@ You can enter another message while a response is being generated:
 - Stop (`停止`) requests immediate cancellation of the current response.
 - Clear pending messages (`清空待发送`) in the conversation menu removes queued messages that have not run.
 
+If the model stream closes early, reaches an output limit, or is filtered by the provider, Share Master preserves the generated content and displays an interrupted-response card. A continuation prompt is sent only after you choose Continue generating (`继续生成`); potentially state-changing tasks are never retried automatically.
+
 Queues are stored per conversation. Switching conversations neither clears a queue nor stops work in another conversation.
 
 ### Archive, remove, and delete now

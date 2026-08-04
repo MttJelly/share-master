@@ -511,7 +511,15 @@ class ClaudeServer extends EventEmitter {
     if (diagnostic) this.emit("diagnostic", diagnostic);
     this.emit("notification", {
       method: "turn/completed",
-      params: { threadId, turn: { id: turnId, status, ...(usage ? { usage } : {}) } },
+      params: {
+        threadId,
+        turn: {
+          id: turnId,
+          status,
+          ...(diagnostic && status === "failed" ? { error: { message: String(diagnostic).slice(0, 1000) } } : {}),
+          ...(usage ? { usage } : {}),
+        },
+      },
     });
   }
 

@@ -142,6 +142,9 @@ async function run() {
   let localProviderImported = false;
   const steerRequests = [];
   const interruptRequests = [];
+  const connectRequests = [];
+  const startThreadRequests = [];
+  const startTurnRequests = [];
   const copiedTexts = [];
   const persistedQueues = [];
   ipcMain.handle("app:bootstrap", () => ({
@@ -232,6 +235,31 @@ async function run() {
     models: [input.providerId === "qwen-fixture" ? "qwen-plus" : "deepseek-chat"],
     latencyMs: input.providerId === "qwen-fixture" ? 48 : 36,
   }));
+  ipcMain.handle("codex:connect", (_event, providerId) => {
+    connectRequests.push(providerId);
+    return {
+      provider: providerId,
+      label: "DeepSeek",
+      brand: "openai",
+      providerPreset: "deepseek",
+      providerType: "relay",
+      providerEngine: "openai-compatible",
+      modelProvider: "deepseek",
+    };
+  });
+  ipcMain.handle("codex:list", () => ({ data: [], nextCursor: null }));
+  ipcMain.handle("codex:models", () => ({
+    data: [{ id: "deepseek-chat", model: "deepseek-chat", displayName: "DeepSeek Chat", isDefault: true }],
+    nextCursor: null,
+  }));
+  ipcMain.handle("codex:start-thread", (_event, input) => {
+    startThreadRequests.push(structuredClone(input));
+    return { thread: { id: "unexpected-reconnect-thread", turns: [] } };
+  });
+  ipcMain.handle("codex:start-turn", (_event, input) => {
+    startTurnRequests.push(structuredClone(input));
+    return { turn: { id: "unexpected-reconnect-turn" } };
+  });
   ipcMain.handle("codex:steer", (_event, input) => {
     steerRequests.push(structuredClone(input));
     return { turnId: input.expectedTurnId };
@@ -244,6 +272,7 @@ async function run() {
     copiedTexts.push(String(value || ""));
     return true;
   });
+  ipcMain.handle("app:notify", () => true);
   ipcMain.handle("thread:save-message-queue", (_event, input) => {
     persistedQueues.push(structuredClone(input));
     return input.messages || [];
@@ -376,11 +405,17 @@ async function run() {
       model: 'deepseek-chat',
       turns: [{
         id: 'turn-1',
+        status: 'completed',
         items: [
           { id: 'user-1', type: 'userMessage', content: [{ type: 'text', text: '请分析当前界面，并给出可以立即实施的改进。' }] },
           { id: 'reasoning-1', type: 'reasoning', summary: [{ text: '先检查信息层级、对比度和高频操作路径，再确定视觉调整。这个摘要故意写得更长，用于确认 DeepSeek、Codex、Claude 以及工具执行输出等过程卡片都能使用完整的会话宽度，而不会被挤成狭窄的小框。\\n\\n第二段继续验证长文本换行、可读行高和暗色主题对比度。' }] },
           { id: 'agent-1', type: 'agentMessage', text: '## 优化重点\\n\\n- 收紧侧栏层级，让 Project 与会话更容易扫描。\\n- 保持输入区稳定，模型切换不应改变布局。\\n- 对运行中、已完成和错误状态使用明确但克制的提示。\\n\\n这些调整不会改变现有聊天记录或模型配置。' }
         ]
+      }, {
+        id: 'turn-interrupted',
+        status: 'failed',
+        error: { code: 'INCOMPLETE_STREAM', message: '模型流式连接在完成标记前关闭。已保留当前内容，可点击“继续生成”。', requestId: 'qa-request-1' },
+        items: []
       }]
     };
     state.activeThread = thread;
@@ -417,6 +452,9 @@ async function run() {
       thinkingVisible: Boolean(document.querySelector('.thinking-indicator')),
       thinkingText: document.querySelector('.thinking-indicator')?.textContent.replace(/\s+/g, ' ').trim() || '',
       thinkingIsLast: document.querySelector('#chat-view').lastElementChild?.classList.contains('thinking-indicator') || false,
+      interruptionVisible: Boolean(document.querySelector('.turn-interruption')),
+      interruptionText: document.querySelector('.turn-interruption')?.textContent.replace(/\\s+/g, ' ').trim() || '',
+      interruptionButtons: document.querySelectorAll('.continue-interrupted-turn').length,
       stopVisible: !stop.classList.contains('hidden'),
       actionTopDelta: Math.abs(Math.round(send.getBoundingClientRect().top - stop.getBoundingClientRect().top)),
       actionLaneWidth: Math.round(document.querySelector('.composer-submit').getBoundingClientRect().width),
@@ -747,6 +785,70 @@ async function run() {
     bodyOverflow: document.body.scrollWidth > document.body.clientWidth || document.body.scrollHeight > document.body.clientHeight
   }))()`);
 
+  const backgroundInterruption = await window.webContents.executeJavaScript(`(() => {
+    document.querySelectorAll('.overlay').forEach((node) => node.classList.add('hidden'));
+    clearReconnectTimer(true);
+    const foreground = { id: 'foreground-thread', name: '前台会话', turns: [] };
+    const background = { id: 'background-thread', name: '后台会话', turns: [] };
+    state.connected = true;
+    state.provider = 'deepseek-fixture';
+    state.providerType = 'relay';
+    state.providerEngine = 'openai-compatible';
+    state.activeThread = foreground;
+    state.activeThreads = [foreground, background];
+    state.allThreads = [foreground, background];
+    setThreadRunning(background.id, true, 'background-running-turn');
+    completeThreadRun(background.id, {
+      id: 'background-failed-turn',
+      status: 'failed',
+      error: { code: 'INCOMPLETE_STREAM', message: '后台回答连接提前关闭。' },
+      items: [],
+    });
+    clearTimeout(state.threadRefreshTimer);
+    state.threadRefreshTimer = null;
+    state.activeThread = background;
+    renderConversation(background);
+    return {
+      stored: state.interruptedTurns.has(background.id),
+      visible: Boolean(document.querySelector('[data-interrupted-turn-id="background-failed-turn"]')),
+      buttons: document.querySelectorAll('.continue-interrupted-turn').length,
+    };
+  })()`);
+
+  const reconnectPrompt = '这条原消息只能保留，自动重连不能重新发送';
+  await window.webContents.executeJavaScript(`(() => {
+    clearReconnectTimer(true);
+    state.connectionPromise = null;
+    state.connectingProvider = null;
+    state.connected = true;
+    state.provider = 'deepseek-fixture';
+    state.providerType = 'relay';
+    state.providerEngine = 'openai-compatible';
+    const thread = { id: 'reconnect-thread', name: '重连测试', turns: [] };
+    state.activeThread = thread;
+    state.activeThreads = [thread];
+    state.allThreads = [thread];
+    state.threads = [thread];
+    document.querySelector('#composer-input').value = ${JSON.stringify(reconnectPrompt)};
+    renderConversation(thread);
+    setThreadRunning(thread.id, true, 'reconnect-running-turn');
+    handleConnectionDisconnect({
+      reason: 'server-exit',
+      providerId: 'deepseek-fixture',
+      detail: 'stream disconnected before completion',
+      reconnectable: true,
+    });
+  })()`);
+  await new Promise((resolve) => setTimeout(resolve, 1300));
+  const reconnect = await window.webContents.executeJavaScript(`(() => ({
+    connected: state.connected,
+    reconnecting: state.reconnecting,
+    running: state.runningThreads.has('reconnect-thread'),
+    interruptionVisible: Boolean(document.querySelector('[data-interrupted-turn-id="reconnect-running-turn"]')),
+    interruptionText: document.querySelector('[data-interrupted-turn-id="reconnect-running-turn"]')?.textContent || '',
+    prompt: document.querySelector('#composer-input').value,
+  }))()`);
+
   assert.equal(desktop.vueMounted, true);
   assert.equal(desktop.stateExposed, true);
   assert.equal(desktop.pending, false);
@@ -775,6 +877,21 @@ async function run() {
   assert.match(conversation.thinkingText, /正在思考/);
   assert.equal(conversation.thinkingIsLast, true);
   assert.equal(conversation.thinkingHiddenAfterCompletion, true);
+  assert.equal(conversation.interruptionVisible, true);
+  assert.match(conversation.interruptionText, /回答中途断开/);
+  assert.match(conversation.interruptionText, /qa-request-1/);
+  assert.equal(conversation.interruptionButtons, 1);
+  assert.deepEqual(backgroundInterruption, { stored: true, visible: true, buttons: 1 });
+  assert.equal(connectRequests.length, 1);
+  assert.equal(connectRequests[0], "deepseek-fixture");
+  assert.equal(startThreadRequests.length, 0);
+  assert.equal(startTurnRequests.length, 0);
+  assert.equal(reconnect.connected, true);
+  assert.equal(reconnect.reconnecting, false);
+  assert.equal(reconnect.running, false);
+  assert.equal(reconnect.interruptionVisible, true);
+  assert.match(reconnect.interruptionText, /stream disconnected before completion/);
+  assert.equal(reconnect.prompt, reconnectPrompt);
   assert.equal(conversation.stopVisible, true);
   assert.ok(conversation.actionTopDelta <= 1, `Send and stop controls are on different rows: ${JSON.stringify(conversation)}`);
   assert.ok(conversation.actionLaneWidth >= 70);

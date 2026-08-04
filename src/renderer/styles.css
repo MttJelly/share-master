@@ -178,6 +178,17 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 .thinking-indicator[data-state="stopping"] { border-color: #dec9a7; background: #fbf7ef; }
 .thinking-indicator[data-state="stopping"] .thinking-dots i { background: #a7732e; }
 @keyframes thinking-bounce { 0%, 65%, 100% { opacity: .35; transform: translateY(0); } 32% { opacity: 1; transform: translateY(-3px); } }
+.turn-interruption { width: min(calc(100% - 38px), 720px); display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: start; gap: 11px; margin: -2px 0 24px 38px; padding: 13px 14px; border: 1px solid #e0c59f; border-radius: 9px; background: #fcf7ef; color: var(--ink); box-sizing: border-box; }
+.turn-interruption-icon { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 8px; background: #f1dfc4; color: #925f20; }
+.turn-interruption-icon svg { width: 17px; height: 17px; }
+.turn-interruption-copy { min-width: 0; line-height: 1.45; }
+.turn-interruption-copy strong, .turn-interruption-copy span, .turn-interruption-copy small { display: block; }
+.turn-interruption-copy strong { font-size: 12px; font-weight: 700; }
+.turn-interruption-copy span { margin-top: 3px; color: #695b49; font-size: 11px; overflow-wrap: anywhere; }
+.turn-interruption-copy small { margin-top: 5px; color: var(--subtle); font: 9.5px/1.4 Consolas, monospace; overflow-wrap: anywhere; }
+.turn-interruption-actions { align-self: center; }
+.turn-interruption-actions button { white-space: nowrap; }
+.turn-interruption-actions button.working svg { animation: conversation-spin 900ms linear infinite; }
 
 .composer-wrap { position: absolute; left: 0; right: 0; bottom: 0; padding: 22px max(24px, calc((100% - 820px)/2)) 18px; background: linear-gradient(transparent, rgba(255,255,255,.95) 28%, #fff 58%); }
 .composer { position: relative; min-height: 108px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); box-shadow: 0 8px 28px rgba(27,34,40,.09); padding: 12px; }
@@ -1770,6 +1781,9 @@ html[data-theme="dark"] .provider-switch:hover { background: #242d29; }
 html[data-theme="dark"] .thinking-indicator { border-color: #38574d; background: #202e29; }
 html[data-theme="dark"] .thinking-avatar { background: #31594d; color: #d9fff2; }
 html[data-theme="dark"] .thinking-indicator[data-state="stopping"] { border-color: #685236; background: #30281e; }
+html[data-theme="dark"] .turn-interruption { border-color: #665038; background: #30281f; }
+html[data-theme="dark"] .turn-interruption-icon { background: #4b3926; color: #e7b873; }
+html[data-theme="dark"] .turn-interruption-copy span { color: #c9b79e; }
 
 html[data-theme="dark"] .local-provider-privacy { border-color: #315d50; background: #21362f; }
 html[data-theme="dark"] .local-provider-row:hover { background: #2a312e; }
@@ -1934,6 +1948,8 @@ html[data-theme="dark"] .queue-button:hover:not(:disabled) { border-color: #547b
 @media (max-width: 980px) {
   .activity { width: 100%; margin-left: 0; padding-left: 12px; }
   .thinking-indicator { width: 100%; margin-left: 0; }
+  .turn-interruption { width: 100%; margin-left: 0; grid-template-columns: 34px minmax(0, 1fr); }
+  .turn-interruption-actions { grid-column: 2; justify-self: start; }
   .composer-submit { grid-column: 2; grid-row: 1 / span 2; }
   .composer-submit > .send-button,
   .composer-submit > .queue-button,

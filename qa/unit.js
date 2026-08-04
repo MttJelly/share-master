@@ -1184,11 +1184,85 @@ async function testOpenAICompatibleFailover() {
     const partialThread = (await partialServer.startThread("F:\\codepro", "partial-model")).thread.id;
     const partialCompletion = await runTurn(partialServer, partialThread, "partial failure");
     assert.equal(partialCompletion.status, "failed");
+    assert.equal(partialCompletion.error.code, "INCOMPLETE_STREAM");
+    assert.match(partialCompletion.error.message, /流式连接/);
     assert.equal(partialFallbackCalls, 0);
     const partialRead = await partialServer.readThread(partialThread);
     assert.equal(partialRead.thread.turns[0].items.find((item) => item.type === "agentMessage").text, "partial");
     partialServer.stop();
   } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+async function testOpenAICompatibleCompletionValidation() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "share-master-compatible-completion-"));
+  const encoder = new TextEncoder();
+  const responses = [
+    [
+      'data: {"choices":[{"delta":{"content":"complete"}}]}\n\n',
+      'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
+    ],
+    [
+      'data: {"choices":[{"delta":{"content":"partial-eof"}}]}\n\n',
+    ],
+    [
+      'data: {"choices":[{"delta":{"content":"partial-length"}}]}\n\n',
+      'data: {"choices":[{"delta":{},"finish_reason":"length"}]}\n\n',
+      'data: [DONE]\n\n',
+    ],
+  ];
+  let requestIndex = 0;
+  const server = new OpenAICompatibleServer({
+    id: "completion-unit",
+    label: "Completion unit",
+    baseUrl: "https://completion.example/v1",
+    model: "completion-model",
+    apiKey: "completion-key",
+    codexHome: root,
+  }, async () => {
+    const chunks = responses[requestIndex++] || [];
+    return new Response(new ReadableStream({
+      start(controller) {
+        chunks.forEach((chunk) => controller.enqueue(encoder.encode(chunk)));
+        controller.close();
+      },
+    }), {
+      status: 200,
+      headers: { "content-type": "text/event-stream", "x-request-id": `request-${requestIndex}` },
+    });
+  });
+  const runTurn = async (threadId, prompt) => {
+    const completed = new Promise((resolve) => {
+      const listener = (message) => {
+        if (message.method !== "turn/completed") return;
+        server.off("notification", listener);
+        resolve(message.params.turn);
+      };
+      server.on("notification", listener);
+    });
+    await server.startTurn(threadId, prompt, "F:\\codepro");
+    return completed;
+  };
+  try {
+    await server.start();
+    const threadId = (await server.startThread("F:\\codepro", "completion-model")).thread.id;
+    const normal = await runTurn(threadId, "normal eof");
+    assert.equal(normal.status, "completed");
+    assert.equal(normal.finishReason, "stop");
+    const incomplete = await runTurn(threadId, "missing marker");
+    assert.equal(incomplete.status, "failed");
+    assert.equal(incomplete.error.code, "INCOMPLETE_STREAM");
+    assert.equal(incomplete.error.requestId, "request-2");
+    const limited = await runTurn(threadId, "length limit");
+    assert.equal(limited.status, "failed");
+    assert.equal(limited.error.code, "OUTPUT_TRUNCATED");
+    assert.equal(limited.finishReason, "length");
+    const thread = (await server.readThread(threadId)).thread;
+    assert.equal(thread.turns[1].items.find((item) => item.type === "agentMessage").text, "partial-eof");
+    assert.equal(thread.turns[2].items.find((item) => item.type === "agentMessage").text, "partial-length");
+  } finally {
+    server.stop();
     fs.rmSync(root, { recursive: true, force: true });
   }
 }
@@ -1741,9 +1815,10 @@ Promise.resolve()
   .then(testClaudeThreadDeletion)
   .then(testOpenAICompatibleStreaming)
   .then(testOpenAICompatibleFailover)
+  .then(testOpenAICompatibleCompletionValidation)
   .then(testOpenAICompatibleInterrupt)
   .then(testOpenAICompatibleSharedCodexHistory)
-  .then(() => console.log(JSON.stringify({ ok: true, tests: 47 })))
+  .then(() => console.log(JSON.stringify({ ok: true, tests: 48 })))
   .catch((error) => {
     console.error(error.stack || error.message);
     process.exitCode = 1;
