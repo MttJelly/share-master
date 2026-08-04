@@ -255,6 +255,14 @@ async function run() {
     data: [{ id: "deepseek-chat", model: "deepseek-chat", displayName: "DeepSeek Chat", isDefault: true }],
     nextCursor: null,
   }));
+  ipcMain.handle("thread:save-settings", (_event, input) => ({
+    [`${input.threadId}::${input.providerId}`]: {
+      model: input.model,
+      effort: input.effort,
+      approvalMode: input.approvalMode,
+      updatedAt: Date.now(),
+    },
+  }));
   ipcMain.handle("codex:start-thread", (_event, input) => {
     startThreadRequests.push(structuredClone(input));
     return { thread: { id: "unexpected-reconnect-thread", turns: [] } };
@@ -501,6 +509,65 @@ async function run() {
   })()`));
   window.setSize(1200, 800);
   await new Promise((resolve) => setTimeout(resolve, 120));
+  const permissionMode = await window.webContents.executeJavaScript(`(async () => {
+    state.providerEngine = 'codex';
+    state.connected = true;
+    state.activeArchived = false;
+    state.openingThread = false;
+    setApprovalMode('ask', false);
+    syncComposerState();
+    const input = document.querySelector('#composer-input');
+    const originalConfirm = window.confirm;
+    let nativeConfirmCalls = 0;
+    window.confirm = () => { nativeConfirmCalls += 1; return true; };
+
+    document.querySelector('[data-approval-mode="full"]').click();
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    const overlay = document.querySelector('#full-access-overlay');
+    const modalVisible = !overlay.classList.contains('hidden');
+    const modalTitle = document.querySelector('#full-access-title').textContent;
+    const modalDescription = document.querySelector('#full-access-description').textContent;
+    document.querySelector('#full-access-cancel').click();
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const cancelMode = state.approvalMode;
+    const cancelInputEnabled = !input.disabled;
+    const cancelInputFocused = document.activeElement === input;
+
+    document.querySelector('[data-approval-mode="full"]').click();
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    const dialog = document.querySelector('.permission-confirm-dialog').getBoundingClientRect();
+    const cancel = document.querySelector('#full-access-cancel').getBoundingClientRect();
+    const confirm = document.querySelector('#full-access-confirm').getBoundingClientRect();
+    const buttonsOverlap = !(cancel.right <= confirm.left || confirm.right <= cancel.left || cancel.bottom <= confirm.top || confirm.bottom <= cancel.top);
+    document.querySelector('#full-access-confirm').click();
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const confirmMode = state.approvalMode;
+    const confirmInputEnabled = !input.disabled;
+    const confirmInputFocused = document.activeElement === input;
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    const delayedInputEnabled = !input.disabled;
+    const delayedInputFocused = document.activeElement === input;
+    window.confirm = originalConfirm;
+    setApprovalMode('ask', false);
+    return {
+      modalVisible,
+      modalTitle,
+      modalDescription,
+      nativeConfirmCalls,
+      cancelMode,
+      cancelInputEnabled,
+      cancelInputFocused,
+      confirmMode,
+      confirmInputEnabled,
+      confirmInputFocused,
+      delayedInputEnabled,
+      delayedInputFocused,
+      dialogWithinViewport: dialog.left >= 0 && dialog.right <= innerWidth && dialog.top >= 0 && dialog.bottom <= innerHeight,
+      buttonsOverlap,
+      overlayHidden: overlay.classList.contains('hidden'),
+      queueButtonRemoved: !document.querySelector('#queue-button'),
+    };
+  })()`);
   const messageFeatures = await window.webContents.executeJavaScript(`(async () => {
     const agent = document.querySelector('.message.agent');
     const user = document.querySelector('.message.user');
@@ -552,7 +619,7 @@ async function run() {
       queueLengthBeforeSteer: queuedBeforeSteer.length,
       firstQueuedText: queuedBeforeSteer[0]?.displayText || '',
       secondQueuedText: queuedBeforeSteer[1]?.displayText || '',
-      queueBadge: document.querySelector('#queue-button').dataset.count,
+      queueButtonRemoved: !document.querySelector('#queue-button'),
       queuePanelVisible: !queuePanel.classList.contains('hidden'),
       queuePanelItems: queuePanel.querySelectorAll('.queued-prompt-item').length,
       queueIcons: queuePanel.querySelectorAll('.queued-prompt-icon').length,
@@ -583,8 +650,7 @@ async function run() {
       queuePanelHiddenAfterDrain: document.querySelector('#message-queue-panel').classList.contains('hidden'),
       deliveryLabels: [...document.querySelectorAll('.message-delivery-state')].map((node) => node.textContent),
       sendTitle: document.querySelector('#send-button').title,
-      queueTitle: document.querySelector('#queue-button').title,
-      actionTopDelta: Math.abs(Math.round(document.querySelector('#send-button').getBoundingClientRect().top - document.querySelector('#queue-button').getBoundingClientRect().top)),
+      actionTopDelta: Math.abs(Math.round(document.querySelector('#send-button').getBoundingClientRect().top - document.querySelector('#stop-button').getBoundingClientRect().top)),
       footerOverflow: document.querySelector('.composer-footer').scrollWidth > document.querySelector('.composer-footer').clientWidth,
     };
   })()`);
@@ -1090,6 +1156,22 @@ async function run() {
   assert.equal(conversation.compactFooterOverflow, false);
   assert.equal(conversation.compactBodyOverflow, false);
   assert.ok(conversation.compactActivityWidth >= 500);
+  assert.equal(permissionMode.modalVisible, true);
+  assert.match(permissionMode.modalTitle, /完全访问权限/);
+  assert.match(permissionMode.modalDescription, /互联网/);
+  assert.equal(permissionMode.nativeConfirmCalls, 0);
+  assert.equal(permissionMode.cancelMode, "ask");
+  assert.equal(permissionMode.cancelInputEnabled, true);
+  assert.equal(permissionMode.cancelInputFocused, true);
+  assert.equal(permissionMode.confirmMode, "full");
+  assert.equal(permissionMode.confirmInputEnabled, true);
+  assert.equal(permissionMode.confirmInputFocused, true);
+  assert.equal(permissionMode.delayedInputEnabled, true);
+  assert.equal(permissionMode.delayedInputFocused, true);
+  assert.equal(permissionMode.dialogWithinViewport, true);
+  assert.equal(permissionMode.buttonsOverlap, false);
+  assert.equal(permissionMode.overlayHidden, true);
+  assert.equal(permissionMode.queueButtonRemoved, true);
   assert.equal(messageFeatures.actionButtons, 6);
   assert.equal(messageFeatures.agentActions, 3);
   assert.equal(messageFeatures.userActions, 3);
@@ -1115,6 +1197,7 @@ async function run() {
   assert.equal(deliveryModes.queuePanelAboveInput, true);
   assert.equal(deliveryModes.queuedMessagesInChat, 0);
   assert.equal(deliveryModes.inputAfterQueue, "");
+  assert.equal(deliveryModes.queueButtonRemoved, true);
   assert.equal(deliveryModes.queueLengthAfterSuccess, 1);
   assert.equal(deliveryModes.remainingAfterInactive, 0);
   assert.equal(deliveryModes.queuePanelHiddenAfterDrain, true);
@@ -1126,7 +1209,6 @@ async function run() {
   assert.equal(deliveryModes.inactiveExpectedTurnId, "turn-running");
   assert.equal(deliveryModes.inactiveStartedText, "竞态情况下也不能丢失的消息");
   assert.match(deliveryModes.sendTitle, /排队发送/);
-  assert.match(deliveryModes.queueTitle, /排队发送/);
   assert.ok(deliveryModes.deliveryLabels.some((label) => label.includes("已引导")));
   assert.ok(deliveryModes.actionTopDelta <= 1);
   assert.equal(deliveryModes.footerOverflow, false);

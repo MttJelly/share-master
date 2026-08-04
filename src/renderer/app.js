@@ -132,7 +132,7 @@ const elements = {
   providerState: $("#provider-state"), providerMark: $("#provider-mark"), threadList: $("#thread-list"),
   threadCount: $("#thread-count"), search: $("#thread-search"), chat: $("#chat-view"), empty: $("#empty-state"),
   emptyTitle: $("#empty-title"), emptySubtitle: $("#empty-subtitle"), input: $("#composer-input"), send: $("#send-button"),
-  queue: $("#queue-button"), stop: $("#stop-button"),
+  stop: $("#stop-button"),
   connection: $("#connection-badge"), workspaceLabel: $("#workspace-label"), windowTitle: $("#window-thread-title"),
   approval: $("#approval-banner"), menu: $("#thread-menu"), projectList: $("#project-list"),
   activeThreadCount: $("#active-thread-count"), archivedThreadCount: $("#archived-thread-count"),
@@ -176,6 +176,8 @@ const elements = {
   sessionModel: $("#session-model"), sessionEffort: $("#session-effort"),
   appliedSettings: $("#applied-settings"), modeBadge: $("#mode-badge"),
   approvalModeMenu: $("#approval-mode-menu"), approvalModeLabel: $("#approval-mode-label"),
+  fullAccessOverlay: $("#full-access-overlay"), fullAccessConfirm: $("#full-access-confirm"),
+  fullAccessCancel: $("#full-access-cancel"),
   composerBrandIcon: $("#composer-brand-icon"),
   skillButton: $("#skill-button"), skillMenu: $("#skill-menu"), skillSearch: $("#skill-search"),
   skillList: $("#skill-list"),
@@ -419,6 +421,34 @@ function setApprovalMode(mode, persist = true) {
   renderAppliedSettings();
   refreshIcons();
   if (persist) persistActiveThreadSettings();
+}
+
+let fullAccessConfirmationResolve = null;
+
+function focusComposerAfterPermissionChange() {
+  syncComposerState();
+  requestAnimationFrame(() => {
+    if (!elements.input.disabled) elements.input.focus({ preventScroll: true });
+  });
+}
+
+function closeFullAccessConfirmation(confirmed = false) {
+  if (elements.fullAccessOverlay.classList.contains("hidden") && !fullAccessConfirmationResolve) return;
+  elements.fullAccessOverlay.classList.add("hidden");
+  const resolve = fullAccessConfirmationResolve;
+  fullAccessConfirmationResolve = null;
+  resolve?.(confirmed);
+  focusComposerAfterPermissionChange();
+}
+
+function confirmFullAccess() {
+  if (fullAccessConfirmationResolve) return Promise.resolve(false);
+  elements.approvalModeMenu.classList.add("hidden");
+  elements.modeBadge.setAttribute("aria-expanded", "false");
+  elements.fullAccessOverlay.classList.remove("hidden");
+  refreshIcons();
+  requestAnimationFrame(() => elements.fullAccessCancel.focus());
+  return new Promise((resolve) => { fullAccessConfirmationResolve = resolve; });
 }
 
 function renderAppliedSettings() {
@@ -2486,8 +2516,17 @@ function renderMessageQueuePanel(threadId = state.activeThread?.id) {
   const title = document.createElement("strong");
   title.textContent = `待发送 · ${queue.length}`;
   const detail = document.createElement("small");
-  detail.textContent = "当前回复完成后按顺序发送";
+  const running = Boolean(state.runningThreads.get(threadId));
+  detail.textContent = running ? "当前回复完成后按顺序发送" : "等待继续发送";
   heading.append(headingIcon, title, detail);
+  if (!running) {
+    const resume = document.createElement("button");
+    resume.type = "button";
+    resume.className = "message-queue-resume";
+    resume.innerHTML = '<span data-lucide="play"></span><span>继续发送</span>';
+    resume.addEventListener("click", () => startNextQueuedMessage(threadId));
+    heading.appendChild(resume);
+  }
 
   const list = document.createElement("div");
   list.className = "message-queue-list";
@@ -3318,7 +3357,6 @@ function resetAllRuns(clearQueues = false) {
 function syncActiveRunState() {
   const threadId = state.activeThread?.id;
   const run = threadId ? state.runningThreads.get(threadId) : null;
-  const queueLength = threadId ? (state.messageQueues.get(threadId) || []).length : 0;
   state.running = Boolean(run);
   state.activeTurn = run?.turnId || null;
   state.stopRequested = Boolean(run?.stopRequested);
@@ -3329,17 +3367,11 @@ function syncActiveRunState() {
     button.setAttribute("aria-label", title);
   }
   elements.send.classList.remove("hidden");
-  elements.queue.classList.toggle("hidden", !run && !queueLength);
   elements.stop.classList.toggle("hidden", !run);
   elements.stop.disabled = Boolean(run?.stopRequested);
   elements.stop.title = run?.stopRequested ? "正在停止" : "停止当前回复";
   elements.send.title = run ? "排队发送（Enter）" : "发送";
   elements.send.setAttribute("aria-label", run ? "排队发送" : "发送");
-  elements.queue.title = run
-    ? `排队发送${queueLength ? ` · 已有 ${queueLength} 条` : ""}`
-    : queueLength ? `继续发送 ${queueLength} 条恢复队列` : "排队发送";
-  elements.queue.setAttribute("aria-label", run ? `排队发送，已有 ${queueLength} 条` : `继续发送 ${queueLength} 条恢复队列`);
-  elements.queue.dataset.count = String(queueLength);
   syncComposerState();
   syncThinkingIndicator();
   renderMessageQueuePanel(threadId);
@@ -3388,7 +3420,6 @@ function syncComposerState() {
   const hasContent = Boolean(elements.input.value.trim() || state.pendingAttachments.length);
   elements.send.disabled = disabled || state.submitting || !hasContent;
   const hasRecoveredQueue = !state.running && Boolean(state.activeThread?.id && state.messageQueues.get(state.activeThread.id)?.length);
-  elements.queue.disabled = disabled || state.submitting || (!hasContent && !hasRecoveredQueue);
   const controlsDisabled = disabled || state.modelCatalog.length === 0;
   elements.sessionModel.disabled = controlsDisabled;
   elements.sessionEffort.disabled = controlsDisabled;
@@ -3399,7 +3430,7 @@ function syncComposerState() {
     ? "当前会话为只读"
     : state.openingThread ? "正在加载会话"
     : state.running ? "继续输入，Enter 排队；可在队列中点击“引导”"
-    : hasRecoveredQueue ? "存在恢复的待发送消息，可点击队列按钮继续"
+    : hasRecoveredQueue ? "存在待发送消息，可在上方队列中继续"
     : state.providerType === "claude"
       ? "给 Claude 发送消息"
       : state.providerEngine === "openai-compatible" ? "给当前模型发送消息" : "给 Codex 发送消息";
@@ -6065,14 +6096,27 @@ elements.modeBadge.addEventListener("click", () => {
   elements.modeBadge.setAttribute("aria-expanded", String(opening));
 });
 elements.approvalModeMenu.querySelectorAll("[data-approval-mode]").forEach((option) => {
-  option.addEventListener("click", () => {
+  option.addEventListener("click", async () => {
     const mode = option.dataset.approvalMode;
     if (mode === "full" && state.approvalMode !== "full") {
-      const confirmed = confirm("完全访问权限允许模型不经询问访问互联网及电脑上的任何文件。确定为本会话启用？");
+      const confirmed = await confirmFullAccess();
       if (!confirmed) return;
     }
     setApprovalMode(mode);
+    focusComposerAfterPermissionChange();
   });
+});
+elements.fullAccessCancel.addEventListener("click", () => closeFullAccessConfirmation(false));
+elements.fullAccessConfirm.addEventListener("click", () => closeFullAccessConfirmation(true));
+elements.fullAccessOverlay.addEventListener("click", (event) => {
+  if (event.target === elements.fullAccessOverlay) closeFullAccessConfirmation(false);
+});
+elements.fullAccessOverlay.addEventListener("keydown", (event) => {
+  if (event.key !== "Tab") return;
+  const controls = [elements.fullAccessCancel, elements.fullAccessConfirm];
+  const current = controls.indexOf(document.activeElement);
+  event.preventDefault();
+  controls[(current + (event.shiftKey ? -1 : 1) + controls.length) % controls.length].focus();
 });
 $("#approval-learn-more").addEventListener("click", () => {
   api.openExternal("https://developers.openai.com/codex/security").catch(showActionError);
@@ -6140,11 +6184,6 @@ elements.input.addEventListener("keydown", (event) => {
   }
 });
 elements.send.addEventListener("click", () => sendMessage("auto"));
-elements.queue.addEventListener("click", () => {
-  const threadId = state.activeThread?.id;
-  if (!state.running && threadId && (state.messageQueues.get(threadId) || []).length) startNextQueuedMessage(threadId);
-  else sendMessage("queue");
-});
 elements.stop.addEventListener("click", requestTurnInterrupt);
 elements.menu.querySelectorAll("button").forEach((button) => button.addEventListener("click", () => threadMenuAction(button.dataset.action)));
 document.addEventListener("click", (event) => { if (!event.target.closest("#thread-menu") && !event.target.closest(".thread-more")) elements.menu.classList.add("hidden"); });
@@ -6171,6 +6210,11 @@ document.addEventListener("keydown", (event) => {
     if (state.threadView !== "scheduled") setThreadView("scheduled");
     openTaskDialog();
   } else if (event.key === "Escape") {
+    if (!elements.fullAccessOverlay.classList.contains("hidden")) {
+      event.preventDefault();
+      closeFullAccessConfirmation(false);
+      return;
+    }
     elements.menu.classList.add("hidden");
     elements.approvalModeMenu.classList.add("hidden");
     closeSkillMenu();

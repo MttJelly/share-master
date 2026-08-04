@@ -127,13 +127,30 @@
               </div>
               <div class="composer-submit" aria-label="消息操作">
                 <button id="send-button" class="send-button" title="发送" aria-label="发送" disabled><span data-lucide="arrow-up"></span></button>
-                <button id="queue-button" class="queue-button hidden" title="排队发送" aria-label="排队发送" disabled><span data-lucide="list-plus"></span></button>
                 <button id="stop-button" class="stop-button hidden" title="停止" aria-label="停止"><span data-lucide="square"></span></button>
               </div>
             </div>
           </div>
         </footer>
       </main>
+    <div id="full-access-overlay" class="overlay permission-confirm-overlay hidden">
+      <section class="permission-confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="full-access-title" aria-describedby="full-access-description">
+        <div class="permission-confirm-icon" aria-hidden="true"><span data-lucide="shield-alert"></span></div>
+        <div class="permission-confirm-copy">
+          <span class="permission-confirm-eyebrow">权限变更</span>
+          <h2 id="full-access-title">启用完全访问权限？</h2>
+          <p id="full-access-description">模型将可以不经逐次确认访问互联网及电脑上的文件。请仅在你信任当前任务和连接时启用。</p>
+        </div>
+        <div class="permission-confirm-note">
+          <span data-lucide="info"></span>
+          <span>该设置只应用于当前会话，之后可随时切换回“请求批准”。</span>
+        </div>
+        <div class="permission-confirm-actions">
+          <button id="full-access-cancel" class="secondary-command" type="button">取消</button>
+          <button id="full-access-confirm" class="primary-command permission-confirm-primary" type="button"><span data-lucide="shield-check"></span>启用完全访问</button>
+        </div>
+      </section>
+    </div>
     <div id="provider-overlay" class="overlay">
       <section class="provider-dialog" role="dialog" aria-modal="true" aria-labelledby="provider-title">
         <div class="dialog-heading">

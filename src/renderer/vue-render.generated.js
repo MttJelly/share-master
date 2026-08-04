@@ -222,11 +222,54 @@ export function render(_ctx, _cache) {
               })
             ])
           ], -1 /* CACHED */)),
-          _cache[4] || (_cache[4] = _createStaticVNode("<div class=\"composer-footer\"><div class=\"session-controls\"><button id=\"attach-button\" class=\"skill-button\" type=\"button\" title=\"添加图片附件\" aria-label=\"添加图片附件\" disabled><span data-lucide=\"paperclip\"></span></button><button id=\"skill-button\" class=\"skill-button\" type=\"button\" title=\"Skills\" aria-label=\"Skills\" aria-haspopup=\"menu\" aria-expanded=\"false\" disabled><span data-lucide=\"wand-sparkles\"></span></button><label class=\"session-select\" title=\"会话模型\"><img id=\"composer-brand-icon\" src=\"../../node_modules/simple-icons/icons/openai.svg\" alt=\"\"><select id=\"session-model\" aria-label=\"会话模型\" disabled><option>模型</option></select></label><label class=\"session-select\" title=\"推理强度\"><span data-lucide=\"brain\"></span><select id=\"session-effort\" aria-label=\"推理强度\" disabled><option value=\"high\">高</option></select></label><span id=\"applied-settings\" class=\"applied-settings\" title=\"服务端实际采用的会话设置\">待首轮确认</span></div><div class=\"composer-meta\"><button id=\"mode-badge\" class=\"mode-badge\" type=\"button\" aria-haspopup=\"menu\" aria-expanded=\"false\" disabled><span data-lucide=\"shield-check\"></span><span id=\"approval-mode-label\">请求批准</span><span data-lucide=\"chevron-up\"></span></button><span id=\"connection-badge\"><span class=\"status-dot\"></span>未连接</span></div><div class=\"composer-submit\" aria-label=\"消息操作\"><button id=\"send-button\" class=\"send-button\" title=\"发送\" aria-label=\"发送\" disabled><span data-lucide=\"arrow-up\"></span></button><button id=\"queue-button\" class=\"queue-button hidden\" title=\"排队发送\" aria-label=\"排队发送\" disabled><span data-lucide=\"list-plus\"></span></button><button id=\"stop-button\" class=\"stop-button hidden\" title=\"停止\" aria-label=\"停止\"><span data-lucide=\"square\"></span></button></div></div>", 1))
+          _cache[4] || (_cache[4] = _createStaticVNode("<div class=\"composer-footer\"><div class=\"session-controls\"><button id=\"attach-button\" class=\"skill-button\" type=\"button\" title=\"添加图片附件\" aria-label=\"添加图片附件\" disabled><span data-lucide=\"paperclip\"></span></button><button id=\"skill-button\" class=\"skill-button\" type=\"button\" title=\"Skills\" aria-label=\"Skills\" aria-haspopup=\"menu\" aria-expanded=\"false\" disabled><span data-lucide=\"wand-sparkles\"></span></button><label class=\"session-select\" title=\"会话模型\"><img id=\"composer-brand-icon\" src=\"../../node_modules/simple-icons/icons/openai.svg\" alt=\"\"><select id=\"session-model\" aria-label=\"会话模型\" disabled><option>模型</option></select></label><label class=\"session-select\" title=\"推理强度\"><span data-lucide=\"brain\"></span><select id=\"session-effort\" aria-label=\"推理强度\" disabled><option value=\"high\">高</option></select></label><span id=\"applied-settings\" class=\"applied-settings\" title=\"服务端实际采用的会话设置\">待首轮确认</span></div><div class=\"composer-meta\"><button id=\"mode-badge\" class=\"mode-badge\" type=\"button\" aria-haspopup=\"menu\" aria-expanded=\"false\" disabled><span data-lucide=\"shield-check\"></span><span id=\"approval-mode-label\">请求批准</span><span data-lucide=\"chevron-up\"></span></button><span id=\"connection-badge\"><span class=\"status-dot\"></span>未连接</span></div><div class=\"composer-submit\" aria-label=\"消息操作\"><button id=\"send-button\" class=\"send-button\" title=\"发送\" aria-label=\"发送\" disabled><span data-lucide=\"arrow-up\"></span></button><button id=\"stop-button\" class=\"stop-button hidden\" title=\"停止\" aria-label=\"停止\"><span data-lucide=\"square\"></span></button></div></div>", 1))
         ])
       ])
     ]),
     _cache[10] || (_cache[10] = _createElementVNode("div", {
+      id: "full-access-overlay",
+      class: "overlay permission-confirm-overlay hidden"
+    }, [
+      _createElementVNode("section", {
+        class: "permission-confirm-dialog",
+        role: "alertdialog",
+        "aria-modal": "true",
+        "aria-labelledby": "full-access-title",
+        "aria-describedby": "full-access-description"
+      }, [
+        _createElementVNode("div", {
+          class: "permission-confirm-icon",
+          "aria-hidden": "true"
+        }, [
+          _createElementVNode("span", { "data-lucide": "shield-alert" })
+        ]),
+        _createElementVNode("div", { class: "permission-confirm-copy" }, [
+          _createElementVNode("span", { class: "permission-confirm-eyebrow" }, "权限变更"),
+          _createElementVNode("h2", { id: "full-access-title" }, "启用完全访问权限？"),
+          _createElementVNode("p", { id: "full-access-description" }, "模型将可以不经逐次确认访问互联网及电脑上的文件。请仅在你信任当前任务和连接时启用。")
+        ]),
+        _createElementVNode("div", { class: "permission-confirm-note" }, [
+          _createElementVNode("span", { "data-lucide": "info" }),
+          _createElementVNode("span", null, "该设置只应用于当前会话，之后可随时切换回“请求批准”。")
+        ]),
+        _createElementVNode("div", { class: "permission-confirm-actions" }, [
+          _createElementVNode("button", {
+            id: "full-access-cancel",
+            class: "secondary-command",
+            type: "button"
+          }, "取消"),
+          _createElementVNode("button", {
+            id: "full-access-confirm",
+            class: "primary-command permission-confirm-primary",
+            type: "button"
+          }, [
+            _createElementVNode("span", { "data-lucide": "shield-check" }),
+            _createTextVNode("启用完全访问")
+          ])
+        ])
+      ])
+    ], -1 /* CACHED */)),
+    _cache[11] || (_cache[11] = _createElementVNode("div", {
       id: "provider-overlay",
       class: "overlay"
     }, [
@@ -355,7 +398,7 @@ export function render(_ctx, _cache) {
         ])
       ])
     ], -1 /* CACHED */)),
-    _cache[11] || (_cache[11] = _createElementVNode("div", {
+    _cache[12] || (_cache[12] = _createElementVNode("div", {
       id: "local-provider-overlay",
       class: "overlay hidden"
     }, [
@@ -423,7 +466,7 @@ export function render(_ctx, _cache) {
         ])
       ])
     ], -1 /* CACHED */)),
-    _cache[12] || (_cache[12] = _createElementVNode("div", {
+    _cache[13] || (_cache[13] = _createElementVNode("div", {
       id: "connection-overlay",
       class: "overlay hidden"
     }, [
@@ -631,7 +674,7 @@ export function render(_ctx, _cache) {
         ])
       ])
     ], -1 /* CACHED */)),
-    _cache[13] || (_cache[13] = _createElementVNode("div", {
+    _cache[14] || (_cache[14] = _createElementVNode("div", {
       id: "claude-overlay",
       class: "overlay hidden"
     }, [
@@ -734,7 +777,7 @@ export function render(_ctx, _cache) {
         ])
       ])
     ], -1 /* CACHED */)),
-    _cache[14] || (_cache[14] = _createElementVNode("div", {
+    _cache[15] || (_cache[15] = _createElementVNode("div", {
       id: "record-home-overlay",
       class: "overlay hidden"
     }, [
@@ -804,7 +847,7 @@ export function render(_ctx, _cache) {
         ])
       ])
     ], -1 /* CACHED */)),
-    _cache[15] || (_cache[15] = _createElementVNode("div", {
+    _cache[16] || (_cache[16] = _createElementVNode("div", {
       id: "usage-overlay",
       class: "overlay hidden"
     }, [
@@ -962,7 +1005,7 @@ export function render(_ctx, _cache) {
         ])
       ])
     ], -1 /* CACHED */)),
-    _cache[16] || (_cache[16] = _createElementVNode("div", {
+    _cache[17] || (_cache[17] = _createElementVNode("div", {
       id: "local-history-overlay",
       class: "overlay hidden"
     }, [
@@ -1042,7 +1085,7 @@ export function render(_ctx, _cache) {
         ])
       ])
     ], -1 /* CACHED */)),
-    _cache[17] || (_cache[17] = _createElementVNode("div", {
+    _cache[18] || (_cache[18] = _createElementVNode("div", {
       id: "health-overlay",
       class: "overlay hidden"
     }, [
@@ -1102,7 +1145,7 @@ export function render(_ctx, _cache) {
         ])
       ])
     ], -1 /* CACHED */)),
-    _cache[18] || (_cache[18] = _createElementVNode("div", {
+    _cache[19] || (_cache[19] = _createElementVNode("div", {
       id: "backup-overlay",
       class: "overlay hidden"
     }, [
@@ -1163,7 +1206,7 @@ export function render(_ctx, _cache) {
         ])
       ])
     ], -1 /* CACHED */)),
-    _cache[19] || (_cache[19] = _createElementVNode("div", {
+    _cache[20] || (_cache[20] = _createElementVNode("div", {
       id: "sync-overlay",
       class: "overlay hidden"
     }, [
@@ -1332,7 +1375,7 @@ export function render(_ctx, _cache) {
         ])
       ])
     ], -1 /* CACHED */)),
-    _cache[20] || (_cache[20] = _createElementVNode("div", {
+    _cache[21] || (_cache[21] = _createElementVNode("div", {
       id: "extensions-overlay",
       class: "overlay hidden"
     }, [
@@ -1696,7 +1739,7 @@ export function render(_ctx, _cache) {
         ])
       ])
     ], -1 /* CACHED */)),
-    _cache[21] || (_cache[21] = _createElementVNode("div", {
+    _cache[22] || (_cache[22] = _createElementVNode("div", {
       id: "skill-install-overlay",
       class: "overlay hidden"
     }, [
@@ -1782,7 +1825,7 @@ export function render(_ctx, _cache) {
         ])
       ])
     ], -1 /* CACHED */)),
-    _cache[22] || (_cache[22] = _createElementVNode("div", {
+    _cache[23] || (_cache[23] = _createElementVNode("div", {
       id: "app-settings-overlay",
       class: "overlay hidden"
     }, [
@@ -1881,7 +1924,7 @@ export function render(_ctx, _cache) {
         ])
       ])
     ], -1 /* CACHED */)),
-    _cache[23] || (_cache[23] = _createElementVNode("div", {
+    _cache[24] || (_cache[24] = _createElementVNode("div", {
       id: "deep-link-import-overlay",
       class: "overlay hidden"
     }, [
@@ -1941,7 +1984,7 @@ export function render(_ctx, _cache) {
         ])
       ])
     ], -1 /* CACHED */)),
-    _cache[24] || (_cache[24] = _createElementVNode("div", {
+    _cache[25] || (_cache[25] = _createElementVNode("div", {
       id: "project-overlay",
       class: "overlay hidden"
     }, [
@@ -2035,7 +2078,7 @@ export function render(_ctx, _cache) {
         ])
       ])
     ], -1 /* CACHED */)),
-    _cache[25] || (_cache[25] = _createElementVNode("div", {
+    _cache[26] || (_cache[26] = _createElementVNode("div", {
       id: "credential-overlay",
       class: "overlay hidden"
     }, [
@@ -2099,7 +2142,7 @@ export function render(_ctx, _cache) {
         ])
       ])
     ], -1 /* CACHED */)),
-    _cache[26] || (_cache[26] = _createElementVNode("div", {
+    _cache[27] || (_cache[27] = _createElementVNode("div", {
       id: "rename-overlay",
       class: "overlay hidden"
     }, [
@@ -2157,7 +2200,7 @@ export function render(_ctx, _cache) {
         ])
       ])
     ], -1 /* CACHED */)),
-    _cache[27] || (_cache[27] = _createElementVNode("div", {
+    _cache[28] || (_cache[28] = _createElementVNode("div", {
       id: "task-overlay",
       class: "overlay hidden"
     }, [
@@ -2357,6 +2400,6 @@ export function render(_ctx, _cache) {
         ])
       ])
     ], -1 /* CACHED */)),
-    _cache[28] || (_cache[28] = _createStaticVNode("<div id=\"thread-menu\" class=\"context-menu hidden\"><button data-action=\"archive\"><span data-lucide=\"archive\"></span>归档</button><button data-action=\"rename\"><span data-lucide=\"pencil\"></span>重命名</button><button class=\"hidden\" data-action=\"clear-queue\"><span data-lucide=\"list-x\"></span>清空待发送</button><button class=\"danger-action\" data-action=\"remove\"><span data-lucide=\"trash-2\"></span>移除会话</button><button class=\"danger-action hidden\" data-action=\"delete-now\"><span data-lucide=\"circle-x\"></span>立即删除</button></div>", 1))
+    _cache[29] || (_cache[29] = _createStaticVNode("<div id=\"thread-menu\" class=\"context-menu hidden\"><button data-action=\"archive\"><span data-lucide=\"archive\"></span>归档</button><button data-action=\"rename\"><span data-lucide=\"pencil\"></span>重命名</button><button class=\"hidden\" data-action=\"clear-queue\"><span data-lucide=\"list-x\"></span>清空待发送</button><button class=\"danger-action\" data-action=\"remove\"><span data-lucide=\"trash-2\"></span>移除会话</button><button class=\"danger-action hidden\" data-action=\"delete-now\"><span data-lucide=\"circle-x\"></span>立即删除</button></div>", 1))
   ], 64 /* STABLE_FRAGMENT */))
 }

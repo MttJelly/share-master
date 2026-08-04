@@ -191,7 +191,14 @@ async function exerciseCycle(window, cycle) {
       input.value = '原生引导 ' + ${cycle};
       input.dispatchEvent(new Event('input', { bubbles: true }));
       await sendMessage('auto');
-      nativeSteerKeptQueueEmpty = (state.messageQueues.get(thread.id) || []).length === 0;
+      const nativeQueued = state.messageQueues.get(thread.id) || [];
+      const nativeMessageId = nativeQueued[0]?.clientUserMessageId;
+      const nativeQueuedOnce = nativeQueued.length === 1;
+      if (nativeQueuedOnce && nativeMessageId) {
+        await steerQueuedMessage(thread.id, nativeMessageId);
+      }
+      nativeSteerKeptQueueEmpty = nativeQueuedOnce
+        && (state.messageQueues.get(thread.id) || []).length === 0;
 
       state.providerEngine = 'openai-compatible';
       for (const value of ['排队消息 A ' + ${cycle}, '排队消息 B ' + ${cycle}]) {
@@ -206,17 +213,14 @@ async function exerciseCycle(window, cycle) {
       const pending = state.messageQueues.get(thread.id) || [];
       queued = pending.length;
       deliveryScenario = true;
-      fallbackOrderCorrect = pending[0]?.displayText === '兼容连接引导 ' + ${cycle}
-        && pending[1]?.displayText === '排队消息 A ' + ${cycle}
-        && pending[2]?.displayText === '排队消息 B ' + ${cycle};
-      queueBadgeCorrect = document.querySelector('#queue-button').dataset.count === String(pending.length);
+      fallbackOrderCorrect = pending[0]?.displayText === '排队消息 A ' + ${cycle}
+        && pending[1]?.displayText === '排队消息 B ' + ${cycle}
+        && pending[2]?.displayText === '兼容连接引导 ' + ${cycle};
+      queueBadgeCorrect = !document.querySelector('#queue-button')
+        && document.querySelectorAll('#message-queue-panel .queued-prompt-item').length === pending.length;
       const sendBounds = document.querySelector('#send-button').getBoundingClientRect();
       const stopBounds = document.querySelector('#stop-button').getBoundingClientRect();
-      const queueBounds = document.querySelector('#queue-button').getBoundingClientRect();
-      actionTopDelta = Math.max(
-        Math.abs(Math.round(sendBounds.top - stopBounds.top)),
-        Math.abs(Math.round(sendBounds.top - queueBounds.top))
-      );
+      actionTopDelta = Math.abs(Math.round(sendBounds.top - stopBounds.top));
       state.activeThread = next;
       syncActiveRunState();
       backgroundPreserved = state.runningThreads.has(thread.id);
