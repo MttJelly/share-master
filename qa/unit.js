@@ -29,7 +29,7 @@ const { explicitBoolean, fetchRelayBalance } = require("../src/relay-balance");
 const { fetchClaudeModels, fetchClaudeModelsSafely } = require("../src/claude-models");
 const { fetchOpenAIModels, modelsEndpoint } = require("../src/openai-models");
 const { executeScheduledTask, finalizeScheduledTask } = require("../src/scheduled-task-runner");
-const { syncConversationMirror } = require("../src/conversation-mirror");
+const { syncConversationMirror, syncConversationMirrors } = require("../src/conversation-mirror");
 const { installSkillSource, listManagedSkills, syncManagedSkills, syncSkillRoots } = require("../src/skill-mirror");
 const { parseShareMasterLink, shareMasterLinkFromArgs } = require("../src/deep-link");
 const { createLocalHistoryReader } = require("../src/local-conversation-history");
@@ -124,6 +124,36 @@ async function testConversationMirror() {
     fs.unlinkSync(archivedSource);
     await syncConversationMirror(source, target);
     assert.equal(fs.existsSync(path.join(target, "archived_sessions", "thread-b.jsonl")), true);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+async function testConversationMirrorMultipleSources() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "share-master-mirror-multi-unit-"));
+  const primary = path.join(root, "primary");
+  const original = path.join(root, "original");
+  const target = path.join(root, "target");
+  const sharedRelative = path.join("sessions", "2026", "08", "shared.jsonl");
+  const originalOnlyRelative = path.join("sessions", "2026", "08", "original-only.jsonl");
+  try {
+    fs.mkdirSync(path.dirname(path.join(primary, sharedRelative)), { recursive: true });
+    fs.mkdirSync(path.dirname(path.join(original, sharedRelative)), { recursive: true });
+    fs.writeFileSync(path.join(primary, sharedRelative), '{"source":"primary"}\n', "utf8");
+    fs.writeFileSync(path.join(original, sharedRelative), '{"source":"original"}\n', "utf8");
+    fs.writeFileSync(path.join(original, originalOnlyRelative), '{"source":"original-only"}\n', "utf8");
+    const first = await syncConversationMirrors([primary, original], target);
+    assert.equal(first.copied, 2);
+    assert.equal(first.conflicts, 1);
+    assert.equal(fs.readFileSync(path.join(target, sharedRelative), "utf8"), '{"source":"primary"}\n');
+    assert.equal(fs.readFileSync(path.join(target, originalOnlyRelative), "utf8"), '{"source":"original-only"}\n');
+
+    fs.writeFileSync(path.join(original, originalOnlyRelative), '{"source":"original-updated"}\n', "utf8");
+    const future = new Date(Date.now() + 5000);
+    fs.utimesSync(path.join(original, originalOnlyRelative), future, future);
+    const second = await syncConversationMirrors([primary, original], target);
+    assert.equal(second.updated, 1);
+    assert.equal(fs.readFileSync(path.join(target, originalOnlyRelative), "utf8"), '{"source":"original-updated"}\n');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -1774,6 +1804,7 @@ Promise.resolve()
   .then(testOfficialCredentialSeeding)
   .then(testIsolatedStoreDefaults)
   .then(testConversationMirror)
+  .then(testConversationMirrorMultipleSources)
   .then(testPrivateConfigurationSync)
   .then(testWebdavConfigurationSync)
   .then(testSkillMirror)
@@ -1818,7 +1849,7 @@ Promise.resolve()
   .then(testOpenAICompatibleCompletionValidation)
   .then(testOpenAICompatibleInterrupt)
   .then(testOpenAICompatibleSharedCodexHistory)
-  .then(() => console.log(JSON.stringify({ ok: true, tests: 48 })))
+  .then(() => console.log(JSON.stringify({ ok: true, tests: 49 })))
   .catch((error) => {
     console.error(error.stack || error.message);
     process.exitCode = 1;

@@ -19,7 +19,7 @@ const { fetchOpenAIModels } = require("./openai-models");
 const { ProviderStore, providerPresetCatalog, reasoningProfile } = require("./provider-store");
 const { fetchRelayBalance } = require("./relay-balance");
 const { executeScheduledTask, finalizeScheduledTask } = require("./scheduled-task-runner");
-const { syncConversationMirror } = require("./conversation-mirror");
+const { syncConversationMirrors } = require("./conversation-mirror");
 const { createLocalHistoryReader } = require("./local-conversation-history");
 const { createLocalProviderDiscovery } = require("./local-provider-discovery");
 const { installSkillSource, listManagedSkills, syncManagedSkills } = require("./skill-mirror");
@@ -1798,10 +1798,14 @@ function ensureScheduledTaskIdle(taskId) {
 }
 
 async function runConversationMirror() {
-  const source = providerStore?.conversationMirrorSource();
-  if (!source) return null;
+  const configuredSource = providerStore?.conversationMirrorSource();
+  if (!configuredSource) return null;
+  const nativeCodexHome = path.join(os.homedir(), ".codex");
+  const sources = [...new Set([configuredSource, nativeCodexHome, CODEX_HOME]
+    .filter(Boolean)
+    .map((value) => path.resolve(value)))];
   if (conversationMirrorSync) return conversationMirrorSync;
-  conversationMirrorSync = syncConversationMirror(source, providerStore.conversationHome());
+  conversationMirrorSync = syncConversationMirrors(sources, providerStore.conversationHome());
   try {
     const result = await conversationMirrorSync;
     if (result.copied || result.updated) {
