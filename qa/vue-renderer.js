@@ -300,11 +300,11 @@ async function run() {
     ],
   }));
   ipcMain.handle("local-providers:discover", () => ({
-    sources: ["Codex · 用户配置", "CCSwitch"],
+    sources: ["Codex · 用户配置"],
     warnings: [],
     scannedAt: Date.now(),
     candidates: [
-      { id: "local-ready", kind: "relay", source: "CCSwitch · Lab Relay", label: "Lab Relay", baseUrl: "https://relay.example.test/v1", model: "lab-model", protocol: "responses", preset: "custom", hasCredential: true, importable: true, duplicate: localProviderImported, duplicateProviderId: localProviderImported ? "local-imported" : null, discoveredModels: ["lab-model"] },
+      { id: "local-ready", kind: "relay", source: "Codex · 用户配置", label: "Lab Relay", baseUrl: "https://relay.example.test/v1", model: "lab-model", protocol: "responses", preset: "custom", hasCredential: true, importable: true, duplicate: localProviderImported, duplicateProviderId: localProviderImported ? "local-imported" : null, discoveredModels: ["lab-model"] },
       { id: "local-existing", kind: "relay", source: "Codex · 用户配置", label: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat", protocol: "chat_completions", preset: "deepseek", hasCredential: true, importable: true, duplicate: true, duplicateProviderId: "deepseek-fixture", discoveredModels: [] },
       { id: "local-missing", kind: "relay", source: "Codex · 用户配置", label: "No Key Relay", baseUrl: "https://missing.example.test/v1", model: "missing-model", protocol: "responses", preset: "custom", hasCredential: false, importable: false, duplicate: false, duplicateProviderId: null, discoveredModels: [] },
     ],

@@ -1301,7 +1301,7 @@ html[data-theme="dark"] .import-safety-note { border-color: #315e50; background:
   .import-preview-row { grid-template-columns: 1fr; gap: 5px; }
 }
 
-/* Desktop workspace refinement. Keep the operational density of CC Switch while
+/* Desktop workspace refinement. Keep the operational density of a compact model workspace while
    giving chat, connection management, and utility actions one visual hierarchy. */
 :root {
   --bg: #edf1ef;

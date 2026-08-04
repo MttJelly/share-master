@@ -5,7 +5,7 @@
 Share Master 是一款 Windows 多模型桌面客户端。它把 Codex、Claude Code、DeepSeek、Qwen 和 OpenAI 兼容模型连接到同一个工作区，并将 Share Master 自己的会话统一保存在独立数据目录中。
 
 > [!IMPORTANT]
-> Share Master 不会修改 ChatGPT App、Codex、Claude Code 或 CCSwitch 的程序文件。发现配置和浏览本地会话时均以只读方式访问原始数据。
+> Share Master 不会修改 ChatGPT App、Codex 或 Claude Code 的程序文件。发现配置和浏览本地会话时均以只读方式访问原始数据。
 
 ## 1. 安装与首次启动
 
@@ -135,7 +135,7 @@ Project 会根据其会话最近活动时间更新顺序。删除 Project 只移
 
 1. 打开“选择连接方式”。
 2. 点击“发现本机配置”。
-3. 查看只读扫描到的 Codex、Claude Code、CCSwitch 和相关环境变量配置。
+3. 查看只读扫描到的 Codex、Claude Code 和相关环境变量配置。
 4. 勾选需要的配置，确认后导入。
 
 扫描不会修改原文件。只有确认导入后，选定配置才会写入 Share Master；密钥会进入 Share Master 自己的加密安全存储，不会显示在扫描结果中。
@@ -233,7 +233,7 @@ Share Master 的用量日志不记录消息正文或凭据。
 
 - Share Master 的私有聊天、账号配置和缓存与原始客户端相互独立。
 - 本地配置发现与本地会话浏览不会修改源文件。
-- Share Master 不会删除或覆盖 ChatGPT App、Codex、Claude Code 或 CCSwitch 的原始聊天记录。
+- Share Master 不会删除或覆盖 ChatGPT App、Codex 或 Claude Code 的原始聊天记录。
 - 消息和附件会发送给你当前选择的模型供应商；请同时遵守该供应商的隐私政策。
 - 发布包、配置导出和同步数据不应包含 API Key、Token、登录凭据或原始客户端聊天记录。
 

@@ -18,7 +18,7 @@
 Share Master 是一款面向 Windows 的多模型桌面客户端。不同模型共享 Share Master 自己的本地会话记录，同时保持账号、连接和原始客户端数据相互独立。
 
 > [!IMPORTANT]
-> Share Master 使用独立数据目录。读取本机 Codex、Claude Code 或 CCSwitch 配置与聊天记录时采用只读方式，不会修改原始客户端文件。
+> Share Master 使用独立数据目录。读取本机 Codex、Claude Code 配置与聊天记录时采用只读方式，不会修改原始客户端文件。
 
 ## 下载
 
@@ -39,7 +39,7 @@ Share Master 是一款面向 Windows 的多模型桌面客户端。不同模型�
 | **共享聊天记录**<br>在同一份 Share Master 会话中切换模型和连接 | **消息控制**<br>支持停止、引导当前回复、排队发送和完成通知 |
 | **多账号管理**<br>独立管理官方账号、API、中转站、模型和密钥 | **Project 工作区**<br>支持项目分组、多窗口、搜索、归档、移除和恢复 |
 | **连接可靠性**<br>提供健康检查、故障转移、用量统计和价格配置 | **已安排任务**<br>支持一次、每小时、每天、工作日、每周和每月执行 |
-| **本地配置发现**<br>只读发现 Codex、Claude Code 与 CCSwitch 的现有配置 | **附件与扩展**<br>支持图片拖放、消息引用、`/` Skill、Prompt 和 MCP |
+| **本地配置发现**<br>只读发现 Codex、Claude Code 与环境变量中的现有配置 | **附件与扩展**<br>支持图片拖放、消息引用、`/` Skill、Prompt 和 MCP |
 | **本地记录浏览**<br>只读查看并单向复制 Codex 与 Claude 会话 | **备份与同步**<br>支持本地目录和 WebDAV，同步时排除密钥与聊天正文 |
 
 ## 使用文档 / Documentation
@@ -111,4 +111,4 @@ npm run test:multi-window
 
 ## 隐私边界
 
-Share Master 是独立应用，只复用当前电脑上已安装的 CLI 或用户明确导入的配置。它不会修改原始 ChatGPT App、Codex、Claude Code 或 CCSwitch 的程序文件，也不会删除或覆盖这些客户端的原始聊天记录。
+Share Master 是独立应用，只复用当前电脑上已安装的 CLI 或用户明确导入的配置。它不会修改原始 ChatGPT App、Codex 或 Claude Code 的程序文件，也不会删除或覆盖这些客户端的原始聊天记录。

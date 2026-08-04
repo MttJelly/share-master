@@ -257,53 +257,6 @@ function collectClaudeEnvironmentObjects(value, output = [], depth = 0, seen = n
   return output;
 }
 
-function ccswitchModels(settings) {
-  const models = settings?.modelCatalog?.models;
-  if (!Array.isArray(models)) return [];
-  return models.map((item) => firstString(item?.id, item?.model, item?.name)).filter(Boolean);
-}
-
-function readCcswitchCandidates(target, databaseFile, environment, warnings) {
-  if (!fs.existsSync(databaseFile)) return false;
-  let database;
-  try {
-    const { DatabaseSync } = require("node:sqlite");
-    database = new DatabaseSync(databaseFile, { readOnly: true });
-    const rows = database.prepare("SELECT app_type, name, settings_config FROM providers").all();
-    for (const row of rows) {
-      let settings;
-      try {
-        settings = JSON.parse(String(row.settings_config || "{}"));
-      } catch {
-        continue;
-      }
-      const source = `CCSwitch · ${firstString(row.name, row.app_type)}`;
-      if (row.app_type === "codex" && typeof settings.config === "string") {
-        addCodexConfigCandidates(
-          target,
-          settings.config,
-          source,
-          environment,
-          firstString(settings.auth?.OPENAI_API_KEY),
-          ccswitchModels(settings),
-        );
-      } else if (row.app_type === "claude") {
-        addClaudeEnvironmentCandidate(target, settings.env, source);
-      }
-    }
-    return true;
-  } catch {
-    warnings.push("CCSwitch 配置库暂时无法读取；没有修改该数据库。");
-    return false;
-  } finally {
-    try {
-      database?.close();
-    } catch {
-      // The database was opened read-only; closing failures do not affect its contents.
-    }
-  }
-}
-
 function addKnownEnvironmentCandidates(target, environment) {
   const definitions = [
     {
@@ -351,7 +304,6 @@ function createLocalProviderDiscovery(options = {}) {
     path.join(homeDirectory, ".claude", "settings.local.json"),
     path.join(homeDirectory, ".claude.json"),
   ];
-  const ccswitchDatabase = options.ccswitchDatabase || path.join(homeDirectory, ".cc-switch", "cc-switch.db");
   let candidates = new Map();
 
   function discover() {
@@ -375,7 +327,6 @@ function createLocalProviderDiscovery(options = {}) {
       collectClaudeEnvironmentObjects(value).forEach((env) => addClaudeEnvironmentCandidate(collected, env, label));
       sources.push(label);
     }
-    if (readCcswitchCandidates(collected, ccswitchDatabase, environment, warnings)) sources.push("CCSwitch");
     addKnownEnvironmentCandidates(collected, environment);
     if ([...collected.values()].some((candidate) => [...candidate.sources].some((source) => source.startsWith("系统环境变量")))) {
       sources.push("系统环境变量");

@@ -5,7 +5,7 @@
 Share Master is a multi-model desktop client for Windows. It connects Codex, Claude Code, DeepSeek, Qwen, and OpenAI-compatible models in one workspace while keeping Share Master's conversations in a separate data directory.
 
 > [!IMPORTANT]
-> Share Master does not modify the application files of ChatGPT App, Codex, Claude Code, or CCSwitch. Local configuration discovery and local conversation browsing access original data in read-only mode.
+> Share Master does not modify the application files of ChatGPT App, Codex, or Claude Code. Local configuration discovery and local conversation browsing access original data in read-only mode.
 
 ## 1. Installation and first launch
 
@@ -135,7 +135,7 @@ Image understanding depends on the selected model and provider API. Attachments 
 
 1. Open Select connection (`选择连接方式`).
 2. Choose Discover local configurations (`发现本机配置`).
-3. Review the read-only scan of Codex, Claude Code, CCSwitch, and related environment-variable configurations.
+3. Review the read-only scan of Codex, Claude Code, and related environment-variable configurations.
 4. Select the configurations you need and confirm the import.
 
 Scanning does not modify source files. Only confirmed selections are written to Share Master. Secrets are stored in Share Master's encrypted secure storage and are not displayed in scan results.
@@ -233,7 +233,7 @@ This is intentional. Sync and configuration exports do not carry secrets. Enter 
 
 - Share Master's private conversations, account configuration, and cache are independent of the original clients.
 - Local configuration discovery and local conversation browsing do not modify source files.
-- Share Master does not delete or overwrite original conversations from ChatGPT App, Codex, Claude Code, or CCSwitch.
+- Share Master does not delete or overwrite original conversations from ChatGPT App, Codex, or Claude Code.
 - Messages and attachments are sent to the model provider you select; that provider's privacy policy also applies.
 - Release packages, configuration exports, and sync data should not contain API Keys, Tokens, login credentials, or original-client conversations.
 

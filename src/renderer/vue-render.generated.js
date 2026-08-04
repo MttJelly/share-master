@@ -366,7 +366,7 @@ export function render(_ctx, _cache) {
           ]),
           _createElementVNode("div", null, [
             _createElementVNode("h2", { id: "local-provider-title" }, "发现本机模型配置"),
-            _createElementVNode("p", null, "只读扫描 Codex、Claude Code、CCSwitch 和环境变量。")
+            _createElementVNode("p", null, "只读扫描 Codex、Claude Code 和环境变量。")
           ]),
           _createElementVNode("button", {
             id: "local-provider-close-button",
