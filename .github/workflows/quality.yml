@@ -18,16 +18,52 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Classify changes
+        id: changes
+        shell: pwsh
+        run: |
+          $baseRevision = "${{ github.event.before }}"
+          if (-not $baseRevision -or $baseRevision -match '^0+$') {
+            $baseRevision = 'HEAD^'
+          }
+
+          $changedFiles = @(git diff --name-only $baseRevision $env:GITHUB_SHA)
+          $productChanged = $false
+          $qualityChanged = $false
+
+          foreach ($file in $changedFiles) {
+            $normalized = $file.Replace('\', '/')
+            $isProduct = $normalized.StartsWith('src/') `
+              -or $normalized.StartsWith('build/') `
+              -or $normalized.StartsWith('scripts/') `
+              -or $normalized -eq 'package.json' `
+              -or $normalized -eq 'package-lock.json' `
+              -or $normalized -eq 'Start Share Master.cmd'
+            $isQuality = $isProduct -or $normalized.StartsWith('qa/')
+            if ($isProduct) { $productChanged = $true }
+            if ($isQuality) { $qualityChanged = $true }
+          }
+
+          "product=$($productChanged.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "quality=$($qualityChanged.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "Changed files: $($changedFiles -join ', ')"
+          "Product version required: $productChanged"
+          "Quality checks required: $qualityChanged"
       - name: Setup Node
+        if: steps.changes.outputs.quality == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
       - name: Install dependencies
+        if: steps.changes.outputs.quality == 'true'
         run: npm ci
       - name: Validate release metadata
+        if: steps.changes.outputs.product == 'true'
         run: npm run check:release
       - name: Validate source
+        if: steps.changes.outputs.quality == 'true'
         run: npm run check
       - name: Run unit tests
+        if: steps.changes.outputs.quality == 'true'
         run: npm run test:unit
