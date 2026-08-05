@@ -182,12 +182,22 @@ async function run() {
       document.querySelector('#project-form').requestSubmit();
       await waitUntil(() => document.querySelector('#project-overlay').classList.contains('hidden'), 5000, 'create project');
     };
-    window.confirm = () => true;
+    const confirmPendingAction = async () => {
+      await waitUntil(() => !document.querySelector('#confirmation-overlay').classList.contains('hidden'), 5000, 'open confirmation');
+      document.querySelector('#confirmation-confirm').click();
+      await waitUntil(() => document.querySelector('#confirmation-overlay').classList.contains('hidden'), 5000, 'close confirmation');
+    };
     await createProject('Old Project');
     await createProject('New Project');
     await createProject('Delete Project');
     state.projectThreads = { 'delete-thread': 'project-3' };
     document.querySelector('[data-project-id="project-3"] .project-delete').click();
+    await waitUntil(() => !document.querySelector('#confirmation-overlay').classList.contains('hidden'), 5000, 'cancel project delete');
+    document.querySelector('#confirmation-cancel').click();
+    await waitUntil(() => document.querySelector('#confirmation-overlay').classList.contains('hidden'), 5000, 'cancel project delete close');
+    const cancelPreventedDelete = Boolean(document.querySelector('[data-project-id="project-3"]'));
+    document.querySelector('[data-project-id="project-3"] .project-delete').click();
+    await confirmPendingAction();
     await waitUntil(() => !document.querySelector('[data-project-id="project-3"]'), 5000, 'delete project');
     const deletedProjectMapping = state.projectThreads['delete-thread'];
     const activeAfterDelete = state.activeProject;
@@ -258,11 +268,15 @@ async function run() {
     state.activeThreads.push(deleteUiThread);
     state.activeProject = null;
     state.menuThread = deleteUiThread;
-    await threadMenuAction('remove');
+    const removeUiThread = threadMenuAction('remove');
+    await confirmPendingAction();
+    await removeUiThread;
     setThreadView('removed');
     const removedBeforeImmediateDelete = state.threads.some((thread) => thread.id === deleteUiThread.id);
     state.menuThread = deleteUiThread;
-    await threadMenuAction('delete-now');
+    const deleteUiThreadNow = threadMenuAction('delete-now');
+    await confirmPendingAction();
+    await deleteUiThreadNow;
     const immediateDelete = {
       removedBefore: removedBeforeImmediateDelete,
       removedAfter: state.threads.some((thread) => thread.id === deleteUiThread.id),
@@ -324,6 +338,7 @@ async function run() {
     const inferredLabels = state.projects.map((project) => project.label);
     const inferredCountBeforeDelete = document.querySelectorAll('.project-row:not([data-project-id="all"])').length;
     document.querySelector('.project-row:not([data-project-id="all"]) .project-delete').click();
+    await confirmPendingAction();
     await waitUntil(() => document.querySelectorAll('.project-row:not([data-project-id="all"])').length === inferredCountBeforeDelete - 1, 5000, 'delete inferred project');
     const inferredCountAfterDelete = document.querySelectorAll('.project-row:not([data-project-id="all"])').length;
     state.hiddenProjectRoots = [];
@@ -393,6 +408,7 @@ async function run() {
       activeProject: state.activeProject?.label || null,
       labels: state.savedProjects.map((project) => project.label),
       deletedProjectMapping,
+      cancelPreventedDelete,
       activeAfterDelete,
       immediateDelete,
       localArchiveUi,
@@ -417,6 +433,7 @@ async function run() {
   assert.match(summary.duplicateError, /已存在/);
   assert.deepEqual(new Set(summary.labels), new Set(["Renamed Project", "New Project"]));
   assert.equal(summary.deletedProjectMapping, undefined);
+  assert.equal(summary.cancelPreventedDelete, true);
   assert.equal(summary.activeAfterDelete, null);
   assert.deepEqual(summary.immediateDelete, { removedBefore: true, removedAfter: false, scheduledCount: "0" });
   assert.deepEqual(summary.localArchiveUi, { added: true, removed: true });

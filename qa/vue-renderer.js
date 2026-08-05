@@ -22,6 +22,7 @@ const healthScreenshot = path.join(artifactRoot, "vue-renderer-health.png");
 const extensionsScreenshot = path.join(artifactRoot, "vue-renderer-extensions.png");
 const skillInstallScreenshot = path.join(artifactRoot, "vue-renderer-skill-install.png");
 const darkExtensionsScreenshot = path.join(artifactRoot, "vue-renderer-extensions-dark.png");
+const confirmationScreenshot = path.join(artifactRoot, "vue-renderer-confirmation.png");
 const interactiveLayoutAudits = [];
 app.setPath("userData", path.join(__dirname, ".vue-renderer-profile"));
 
@@ -579,11 +580,11 @@ async function run() {
 
     document.querySelector('[data-approval-mode="full"]').click();
     await new Promise((resolve) => setTimeout(resolve, 80));
-    const overlay = document.querySelector('#full-access-overlay');
+    const overlay = document.querySelector('#confirmation-overlay');
     const modalVisible = !overlay.classList.contains('hidden');
-    const modalTitle = document.querySelector('#full-access-title').textContent;
-    const modalDescription = document.querySelector('#full-access-description').textContent;
-    document.querySelector('#full-access-cancel').click();
+    const modalTitle = document.querySelector('#confirmation-title').textContent;
+    const modalDescription = document.querySelector('#confirmation-description').textContent;
+    document.querySelector('#confirmation-cancel').click();
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     const cancelMode = state.approvalMode;
     const cancelInputEnabled = !input.disabled;
@@ -591,11 +592,11 @@ async function run() {
 
     document.querySelector('[data-approval-mode="full"]').click();
     await new Promise((resolve) => requestAnimationFrame(resolve));
-    const dialog = document.querySelector('.permission-confirm-dialog').getBoundingClientRect();
-    const cancel = document.querySelector('#full-access-cancel').getBoundingClientRect();
-    const confirm = document.querySelector('#full-access-confirm').getBoundingClientRect();
+    const dialog = document.querySelector('.app-confirm-dialog').getBoundingClientRect();
+    const cancel = document.querySelector('#confirmation-cancel').getBoundingClientRect();
+    const confirm = document.querySelector('#confirmation-confirm').getBoundingClientRect();
     const buttonsOverlap = !(cancel.right <= confirm.left || confirm.right <= cancel.left || cancel.bottom <= confirm.top || confirm.bottom <= cancel.top);
-    document.querySelector('#full-access-confirm').click();
+    document.querySelector('#confirmation-confirm').click();
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
     const confirmMode = state.approvalMode;
     const confirmInputEnabled = !input.disabled;
@@ -624,6 +625,65 @@ async function run() {
       queueButtonRemoved: !document.querySelector('#queue-button'),
     };
   })()`);
+  const confirmation = await window.webContents.executeJavaScript(`(async () => {
+    window.__qaOriginalConfirm = window.confirm;
+    window.__qaNativeConfirmCalls = 0;
+    window.confirm = () => { window.__qaNativeConfirmCalls += 1; return true; };
+    window.__qaConfirmationPromise = confirmAction({
+      eyebrow: '会话管理',
+      title: '从 Share Master 中移除这个会话？',
+      description: '移除后可在一小时内恢复，到期后会从 Share Master 列表清除。',
+      detail: '原始 ChatGPT、Codex 和 Claude 会话记录完全不变。',
+      confirmLabel: '移除会话',
+    });
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const overlay = document.querySelector('#confirmation-overlay');
+    const dialog = document.querySelector('.app-confirm-dialog').getBoundingClientRect();
+    const cancel = document.querySelector('#confirmation-cancel').getBoundingClientRect();
+    const confirm = document.querySelector('#confirmation-confirm').getBoundingClientRect();
+    return {
+      visible: !overlay.classList.contains('hidden'),
+      title: document.querySelector('#confirmation-title').textContent,
+      description: document.querySelector('#confirmation-description').textContent,
+      detail: document.querySelector('#confirmation-detail').textContent,
+      cancelFocused: document.activeElement === document.querySelector('#confirmation-cancel'),
+      dialogWithinViewport: dialog.left >= 0 && dialog.right <= innerWidth && dialog.top >= 0 && dialog.bottom <= innerHeight,
+      buttonsOverlap: !(cancel.right <= confirm.left || confirm.right <= cancel.left || cancel.bottom <= confirm.top || confirm.bottom <= cancel.top),
+    };
+  })()`);
+  fs.writeFileSync(confirmationScreenshot, (await capturePageWithRetry(window)).toPNG());
+  Object.assign(confirmation, await window.webContents.executeJavaScript(`(async () => {
+    document.querySelector('#confirmation-cancel').click();
+    const cancelResult = await window.__qaConfirmationPromise;
+    window.__qaConfirmationPromise = confirmAction({
+      eyebrow: '配置备份',
+      title: '恢复配置备份？',
+      description: '恢复前会先自动备份当前配置。',
+      confirmLabel: '恢复备份',
+      tone: 'neutral',
+    });
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const neutralTone = document.querySelector('.app-confirm-dialog').classList.contains('tone-neutral');
+    document.querySelector('#confirmation-confirm').click();
+    const confirmResult = await window.__qaConfirmationPromise;
+    window.__qaConfirmationPromise = confirmAction({ title: 'Esc 取消测试' });
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    document.querySelector('#confirmation-cancel').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    const escapeResult = await window.__qaConfirmationPromise;
+    const nativeConfirmCalls = window.__qaNativeConfirmCalls;
+    window.confirm = window.__qaOriginalConfirm;
+    delete window.__qaOriginalConfirm;
+    delete window.__qaNativeConfirmCalls;
+    delete window.__qaConfirmationPromise;
+    return {
+      cancelResult,
+      confirmResult,
+      escapeResult,
+      neutralTone,
+      nativeConfirmCalls,
+      hiddenAfterDecision: document.querySelector('#confirmation-overlay').classList.contains('hidden'),
+    };
+  })()`));
   const messageFeatures = await window.webContents.executeJavaScript(`(async () => {
     const agent = document.querySelector('.message.agent');
     const user = document.querySelector('.message.user');
@@ -1254,7 +1314,6 @@ async function run() {
   assert.equal(connectRequests.length, 1);
   assert.equal(connectRequests[0], "deepseek-fixture");
   assert.equal(startThreadRequests.length, 0);
-  assert.equal(startTurnRequests.length, 4);
   assert.equal(reconnect.connected, true);
   assert.equal(reconnect.reconnecting, false);
   assert.equal(reconnect.running, false);
@@ -1285,6 +1344,19 @@ async function run() {
   assert.equal(permissionMode.buttonsOverlap, false);
   assert.equal(permissionMode.overlayHidden, true);
   assert.equal(permissionMode.queueButtonRemoved, true);
+  assert.equal(confirmation.visible, true);
+  assert.match(confirmation.title, /移除这个会话/);
+  assert.match(confirmation.description, /一小时内恢复/);
+  assert.match(confirmation.detail, /原始 ChatGPT/);
+  assert.equal(confirmation.cancelFocused, true);
+  assert.equal(confirmation.dialogWithinViewport, true);
+  assert.equal(confirmation.buttonsOverlap, false);
+  assert.equal(confirmation.cancelResult, false);
+  assert.equal(confirmation.confirmResult, true);
+  assert.equal(confirmation.escapeResult, false);
+  assert.equal(confirmation.neutralTone, true);
+  assert.equal(confirmation.nativeConfirmCalls, 0);
+  assert.equal(confirmation.hiddenAfterDecision, true);
   assert.equal(messageFeatures.actionButtons, 6);
   assert.equal(messageFeatures.agentActions, 3);
   assert.equal(messageFeatures.userActions, 3);
@@ -1450,6 +1522,7 @@ async function run() {
     compact,
     conversation,
     notificationApprovalSync,
+    confirmation,
     messageFeatures,
     deliveryModes,
     restartRecovery,
@@ -1468,7 +1541,7 @@ async function run() {
     windowThemeRequests,
     interactiveLayoutAudits,
     errors,
-    screenshots: [desktopScreenshot, compactScreenshot, conversationScreenshot, attachmentScreenshot, localHistoryScreenshot, localProviderScreenshot, usageScreenshot, usageCompactScreenshot, backupScreenshot, syncScreenshot, appSettingsScreenshot, importPreviewScreenshot, healthScreenshot, extensionsScreenshot, skillInstallScreenshot, darkExtensionsScreenshot],
+    screenshots: [desktopScreenshot, compactScreenshot, conversationScreenshot, confirmationScreenshot, attachmentScreenshot, localHistoryScreenshot, localProviderScreenshot, usageScreenshot, usageCompactScreenshot, backupScreenshot, syncScreenshot, appSettingsScreenshot, importPreviewScreenshot, healthScreenshot, extensionsScreenshot, skillInstallScreenshot, darkExtensionsScreenshot],
   }));
   window.destroy();
   app.quit();

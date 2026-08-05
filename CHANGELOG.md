@@ -2,6 +2,22 @@
 
 本文件记录 Share Master 每个版本的用户可见变化。版本号遵循语义化版本；每次向 GitHub 推送产品更新前，必须先更新版本号和本文件。
 
+## [0.1.10] - 2026-08-05
+
+### 优化
+
+- 删除、移除、卸载、清空和恢复等应用内确认操作统一使用 Vue 3 响应式模态框，视觉与 Share Master 主界面、暗色模式保持一致。
+- 确认框支持焦点循环、Esc 取消、点击遮罩取消、风险说明和针对操作类型的明确按钮文案。
+- 完全访问权限确认也复用统一 Vue 组件，不再维护第二套弹窗结构和样式。
+- 流式回答与思考摘要增量在主进程合并后再发送到界面；连续输入时优先响应键盘，并延后非关键绘制。
+
+### 修复
+
+- 移除 11 处 Windows/Chromium 原生确认窗口，避免确认操作跳出与应用界面割裂的系统样式窗口。
+- 减少长回答生成期间的跨进程消息数量和屏幕外会话布局开销，改善边生成边输入时的卡顿。
+- 开发版启动前强制重新生成 Share Master 图标，避免窗口继续使用启动前的旧 Electron 图标缓存。
+- 窗口创建时显式绑定 Share Master 原生图标，覆盖开发版 Electron 进程默认任务栏图标。
+
 ## [0.1.9] - 2026-08-05
 
 ### 优化
@@ -129,3 +145,4 @@
 [0.1.7]: https://github.com/MttJelly/share-master/compare/v0.1.6...v0.1.7
 [0.1.8]: https://github.com/MttJelly/share-master/compare/v0.1.7...v0.1.8
 [0.1.9]: https://github.com/MttJelly/share-master/compare/v0.1.8...v0.1.9
+[0.1.10]: https://github.com/MttJelly/share-master/compare/v0.1.9...v0.1.10

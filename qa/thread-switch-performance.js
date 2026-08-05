@@ -174,6 +174,7 @@ async function run() {
     const agent = document.querySelector('[data-message-id="stream-agent-performance"]');
     const actionsWhileStreaming = agent?.querySelectorAll('.message-action-button').length || 0;
     const composer = document.querySelector('#composer-input');
+    const agentTextLengthBeforeTyping = agent?.textContent.length || 0;
     const inputStarted = performance.now();
     for (let index = 0; index < 300; index += 1) {
       composer.value = 'typing while streaming ' + index;
@@ -181,7 +182,10 @@ async function run() {
       appendAgentMessageDelta('stream-agent-performance', 'more ');
     }
     const inputDispatchMs = performance.now() - inputStarted;
-    await new Promise((resolve) => setTimeout(resolve, STREAM_RENDER_INTERVAL_MS * 3));
+    await new Promise((resolve) => setTimeout(resolve, STREAM_RENDER_INTERVAL_MS * 2));
+    const pendingDuringComposerInput = pendingAgentStreamRenders.size;
+    const agentTextLengthDuringComposerInput = agent?.textContent.length || 0;
+    await new Promise((resolve) => setTimeout(resolve, STREAM_INPUT_DEFERRAL_MAX_MS + STREAM_RENDER_INTERVAL_MS * 3));
     rawTextObserver.disconnect();
     const completedText = streamingText(agent);
     handleEvent({
@@ -216,7 +220,10 @@ async function run() {
       inputDispatchMs,
       rawTextAttributeWrites,
       pendingBeforeFlush,
+      pendingDuringComposerInput,
       pendingAfterFlush: pendingAgentStreamRenders.size + pendingActivityStreamDeltas.size,
+      agentTextLengthBeforeTyping,
+      agentTextLengthDuringComposerInput,
       agentTextLength: agent?.textContent.length || 0,
       reasoningTextLength: document.querySelector('[data-activity-id="stream-reasoning-performance"] .activity-output')?.textContent.length || 0,
       actionsWhileStreaming,
@@ -229,7 +236,9 @@ async function run() {
     };
   })()`);
   assert.equal(streaming.pendingBeforeFlush, 2);
+  assert.equal(streaming.pendingDuringComposerInput, 1);
   assert.equal(streaming.pendingAfterFlush, 0);
+  assert.equal(streaming.agentTextLengthDuringComposerInput, streaming.agentTextLengthBeforeTyping);
   assert.ok(streaming.agentTextLength >= 7200);
   assert.ok(streaming.reasoningTextLength >= 6000);
   assert.ok(streaming.rawTextAttributeWrites <= 1, `Streaming rewrote cumulative DOM text ${streaming.rawTextAttributeWrites} times.`);

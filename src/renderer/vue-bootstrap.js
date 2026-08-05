@@ -18,7 +18,17 @@ const attachmentUi = reactive({
   items: [],
   dragActive: false,
 });
-window.ShareMasterVueRuntime = { shallowReactive, attachmentUi };
+const confirmationUi = reactive({
+  open: false,
+  eyebrow: "请确认",
+  title: "确认操作？",
+  description: "",
+  detail: "",
+  confirmLabel: "确认",
+  cancelLabel: "取消",
+  tone: "danger",
+});
+window.ShareMasterVueRuntime = { shallowReactive, attachmentUi, confirmationUi };
 
 const AttachmentTray = {
   name: "AttachmentTray",
@@ -78,9 +88,77 @@ const AttachmentDropOverlay = {
   },
 };
 
+const AppConfirmationDialog = {
+  name: "AppConfirmationDialog",
+  setup() {
+    const decide = (confirmed) => window.dispatchEvent(new CustomEvent("share-master:confirmation-decision", {
+      detail: { confirmed },
+    }));
+    const onKeydown = (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        decide(false);
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const controls = [document.querySelector("#confirmation-cancel"), document.querySelector("#confirmation-confirm")]
+        .filter(Boolean);
+      const index = controls.indexOf(document.activeElement);
+      if (!controls.length) return;
+      event.preventDefault();
+      controls[(index + (event.shiftKey ? -1 : 1) + controls.length) % controls.length].focus();
+    };
+    return () => h("div", {
+      id: "confirmation-overlay",
+      class: ["overlay", "app-confirm-overlay", { hidden: !confirmationUi.open }],
+      onClick: (event) => {
+        if (event.target === event.currentTarget) decide(false);
+      },
+      onKeydown,
+    }, [
+      h("section", {
+        class: ["app-confirm-dialog", `tone-${confirmationUi.tone}`],
+        role: "alertdialog",
+        "aria-modal": "true",
+        "aria-labelledby": "confirmation-title",
+        "aria-describedby": confirmationUi.detail
+          ? "confirmation-description confirmation-detail"
+          : "confirmation-description",
+      }, [
+        h("div", { class: "app-confirm-icon", "aria-hidden": "true" }, [
+          h("span", { class: "app-confirm-glyph" }, confirmationUi.tone === "danger" ? "!" : "i"),
+        ]),
+        h("div", { class: "app-confirm-copy" }, [
+          h("span", { class: "app-confirm-eyebrow" }, confirmationUi.eyebrow),
+          h("h2", { id: "confirmation-title" }, confirmationUi.title),
+          h("p", { id: "confirmation-description" }, confirmationUi.description),
+        ]),
+        confirmationUi.detail
+          ? h("div", { id: "confirmation-detail", class: "app-confirm-detail" }, confirmationUi.detail)
+          : null,
+        h("div", { class: "app-confirm-actions" }, [
+          h("button", {
+            id: "confirmation-cancel",
+            class: "secondary-command",
+            type: "button",
+            onClick: () => decide(false),
+          }, confirmationUi.cancelLabel),
+          h("button", {
+            id: "confirmation-confirm",
+            class: ["primary-command", "app-confirm-primary"],
+            type: "button",
+            onClick: () => decide(true),
+          }, confirmationUi.confirmLabel),
+        ]),
+      ]),
+    ]);
+  },
+};
+
 const vueApp = createApp({
   name: "ShareMasterApp",
-  components: { AttachmentTray, AttachmentDropOverlay },
+  components: { AttachmentTray, AttachmentDropOverlay, AppConfirmationDialog },
   render,
   async mounted() {
     try {

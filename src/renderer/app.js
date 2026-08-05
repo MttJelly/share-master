@@ -1,6 +1,7 @@
 /* global lucide, marked, DOMPurify, ShareMasterVueRuntime */
 
 const api = window.codexDeck;
+const confirmationUi = ShareMasterVueRuntime.confirmationUi;
 const state = ShareMasterVueRuntime.shallowReactive({
   provider: null,
   providerType: null,
@@ -122,6 +123,8 @@ const INITIAL_VISIBLE_TURNS = 40;
 const EARLIER_TURN_BATCH = 40;
 const STREAM_RENDER_INTERVAL_MS = 140;
 const COMPOSER_ACTIVITY_WINDOW_MS = 600;
+const STREAM_INPUT_DEFERRAL_MAX_MS = 800;
+const STREAM_INPUT_RECHECK_MS = 80;
 const CHAT_BOTTOM_THRESHOLD_PX = 160;
 const pendingAgentStreamRenders = new Map();
 const pendingActivityStreamDeltas = new Map();
@@ -132,6 +135,7 @@ let chatScrollStateFrame = null;
 let chatPinnedToBottom = true;
 let composerInputFrame = null;
 let lastComposerInputAt = Number.NEGATIVE_INFINITY;
+let streamInputDeferralStartedAt = null;
 
 const $ = (selector) => document.querySelector(selector);
 const elements = {
@@ -183,8 +187,8 @@ const elements = {
   sessionModel: $("#session-model"), sessionEffort: $("#session-effort"),
   appliedSettings: $("#applied-settings"), modeBadge: $("#mode-badge"),
   approvalModeMenu: $("#approval-mode-menu"), approvalModeLabel: $("#approval-mode-label"),
-  fullAccessOverlay: $("#full-access-overlay"), fullAccessConfirm: $("#full-access-confirm"),
-  fullAccessCancel: $("#full-access-cancel"),
+  confirmationOverlay: $("#confirmation-overlay"), confirmationCancel: $("#confirmation-cancel"),
+  confirmationConfirm: $("#confirmation-confirm"),
   composerBrandIcon: $("#composer-brand-icon"),
   skillButton: $("#skill-button"), skillMenu: $("#skill-menu"), skillSearch: $("#skill-search"),
   skillList: $("#skill-list"),
@@ -431,7 +435,38 @@ function setApprovalMode(mode, persist = true) {
   if (persist) persistActiveThreadSettings();
 }
 
-let fullAccessConfirmationResolve = null;
+let actionConfirmationResolve = null;
+let actionConfirmationReturnFocus = null;
+
+function closeActionConfirmation(confirmed = false) {
+  if (!confirmationUi.open && !actionConfirmationResolve) return;
+  confirmationUi.open = false;
+  const resolve = actionConfirmationResolve;
+  const returnFocus = actionConfirmationReturnFocus;
+  actionConfirmationResolve = null;
+  actionConfirmationReturnFocus = null;
+  resolve?.(confirmed);
+  requestAnimationFrame(() => {
+    if (returnFocus?.isConnected && !returnFocus.disabled) returnFocus.focus({ preventScroll: true });
+  });
+}
+
+function confirmAction(options = {}) {
+  if (actionConfirmationResolve) return Promise.resolve(false);
+  actionConfirmationReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  Object.assign(confirmationUi, {
+    eyebrow: options.eyebrow || "请确认",
+    title: options.title || "确认操作？",
+    description: options.description || "请确认是否继续执行此操作。",
+    detail: options.detail || "",
+    confirmLabel: options.confirmLabel || "确认",
+    cancelLabel: options.cancelLabel || "取消",
+    tone: options.tone === "neutral" ? "neutral" : "danger",
+    open: true,
+  });
+  requestAnimationFrame(() => elements.confirmationCancel?.focus({ preventScroll: true }));
+  return new Promise((resolve) => { actionConfirmationResolve = resolve; });
+}
 
 function focusComposerAfterPermissionChange() {
   syncComposerState();
@@ -440,23 +475,18 @@ function focusComposerAfterPermissionChange() {
   });
 }
 
-function closeFullAccessConfirmation(confirmed = false) {
-  if (elements.fullAccessOverlay.classList.contains("hidden") && !fullAccessConfirmationResolve) return;
-  elements.fullAccessOverlay.classList.add("hidden");
-  const resolve = fullAccessConfirmationResolve;
-  fullAccessConfirmationResolve = null;
-  resolve?.(confirmed);
-  focusComposerAfterPermissionChange();
-}
-
-function confirmFullAccess() {
-  if (fullAccessConfirmationResolve) return Promise.resolve(false);
+async function confirmFullAccess() {
   elements.approvalModeMenu.classList.add("hidden");
   elements.modeBadge.setAttribute("aria-expanded", "false");
-  elements.fullAccessOverlay.classList.remove("hidden");
-  refreshIcons();
-  requestAnimationFrame(() => elements.fullAccessCancel.focus());
-  return new Promise((resolve) => { fullAccessConfirmationResolve = resolve; });
+  const confirmed = await confirmAction({
+    eyebrow: "权限变更",
+    title: "启用完全访问权限？",
+    description: "模型将可以不经逐次确认访问互联网及电脑上的文件。请仅在信任当前任务和连接时启用。",
+    detail: "更改只应用于当前会话的后续消息；输入框会保持可用，不需要等待连接重启。",
+    confirmLabel: "启用完全访问",
+  });
+  focusComposerAfterPermissionChange();
+  return confirmed;
 }
 
 function renderAppliedSettings() {
@@ -993,7 +1023,14 @@ function renderManagedSkills(query = "") {
       remove.setAttribute("aria-label", remove.title);
       remove.innerHTML = '<span data-lucide="trash-2"></span>';
       remove.addEventListener("click", async () => {
-        if (!confirm(`卸载 Skill“${skill.name}”？\n\n只删除 Share Master 私有安装副本。`)) return;
+        const confirmed = await confirmAction({
+          eyebrow: "扩展管理",
+          title: `卸载 Skill“${skill.name}”？`,
+          description: "只删除 Share Master 私有安装副本。",
+          detail: "其他位置的 Skill 源文件和原始配置不会被修改。",
+          confirmLabel: "卸载 Skill",
+        });
+        if (!confirmed) return;
         remove.disabled = true;
         try {
           const response = await api.removeSkill(skill.name);
@@ -1467,9 +1504,13 @@ function selectProject(project) {
 }
 
 async function deleteProject(project, button) {
-  const confirmed = confirm(
-    `删除 Project“${project.label}”？\n\n只会删除 Project 配置和会话归属关系，不会删除本地目录、聊天记录或 Codex/Claude 会话。`,
-  );
+  const confirmed = await confirmAction({
+    eyebrow: "Project 管理",
+    title: `删除 Project“${project.label}”？`,
+    description: "将删除 Project 配置和其中会话的归属关系。",
+    detail: "本地目录、聊天记录以及 Codex/Claude 原始会话不会被删除。",
+    confirmLabel: "删除 Project",
+  });
   if (!confirmed) return;
   button.disabled = true;
   const wasActive = sameProject(state.activeProject, project);
@@ -1774,9 +1815,13 @@ function renderProviderOptions() {
 
 async function removeProviderConnection(provider, button) {
   const credential = provider.type === "relay" ? "加密 API Key" : "独立登录凭据";
-  const confirmed = confirm(
-    `删除连接“${provider.connectionLabel || provider.label}”？\n\n将删除该连接及其${credential}，共享聊天记录完全不变。`,
-  );
+  const confirmed = await confirmAction({
+    eyebrow: "连接管理",
+    title: `删除连接“${provider.connectionLabel || provider.label}”？`,
+    description: `将从 Share Master 删除该连接及其${credential}。`,
+    detail: "共享聊天记录和其他模型连接不会被修改。",
+    confirmLabel: "删除连接",
+  });
   if (!confirmed) return;
   button.disabled = true;
   try {
@@ -3000,6 +3045,7 @@ function flushPendingStreamUpdates(itemId = null, finalize = false) {
     clearTimeout(streamRenderTimer);
     streamRenderTimer = null;
   }
+  if (itemId === null) streamInputDeferralStartedAt = null;
   const shouldScroll = shouldAutoScrollStream();
   const finalizedNodes = new Set();
   for (const [id, pending] of [...pendingAgentStreamRenders]) {
@@ -3030,10 +3076,21 @@ function flushPendingStreamUpdates(itemId = null, finalize = false) {
 
 function scheduleStreamUpdateFlush() {
   if (streamRenderTimer) return;
-  streamRenderTimer = setTimeout(() => {
+  const flushWhenComposerIsIdle = () => {
     streamRenderTimer = null;
+    const now = performance.now();
+    const composerActive = now - lastComposerInputAt < COMPOSER_ACTIVITY_WINDOW_MS;
+    if (composerActive) {
+      if (streamInputDeferralStartedAt === null) streamInputDeferralStartedAt = now;
+      if (now - streamInputDeferralStartedAt < STREAM_INPUT_DEFERRAL_MAX_MS) {
+        streamRenderTimer = setTimeout(flushWhenComposerIsIdle, STREAM_INPUT_RECHECK_MS);
+        return;
+      }
+    }
+    streamInputDeferralStartedAt = null;
     flushPendingStreamUpdates();
-  }, STREAM_RENDER_INTERVAL_MS);
+  };
+  streamRenderTimer = setTimeout(flushWhenComposerIsIdle, STREAM_RENDER_INTERVAL_MS);
 }
 
 function appendAgentMessageDelta(itemId, delta) {
@@ -3572,11 +3629,19 @@ function scheduleThreadRefresh(delay = 300) {
   }, delay);
 }
 
-function syncComposerState() {
-  const disabled = !state.connected || state.activeArchived || state.openingThread;
-  elements.input.disabled = disabled;
+function composerDisabled() {
+  return !state.connected || state.activeArchived || state.openingThread;
+}
+
+function syncComposerContentState(disabled = composerDisabled()) {
   const hasContent = Boolean(elements.input.value.trim() || state.pendingAttachments.length);
   elements.send.disabled = disabled || state.submitting || !hasContent;
+}
+
+function syncComposerState() {
+  const disabled = composerDisabled();
+  elements.input.disabled = disabled;
+  syncComposerContentState(disabled);
   const hasRecoveredQueue = !state.running && Boolean(state.activeThread?.id && state.messageQueues.get(state.activeThread.id)?.length);
   const controlsDisabled = disabled || state.modelCatalog.length === 0;
   elements.sessionModel.disabled = controlsDisabled;
@@ -4137,7 +4202,13 @@ async function threadMenuAction(action) {
       showDiagnostic("会话已恢复到活动列表。", false);
       return;
     } else if (action === "remove") {
-      const confirmed = confirm("从 Share Master 中移除这个会话？\n\n可在一小时内恢复；到期后会从 Share Master 列表清除。原始 ChatGPT/Codex/Claude 会话记录完全不变。");
+      const confirmed = await confirmAction({
+        eyebrow: "会话管理",
+        title: "从 Share Master 中移除这个会话？",
+        description: "移除后可在一小时内恢复，到期后会从 Share Master 列表清除。",
+        detail: "原始 ChatGPT、Codex 和 Claude 会话记录完全不变。",
+        confirmLabel: "移除会话",
+      });
       if (!confirmed) return;
       const result = await api.hideThread({
         threadId: thread.id,
@@ -4162,9 +4233,13 @@ async function threadMenuAction(action) {
       renderProjects();
       return;
     } else if (action === "delete-now") {
-      const confirmed = confirm(
-        "立即从 Share Master 中删除这个会话？\n\n该操作无法在 Share Master 中撤销，但不会删除或修改原始 ChatGPT/Codex/Claude 会话记录。",
-      );
+      const confirmed = await confirmAction({
+        eyebrow: "立即删除",
+        title: "立即从 Share Master 中删除这个会话？",
+        description: "该操作无法在 Share Master 中撤销。",
+        detail: "原始 ChatGPT、Codex 和 Claude 会话记录不会被删除或修改。",
+        confirmLabel: "立即删除",
+      });
       if (!confirmed) return;
       state.deletedThreadIds = new Set(await api.deleteThreadNow(thread.id));
       state.hiddenThreadIds.delete(thread.id);
@@ -4178,7 +4253,15 @@ async function threadMenuAction(action) {
       return;
     } else if (action === "clear-queue") {
       const count = (state.messageQueues.get(thread.id) || []).length;
-      if (!count || !confirm(`清空这个会话的 ${count} 条待发送消息？`)) return;
+      if (!count) return;
+      const confirmed = await confirmAction({
+        eyebrow: "待发送队列",
+        title: `清空 ${count} 条待发送消息？`,
+        description: "这些消息将不会发送给模型。",
+        detail: "当前正在生成的回答和已经发送的聊天记录不会受到影响。",
+        confirmLabel: "清空队列",
+      });
+      if (!confirmed) return;
       state.messageQueues.delete(thread.id);
       await persistMessageQueue(thread.id);
       syncActiveRunState();
@@ -4205,7 +4288,7 @@ function resizeComposer(syncState = true) {
 
 function scheduleComposerInputUpdate() {
   lastComposerInputAt = performance.now();
-  syncComposerState();
+  syncComposerContentState();
   if (composerInputFrame) return;
   composerInputFrame = requestAnimationFrame(() => {
     composerInputFrame = null;
@@ -4788,7 +4871,15 @@ async function loadBackups() {
       restore.className = "backup-restore";
       restore.textContent = "恢复";
       restore.addEventListener("click", async () => {
-        if (!confirm(`恢复 ${title.textContent} 的配置备份？\n\n当前配置会先自动备份；所有连接将断开，需要重新连接。`)) return;
+        const confirmed = await confirmAction({
+          eyebrow: "配置备份",
+          title: `恢复 ${title.textContent} 的配置备份？`,
+          description: "恢复前会先自动备份当前配置。",
+          detail: "所有模型连接会暂时断开，恢复完成后需要重新连接。",
+          confirmLabel: "恢复备份",
+          tone: "neutral",
+        });
+        if (!confirmed) return;
         restore.disabled = true;
         elements.backupStatus.textContent = "正在恢复...";
         try {
@@ -5173,7 +5264,14 @@ async function toggleScheduledTask(task, button) {
 }
 
 async function removeScheduledTask(task, button) {
-  if (!confirm(`删除已安排任务“${task.title}”？\n\n只删除 Share Master 中的任务配置，不会删除已生成的会话。`)) return;
+  const confirmed = await confirmAction({
+    eyebrow: "已安排任务",
+    title: `删除任务“${task.title}”？`,
+    description: "将删除 Share Master 中的任务配置，并停止之后的重复执行。",
+    detail: "已经生成的会话和聊天记录不会被删除。",
+    confirmLabel: "删除任务",
+  });
+  if (!confirmed) return;
   button.disabled = true;
   try {
     await api.removeScheduledTask(task.id);
@@ -5892,7 +5990,15 @@ elements.promptForm.addEventListener("submit", async (event) => {
 });
 $("#prompt-delete-button").addEventListener("click", async () => {
   const template = state.promptTemplates.find((item) => item.id === state.editingPromptId);
-  if (!template || !confirm(`删除 Prompt “/${template.name}”？`)) return;
+  if (!template) return;
+  const confirmed = await confirmAction({
+    eyebrow: "Prompt 管理",
+    title: `删除 Prompt “/${template.name}”？`,
+    description: "该 Prompt 将不再出现在输入框的快捷指令中。",
+    detail: "已经使用该 Prompt 发送的聊天记录不会改变。",
+    confirmLabel: "删除 Prompt",
+  });
+  if (!confirmed) return;
   try {
     await api.removePrompt(template.id);
     await loadExtensions();
@@ -5929,7 +6035,15 @@ elements.mcpForm.addEventListener("submit", async (event) => {
 });
 $("#mcp-delete-button").addEventListener("click", async () => {
   const server = state.mcpServers.find((item) => item.id === state.editingMcpId);
-  if (!server || !confirm(`删除 MCP “${server.name}”？加密环境变量也会一并删除。`)) return;
+  if (!server) return;
+  const confirmed = await confirmAction({
+    eyebrow: "MCP 管理",
+    title: `删除 MCP “${server.name}”？`,
+    description: "该 MCP 配置及其加密环境变量会一并删除。",
+    detail: "已存在的聊天记录和其他 MCP 配置不会受到影响。",
+    confirmLabel: "删除 MCP",
+  });
+  if (!confirmed) return;
   try {
     await api.removeMcp(server.id);
     await loadExtensions();
@@ -5989,7 +6103,14 @@ elements.pricingForm.addEventListener("submit", async (event) => {
 $("#usage-clear-button").addEventListener("click", async () => {
   const providerId = elements.usageProviderFilter.value || null;
   const scope = providerId ? providerUsageLabel(providerId) : "全部连接";
-  if (!confirm(`清空${scope}的本地请求日志？\n\n聊天记录和模型配置不会被删除。`)) return;
+  const confirmed = await confirmAction({
+    eyebrow: "用量与成本",
+    title: `清空${scope}的本地请求日志？`,
+    description: "本地用量统计和费用估算记录将被清除。",
+    detail: "聊天记录、模型配置和 API Key 不会被删除。",
+    confirmLabel: "清空日志",
+  });
+  if (!confirmed) return;
   try {
     await api.clearProviderUsage({ providerId });
     await refreshUsage();
@@ -6180,9 +6301,13 @@ $("#record-home-form").addEventListener("submit", async (event) => {
 $("#close-provider-button").addEventListener("click", () => {
   if (state.connected) elements.overlay.classList.add("hidden");
 });
+window.addEventListener("share-master:confirmation-decision", (event) => {
+  closeActionConfirmation(Boolean(event.detail?.confirmed));
+});
 document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
-  if (!elements.renameOverlay.classList.contains("hidden")) closeRenameDialog(null);
+  if (confirmationUi.open) closeActionConfirmation(false);
+  else if (!elements.renameOverlay.classList.contains("hidden")) closeRenameDialog(null);
   else if (!elements.projectOverlay.classList.contains("hidden")) closeProjectDialog();
   else if (!elements.claudeOverlay.classList.contains("hidden")) closeClaudeDialog();
   else if (!elements.backupOverlay.classList.contains("hidden")) closeBackupDialog();
@@ -6289,18 +6414,6 @@ elements.approvalModeMenu.querySelectorAll("[data-approval-mode]").forEach((opti
     focusComposerAfterPermissionChange();
   });
 });
-elements.fullAccessCancel.addEventListener("click", () => closeFullAccessConfirmation(false));
-elements.fullAccessConfirm.addEventListener("click", () => closeFullAccessConfirmation(true));
-elements.fullAccessOverlay.addEventListener("click", (event) => {
-  if (event.target === elements.fullAccessOverlay) closeFullAccessConfirmation(false);
-});
-elements.fullAccessOverlay.addEventListener("keydown", (event) => {
-  if (event.key !== "Tab") return;
-  const controls = [elements.fullAccessCancel, elements.fullAccessConfirm];
-  const current = controls.indexOf(document.activeElement);
-  event.preventDefault();
-  controls[(current + (event.shiftKey ? -1 : 1) + controls.length) % controls.length].focus();
-});
 $("#approval-learn-more").addEventListener("click", () => {
   api.openExternal("https://developers.openai.com/codex/security").catch(showActionError);
 });
@@ -6393,9 +6506,9 @@ document.addEventListener("keydown", (event) => {
     if (state.threadView !== "scheduled") setThreadView("scheduled");
     openTaskDialog();
   } else if (event.key === "Escape") {
-    if (!elements.fullAccessOverlay.classList.contains("hidden")) {
+    if (confirmationUi.open) {
       event.preventDefault();
-      closeFullAccessConfirmation(false);
+      closeActionConfirmation(false);
       return;
     }
     elements.menu.classList.add("hidden");

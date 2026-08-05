@@ -45,6 +45,7 @@ const {
   mergeLogicalThread,
   remapBranchMessage,
 } = require("../src/conversation-branches");
+const { createStreamEventBatcher } = require("../src/stream-event-batcher");
 const {
   ensureWindowsNotificationIdentity,
   notificationShortcutArguments,
@@ -2077,6 +2078,23 @@ async function testInterruptedToolCallRepair() {
   }
 }
 
+function testStreamEventBatcher() {
+  const delivered = [];
+  const batcher = createStreamEventBatcher((message) => delivered.push(message), { intervalMs: 1000 });
+  batcher.push({ method: "item/agentMessage/delta", params: { threadId: "thread-a", turnId: "turn-a", itemId: "agent-a", delta: "你好" } });
+  batcher.push({ method: "item/reasoning/summaryTextDelta", params: { threadId: "thread-a", turnId: "turn-a", itemId: "reasoning-a", delta: "检查" } });
+  batcher.push({ method: "item/agentMessage/delta", params: { threadId: "thread-a", turnId: "turn-a", itemId: "agent-a", delta: "，世界" } });
+  assert.equal(batcher.pendingCount(), 2);
+  batcher.push({ method: "item/completed", params: { threadId: "thread-a", item: { id: "agent-a" } } });
+  assert.deepEqual(delivered.map((message) => [message.method, message.params.delta || null]), [
+    ["item/agentMessage/delta", "你好，世界"],
+    ["item/reasoning/summaryTextDelta", "检查"],
+    ["item/completed", null],
+  ]);
+  assert.equal(batcher.pendingCount(), 0);
+  batcher.stop(false);
+}
+
 Promise.resolve()
   .then(testOfficialCliArguments)
   .then(testDiagnosticNormalization)
@@ -2128,13 +2146,14 @@ Promise.resolve()
   .then(testLocalProviderDiscovery)
   .then(testPersistedMessageQueues)
   .then(testInterruptedToolCallRepair)
+  .then(testStreamEventBatcher)
   .then(testClaudeThreadDeletion)
   .then(testOpenAICompatibleStreaming)
   .then(testOpenAICompatibleFailover)
   .then(testOpenAICompatibleCompletionValidation)
   .then(testOpenAICompatibleInterrupt)
   .then(testOpenAICompatibleSharedCodexHistory)
-  .then(() => console.log(JSON.stringify({ ok: true, tests: 55 })))
+  .then(() => console.log(JSON.stringify({ ok: true, tests: 56 })))
   .catch((error) => {
     console.error(error.stack || error.message);
     process.exitCode = 1;

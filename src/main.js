@@ -47,6 +47,7 @@ const {
   mergeLogicalThread,
   remapBranchMessage,
 } = require("./conversation-branches");
+const { createStreamEventBatcher } = require("./stream-event-batcher");
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 const servers = new Map();
@@ -95,6 +96,16 @@ const TITLE_BAR_OVERLAYS = Object.freeze({
 });
 let applicationUpdateCheck = null;
 const localHistoryReader = createLocalHistoryReader({ homeDirectory: os.homedir() });
+
+function applicationIcon() {
+  const source = app.isPackaged ? process.execPath : DEVELOPMENT_ICON;
+  try {
+    const icon = nativeImage.createFromPath(source);
+    return icon.isEmpty() ? null : icon;
+  } catch {
+    return null;
+  }
+}
 
 function handleRendererIpc(channel, handler) {
   ipcMain.handle(channel, async (...args) => {
@@ -350,13 +361,14 @@ async function loginOfficialAccount(provider) {
 
 function createWindow(providerId = null, projectRoot = null, threadId = null, projectId = null, workspace = null) {
   const initialTitleBar = TITLE_BAR_OVERLAYS.light;
+  const icon = applicationIcon();
   const window = new BrowserWindow({
     width: Number(process.env.CODEX_DECK_QA_WIDTH || 1380),
     height: Number(process.env.CODEX_DECK_QA_HEIGHT || 900),
     minWidth: 900,
     minHeight: 640,
     backgroundColor: initialTitleBar.color,
-    ...(!app.isPackaged && fs.existsSync(DEVELOPMENT_ICON) ? { icon: DEVELOPMENT_ICON } : {}),
+    ...(icon ? { icon } : {}),
     titleBarStyle: "hidden",
     titleBarOverlay: initialTitleBar,
     webPreferences: {
@@ -366,6 +378,7 @@ function createWindow(providerId = null, projectRoot = null, threadId = null, pr
       sandbox: true,
     },
   });
+  if (icon && typeof window.setIcon === "function") window.setIcon(icon);
   if (process.platform === "win32" && typeof window.setAppDetails === "function") {
     window.setAppDetails(windowsTaskbarDetails({
       isPackaged: app.isPackaged,
@@ -534,8 +547,12 @@ function createWindow(providerId = null, projectRoot = null, threadId = null, pr
                       .some((node) => node.textContent === 'QA Relay Edited')) break;
                     await new Promise((resolve) => setTimeout(resolve, 100));
                   }
-                  window.confirm = () => true;
                   document.querySelector('[data-provider-row="' + CSS.escape(providerId) + '"] .provider-delete').click();
+                  while (Date.now() - started < 10000
+                    && document.querySelector('#confirmation-overlay').classList.contains('hidden')) {
+                    await new Promise((resolve) => setTimeout(resolve, 50));
+                  }
+                  document.querySelector('#confirmation-confirm').click();
                   while (Date.now() - started < 10000) {
                     if (!document.querySelector('[data-provider-row="' + CSS.escape(providerId) + '"]')) {
                       window.__relayFormQa = {
@@ -662,9 +679,10 @@ function createWindow(providerId = null, projectRoot = null, threadId = null, pr
                 active: count('#active-thread-count'),
                 removed: count('#removed-thread-count')
               };
-              window.confirm = () => true;
               target.querySelector('.thread-more').click();
               document.querySelector('#thread-menu [data-action="remove"]').click();
+              await waitUntil(() => !document.querySelector('#confirmation-overlay').classList.contains('hidden'));
+              document.querySelector('#confirmation-confirm').click();
               await waitUntil(() => (
                 count('#active-thread-count') === before.active - 1
                 && count('#removed-thread-count') === before.removed + 1
@@ -683,6 +701,8 @@ function createWindow(providerId = null, projectRoot = null, threadId = null, pr
               const activeTarget = document.querySelector('.thread-item[data-thread-id="' + CSS.escape(threadId) + '"]');
               activeTarget.querySelector('.thread-more').click();
               document.querySelector('#thread-menu [data-action="remove"]').click();
+              await waitUntil(() => !document.querySelector('#confirmation-overlay').classList.contains('hidden'));
+              document.querySelector('#confirmation-confirm').click();
               await waitUntil(() => (
                 count('#active-thread-count') === before.active - 1
                 && count('#removed-thread-count') === before.removed + 1
@@ -692,6 +712,8 @@ function createWindow(providerId = null, projectRoot = null, threadId = null, pr
               const pendingTarget = document.querySelector('.thread-item[data-thread-id="' + CSS.escape(threadId) + '"]');
               pendingTarget.querySelector('.thread-more').click();
               document.querySelector('#thread-menu [data-action="delete-now"]').click();
+              await waitUntil(() => !document.querySelector('#confirmation-overlay').classList.contains('hidden'));
+              document.querySelector('#confirmation-confirm').click();
               await waitUntil(() => (
                 count('#active-thread-count') === before.active - 1
                 && count('#removed-thread-count') === before.removed
@@ -779,6 +801,7 @@ function createWindow(providerId = null, projectRoot = null, threadId = null, pr
     const server = servers.get(webContentsId);
     if (server) {
       failScheduledTasksForServer(server, "任务窗口已关闭。");
+      server.rendererEventBatcher?.stop(false);
       server.stop();
     }
     servers.delete(webContentsId);
@@ -2753,6 +2776,7 @@ app.whenReady().then(async () => {
       if (previous) {
         clearApprovalRequests(previous);
         failScheduledTasksForServer(previous, "任务使用的连接已切换。");
+        previous.rendererEventBatcher?.stop(false);
         previous.stop();
       }
       servers.delete(senderId);
@@ -2826,6 +2850,8 @@ app.whenReady().then(async () => {
           if (!sender.isDestroyed()) console.error(`[ipc:${channel}] ${error.message}`);
         }
       };
+      const eventBatcher = createStreamEventBatcher((value) => send("codex:event", value));
+      server.rendererEventBatcher = eventBatcher;
       servers.set(senderId, server);
       server.on("notification", (message) => {
         if (message.method === "serverRequest/resolved") {
@@ -2833,10 +2859,11 @@ app.whenReady().then(async () => {
         }
         trackProviderRequest(server, message);
         handleScheduledTaskNotification(server, message);
-        send("codex:event", mappedServerMessage(server, message));
+        eventBatcher.push(mappedServerMessage(server, message));
       });
       server.on("server-request", (message) => {
         if (!isCurrent()) return;
+        eventBatcher.flush();
         if (message.method === "currentTime/read") {
           server.respond(message.id, { currentTimeAt: Math.floor(Date.now() / 1000) });
           return;
@@ -2848,8 +2875,12 @@ app.whenReady().then(async () => {
         server.respondError(message.id, -32601, `Share Master does not support ${message.method}.`);
         send("codex:diagnostic", `已安全取消不支持的 Codex 请求：${message.method}`);
       });
-      server.on("diagnostic", (message) => send("codex:diagnostic", message));
+      server.on("diagnostic", (message) => {
+        eventBatcher.flush();
+        send("codex:diagnostic", message);
+      });
       server.on("exit", (code, detail = null) => {
+        eventBatcher.flush();
         clearApprovalRequests(server);
         interruptActiveLogicalTurns(server, "server-exit");
         failScheduledTasksForServer(server, `连接已断开（退出代码 ${code ?? "未知"}）。`);
