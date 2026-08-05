@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="build/icon.png" width="112" height="112" alt="Share Master" />
-</p>
-
 <h1 align="center">Share Master</h1>
 
 <p align="center">
@@ -14,10 +10,10 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MttJelly/share-master/releases/latest"><img src="https://img.shields.io/github/v/release/MttJelly/share-master?style=for-the-badge&label=Latest&color=147d64" alt="Latest release" /></a>
-  <img src="https://img.shields.io/badge/Windows-x64-202a27?style=for-the-badge&logo=windows11&logoColor=white" alt="Windows x64" />
-  <img src="https://img.shields.io/badge/Vue-3-202a27?style=for-the-badge&logo=vuedotjs&logoColor=67d6ab" alt="Vue 3" />
-  <img src="https://img.shields.io/badge/Electron-43-202a27?style=for-the-badge&logo=electron&logoColor=9feaf9" alt="Electron 43" />
+  <a href="https://github.com/MttJelly/share-master/releases/latest"><img src="https://img.shields.io/github/v/release/MttJelly/share-master?style=for-the-badge&label=Latest&labelColor=17211e&color=24a47b" alt="Latest release" /></a>
+  <img src="https://img.shields.io/badge/Windows-x64-1676d2?style=for-the-badge&labelColor=17211e&logo=windows11&logoColor=white" alt="Windows x64" />
+  <img src="https://img.shields.io/badge/Vue-3-42b883?style=for-the-badge&labelColor=17211e&logo=vuedotjs&logoColor=white" alt="Vue 3" />
+  <img src="https://img.shields.io/badge/Electron-43-4f9aa8?style=for-the-badge&labelColor=17211e&logo=electron&logoColor=white" alt="Electron 43" />
 </p>
 
 <p align="center">
@@ -29,6 +25,18 @@
 </p>
 
 ---
+
+## 产品界面
+
+<p align="center">
+  <img src="docs/assets/share-master-connections.png" width="100%" alt="Share Master 多模型连接管理" />
+</p>
+<p align="center"><sub>统一管理账号、API、中转服务、模型和连接状态</sub></p>
+
+<p align="center">
+  <img src="docs/assets/share-master-conversation-queue.png" width="100%" alt="Share Master 会话与待发送队列" />
+</p>
+<p align="center"><sub>在回答期间继续输入，通过排队或引导控制下一步工作</sub></p>
 
 ## 一个工作区，持续完成工作
 
@@ -58,6 +66,20 @@ flowchart LR
 | **06** | **完整输入** | 拖放、选择或粘贴图片附件，通过 `/` 使用 Skills，并连接 Prompt 与 MCP |
 | **07** | **任务安排** | 创建一次、每小时、每天、工作日、每周或每月执行的自动任务 |
 | **08** | **本地协作** | 浏览本机 Codex 与 Claude Code 会话，并按需复制到 Share Master 工作区 |
+
+## 多端协同目标
+
+Share Master 当前提供 Windows x64 版本。下一阶段的产品目标是让同一个账号、Project 和聊天记录可以在 Windows、macOS、Linux 与手机之间安全衔接，而不是简单同步正在写入的本地数据库。
+
+| 平台与基础能力 | 当前状态 | 优化目标 |
+| --- | --- | --- |
+| **Windows** | 已支持 | 持续优化性能、稳定性、通知和后台多会话 |
+| **macOS** | 规划中 | 提供原生安装包、系统通知、菜单栏与安全存储适配 |
+| **Linux** | 规划中 | 提供主流发行版安装包与桌面环境适配 |
+| **手机端** | 规划中 | 优先实现会话查看、继续发送、附件和任务通知 |
+| **多端同步** | 设计中 | 使用端到端加密的增量事件同步，合并消息、Project 与附件 |
+
+多端版本将保持模型连接和本地工具的能力边界：桌面端负责需要本机环境的任务，其他设备可以安全查看上下文、继续会话并接收运行结果。
 
 ## 下载与安装
 

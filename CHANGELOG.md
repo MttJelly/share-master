@@ -2,6 +2,14 @@
 
 本文件记录 Share Master 每个版本的用户可见变化。版本号遵循语义化版本；每次向 GitHub 推送产品更新前，必须先更新版本号和本文件。
 
+## [0.1.8] - 2026-08-05
+
+### 优化
+
+- README 使用两张隔离测试环境中的应用截图展示多模型连接和会话队列工作流。
+- 调整版本、平台和技术徽章的颜色层级，并移除顶部重复的应用图。
+- 增加 Windows、macOS、Linux、手机端及加密增量同步的多端协同目标说明。
+
 ## [0.1.7] - 2026-08-05
 
 ### 新增
@@ -104,3 +112,4 @@
 [0.1.5]: https://github.com/MttJelly/share-master/compare/v0.1.4...v0.1.5
 [0.1.6]: https://github.com/MttJelly/share-master/compare/v0.1.5...v0.1.6
 [0.1.7]: https://github.com/MttJelly/share-master/compare/v0.1.6...v0.1.7
+[0.1.8]: https://github.com/MttJelly/share-master/compare/v0.1.7...v0.1.8
