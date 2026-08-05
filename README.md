@@ -42,18 +42,6 @@
 
 Share Master 是面向 Windows 的多模型桌面客户端。你可以在同一个 Project 中保留完整上下文，按任务选择不同模型；切换会话时，正在运行的回答继续在后台完成。每个连接独立管理，Share Master 的会话、队列和任务统一保存在自己的数据目录中。
 
-```mermaid
-flowchart LR
-    A[Project 工作区] --> B[共享本地会话]
-    B --> C{选择连接}
-    C --> D[Codex / Claude Code]
-    C --> E[DeepSeek / Qwen]
-    C --> F[自定义兼容 API]
-    B --> G[消息队列与引导]
-    B --> H[附件 / Skills / MCP]
-    B --> I[已安排任务]
-```
-
 ## 核心体验
 
 | | 能力 | 你可以做什么 |
