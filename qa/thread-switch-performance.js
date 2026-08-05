@@ -11,7 +11,7 @@ async function run() {
   let readCalls = 0;
   let interruptCalls = 0;
   let startTurnCalls = 0;
-  let notificationCalls = 0;
+  const notifications = [];
   ipcMain.handle("app:bootstrap", () => ({
     providers: [],
     projects: [],
@@ -70,8 +70,8 @@ async function run() {
     messages: structuredClone(input.remainingMessages || []),
   }));
   ipcMain.handle("thread:restore-message-queue", (_event, input) => [structuredClone(input.message)]);
-  ipcMain.handle("app:notify", () => {
-    notificationCalls += 1;
+  ipcMain.handle("app:notify", (_event, payload) => {
+    notifications.push(payload);
     return true;
   });
   const window = new BrowserWindow({
@@ -192,6 +192,25 @@ async function run() {
         item: { id: 'stream-agent-performance', type: 'agentMessage', text: completedText, phase: 'final_answer' }
       }
     });
+    const actionsAfterCompletion = agent?.querySelectorAll('.message-action-button').length || 0;
+    const streamingAfterCompletion = agent?.classList.contains('streaming') || false;
+    const chat = document.querySelector('#chat-view');
+    chat.style.height = '220px';
+    chat.style.flex = 'none';
+    lastComposerInputAt = Number.NEGATIVE_INFINITY;
+    scrollToBottom();
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const bottomScrollTop = chat.scrollTop;
+    chat.scrollTop = 0;
+    chat.dispatchEvent(new Event('scroll'));
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const pinnedAfterUserScroll = chatPinnedToBottom;
+    appendAgentMessageDelta('stream-agent-performance', 'scroll pin tail');
+    await new Promise((resolve) => setTimeout(resolve, STREAM_RENDER_INTERVAL_MS * 2));
+    const scrollTopAfterStream = chat.scrollTop;
+    flushPendingStreamUpdates('stream-agent-performance', true);
+    chat.style.removeProperty('height');
+    chat.style.removeProperty('flex');
     return {
       dispatchMs,
       inputDispatchMs,
@@ -201,9 +220,12 @@ async function run() {
       agentTextLength: agent?.textContent.length || 0,
       reasoningTextLength: document.querySelector('[data-activity-id="stream-reasoning-performance"] .activity-output')?.textContent.length || 0,
       actionsWhileStreaming,
-      actionsAfterCompletion: agent?.querySelectorAll('.message-action-button').length || 0,
-      streamingAfterCompletion: agent?.classList.contains('streaming') || false,
+      actionsAfterCompletion,
+      streamingAfterCompletion,
       composerValue: composer.value,
+      bottomScrollTop,
+      pinnedAfterUserScroll,
+      scrollTopAfterStream,
     };
   })()`);
   assert.equal(streaming.pendingBeforeFlush, 2);
@@ -215,6 +237,9 @@ async function run() {
   assert.equal(streaming.actionsAfterCompletion, 3);
   assert.equal(streaming.streamingAfterCompletion, false);
   assert.equal(streaming.composerValue, "typing while streaming 299");
+  assert.ok(streaming.bottomScrollTop > 0, "The synthetic conversation was not scrollable.");
+  assert.equal(streaming.pinnedAfterUserScroll, false);
+  assert.equal(streaming.scrollTopAfterStream, 0);
   assert.ok(streaming.dispatchMs < 1000, `Batched stream dispatch took ${streaming.dispatchMs.toFixed(1)} ms.`);
   assert.ok(streaming.inputDispatchMs < 1000, `Composer input dispatch during streaming took ${streaming.inputDispatchMs.toFixed(1)} ms.`);
   const protocol = await window.webContents.executeJavaScript(`(async () => {
@@ -259,6 +284,9 @@ async function run() {
     state.activeThread = { id: 'background-b', name: 'Background B', cwd: ${JSON.stringify(root)} };
     syncActiveRunState();
     const backgroundPreservedAfterSwitch = state.runningThreads.has('background-a');
+    handleEvent({ method: 'turn/started', params: { threadId: 'ghost-thread', turn: { id: 'ghost-turn', status: 'inProgress' } } });
+    handleEvent({ method: 'turn/completed', params: { threadId: 'ghost-thread', turn: { id: 'ghost-turn', status: 'interrupted' } } });
+    const ghostRunTracked = state.runningThreads.has('ghost-thread');
     handleEvent({ method: 'turn/completed', params: { threadId: 'background-a', turn: { id: 'background-turn-1', status: 'completed' } } });
     await new Promise((resolve) => setTimeout(resolve, 20));
     const queuedTurnStarted = state.runningThreads.get('background-a')?.turnId === 'queued-turn-1';
@@ -275,6 +303,7 @@ async function run() {
       queuedBeforeCompletion,
       composerEnabledWhileRunning,
       backgroundPreservedAfterSwitch,
+      ghostRunTracked,
       queuedTurnStarted
     };
   })()`);
@@ -291,10 +320,13 @@ async function run() {
   assert.equal(protocol.queuedBeforeCompletion, 1);
   assert.equal(protocol.composerEnabledWhileRunning, true);
   assert.equal(protocol.backgroundPreservedAfterSwitch, true);
+  assert.equal(protocol.ghostRunTracked, false);
   assert.equal(protocol.queuedTurnStarted, true);
   assert.equal(startTurnCalls, 1);
-  assert.equal(notificationCalls, 1);
-  console.log(JSON.stringify({ ok: true, ...result, streaming, resumeCalls, readCalls, interruptCalls, startTurnCalls, notificationCalls, protocol }));
+  assert.equal(notifications.length, 1);
+  assert.equal(notifications[0].body, "Background A 已完成");
+  assert.doesNotMatch(JSON.stringify(notifications), /未命名会话/);
+  console.log(JSON.stringify({ ok: true, ...result, streaming, resumeCalls, readCalls, interruptCalls, startTurnCalls, notificationCalls: notifications.length, protocol }));
   window.destroy();
 }
 

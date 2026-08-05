@@ -46,6 +46,7 @@ const result = spawnSync(electron, [
   windowsHide: true,
   env: {
     ...process.env,
+    SHARE_MASTER_QA: "1",
     CODEX_DECK_QA_PROVIDER: "official",
     CODEX_DECK_QA_MULTI_PROVIDER: "1",
     CODEX_DECK_QA_OUTPUT_DIR: outputDirectory,
@@ -62,7 +63,7 @@ assert.doesNotMatch(result.stderr, /Error occurred in handler/);
 const line = result.stdout.split(/\r?\n/).find((value) => value.startsWith('{"ok":true'));
 if (!line) throw new Error(`Multi-window result was not found.\n${result.stdout}\n${result.stderr}`);
 const summary = JSON.parse(line);
-assert.equal(summary.appUserModelId, "com.sharemaster.desktop");
+assert.equal(summary.appUserModelId, "com.sharemaster.desktop.dev");
 assert.equal(summary.runtimeIconAvailable, true);
 assert.equal(summary.windowCount, 2);
 assert.equal(summary.serverCount, 2);

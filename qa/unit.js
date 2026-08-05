@@ -48,6 +48,7 @@ const {
 const {
   ensureWindowsNotificationIdentity,
   notificationShortcutArguments,
+  windowsTaskbarDetails,
 } = require("../src/windows-notification-identity");
 const {
   ApprovalRequestRegistry,
@@ -166,6 +167,20 @@ function testWindowsNotificationIdentity() {
       applicationRoot: "F:\\codepro",
     }), '--user-data-dir="C:\\Share Master Data" "F:\\codepro"');
     assert.equal(notificationShortcutArguments({ isPackaged: true }), "");
+    assert.deepEqual(windowsTaskbarDetails({
+      isPackaged: false,
+      userData: "C:\\Share Master Data",
+      applicationRoot: "F:\\codepro",
+      appUserModelId: "com.sharemaster.desktop",
+      target: "F:\\codepro\\electron.exe",
+      icon: "F:\\codepro\\build\\icon.ico",
+    }), {
+      appId: "com.sharemaster.desktop",
+      appIconPath: "F:\\codepro\\build\\icon.ico",
+      appIconIndex: 0,
+      relaunchCommand: '"F:\\codepro\\electron.exe" --user-data-dir="C:\\Share Master Data" "F:\\codepro"',
+      relaunchDisplayName: "Share Master",
+    });
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -777,6 +792,38 @@ function testLegacyDeletionMigration() {
   store.completeThreadDeletion("legacy-pending-thread");
   assert.equal(store.metadata().hiddenThreads.includes("legacy-pending-thread"), false);
   assert.equal(store.deletedThreads().includes("legacy-pending-thread"), true);
+}
+
+function testLegacyTurnLifecycleMigration() {
+  const metadataFile = path.join(providerStoreTestRoot, "providers.json");
+  fs.writeFileSync(metadataFile, JSON.stringify({
+    threadTimeline: {
+      "legacy-running-thread": [{
+        turnId: "legacy-running-turn",
+        nativeThreadId: "legacy-running-thread",
+        providerId: "fixture-provider",
+        status: "inProgress",
+        startedAt: 1000,
+        updatedAt: 1000,
+      }],
+    },
+  }), "utf8");
+  const migrated = new ProviderStore();
+  assert.equal(migrated.threadTimeline("legacy-running-thread")[0].status, "stale");
+  assert.equal(migrated.recoverableInterruptedTurns().length, 0);
+  assert.equal(migrated.metadata().turnLifecycleMigrationVersion, 1);
+
+  migrated.recordLogicalTurn("restart-running-thread", {
+    turnId: "restart-running-turn",
+    nativeThreadId: "restart-running-thread",
+    providerId: "fixture-provider",
+    status: "inProgress",
+  });
+  const restarted = new ProviderStore();
+  assert.equal(restarted.threadTimeline("restart-running-thread")[0].status, "interrupted");
+  assert.equal(restarted.recoverableInterruptedTurns().some((turn) => (
+    turn.threadId === "restart-running-thread"
+  )), true);
 }
 
 function testLocalThreadManagement() {
@@ -2058,6 +2105,7 @@ Promise.resolve()
   .then(testModelPagination)
   .then(testRenameThread)
   .then(testLegacyDeletionMigration)
+  .then(testLegacyTurnLifecycleMigration)
   .then(testDeferredThreadDeletion)
   .then(testLocalThreadManagement)
   .then(testThreadBranchMapping)
@@ -2086,7 +2134,7 @@ Promise.resolve()
   .then(testOpenAICompatibleCompletionValidation)
   .then(testOpenAICompatibleInterrupt)
   .then(testOpenAICompatibleSharedCodexHistory)
-  .then(() => console.log(JSON.stringify({ ok: true, tests: 54 })))
+  .then(() => console.log(JSON.stringify({ ok: true, tests: 55 })))
   .catch((error) => {
     console.error(error.stack || error.message);
     process.exitCode = 1;

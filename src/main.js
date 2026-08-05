@@ -15,9 +15,11 @@ const {
 const {
   ensureWindowsNotificationIdentity,
   notificationShortcutArguments,
+  windowsTaskbarDetails,
 } = require("./windows-notification-identity");
 
-const WINDOWS_APP_ID = "com.sharemaster.desktop";
+const WINDOWS_PACKAGED_APP_ID = "com.sharemaster.desktop";
+const WINDOWS_APP_ID = app.isPackaged ? WINDOWS_PACKAGED_APP_ID : `${WINDOWS_PACKAGED_APP_ID}.dev`;
 const WINDOWS_TOAST_ACTIVATOR_CLSID = "{13C7CD4D-7B07-4CB4-887C-C8C9E230D863}";
 app.setName("Share Master");
 app.setAppUserModelId(WINDOWS_APP_ID);
@@ -59,6 +61,7 @@ const activeLogicalTurnsById = new Map();
 const pendingBranchCreations = new WeakMap();
 const providerRequestRuns = new WeakMap();
 const serverBranchLookups = new WeakMap();
+const serverNativeThreads = new WeakMap();
 const approvalRequestRegistry = new ApprovalRequestRegistry();
 let conversationMirrorSync = null;
 let skillRefreshPromise = null;
@@ -363,6 +366,16 @@ function createWindow(providerId = null, projectRoot = null, threadId = null, pr
       sandbox: true,
     },
   });
+  if (process.platform === "win32" && typeof window.setAppDetails === "function") {
+    window.setAppDetails(windowsTaskbarDetails({
+      isPackaged: app.isPackaged,
+      userData: app.getPath("userData"),
+      applicationRoot: APPLICATION_ROOT,
+      appUserModelId: WINDOWS_APP_ID,
+      target: process.execPath,
+      icon: app.isPackaged ? process.execPath : DEVELOPMENT_ICON,
+    }));
+  }
   const webContentsId = window.webContents.id;
   lastActiveWindow = window;
   window.on("focus", () => { lastActiveWindow = window; });
@@ -1098,6 +1111,22 @@ function currentProviderId(server) {
   return String(server?.provider?.id || "").trim();
 }
 
+function rememberNativeThread(server, threadId) {
+  const id = String(threadId || "").trim();
+  if (!id) return;
+  let threads = serverNativeThreads.get(server);
+  if (!threads) {
+    threads = new Set();
+    serverNativeThreads.set(server, threads);
+  }
+  threads.add(id);
+}
+
+function isRememberedNativeThread(server, threadId) {
+  const id = String(threadId || "").trim();
+  return Boolean(id && serverNativeThreads.get(server)?.has(id));
+}
+
 function eventBranchForServer(server, nativeThreadId) {
   const branchId = String(nativeThreadId || "").trim();
   if (!branchId) return { logicalId: null, branch: null };
@@ -1232,6 +1261,10 @@ async function sharedListThreads(server, searchTerm = "", archived = false) {
 async function sharedReadThread(server, threadId) {
   const targetId = providerStore.logicalThreadIdForAnyBranch(threadId) || threadId;
   const response = await readLogicalBaseThread(server, targetId);
+  return assembleSharedThread(server, targetId, response);
+}
+
+async function assembleSharedThread(server, targetId, response) {
   const branches = await logicalBranchThreads(server, targetId);
   const merged = branches.length
     ? mergeLogicalThread(response.thread, branches, providerStore.threadTimeline(targetId))
@@ -1494,8 +1527,9 @@ async function resumeLogicalThread(server, payload = {}) {
       payload.model || null,
       { approvalMode: payload.approvalMode || "ask" },
     );
+    rememberNativeThread(server, logicalId);
   }
-  return sharedReadThread(server, logicalId);
+  return assembleSharedThread(server, logicalId, base);
 }
 
 async function startLogicalTurn(server, payload = {}) {
@@ -1507,7 +1541,7 @@ async function startLogicalTurn(server, payload = {}) {
   const displayText = typeof payload.displayText === "string" ? payload.displayText : String(payload.text || "");
   let logical = null;
 
-  if (!branch) {
+  if (!branch && !isRememberedNativeThread(server, nativeThreadId)) {
     logical = await sharedReadThread(server, logicalId);
     if (!logical.thread._nativeForCurrentProvider) {
       pendingBranchCreations.set(server, { logicalId });
@@ -1531,6 +1565,8 @@ async function startLogicalTurn(server, payload = {}) {
         pendingBranchCreations.delete(server);
       }
       turnText = buildContinuationPrompt(logical.thread, payload.text);
+    } else {
+      rememberNativeThread(server, nativeThreadId);
     }
   }
 
@@ -2105,7 +2141,9 @@ app.on("open-url", (event, url) => {
 
 app.whenReady().then(async () => {
   if (!hasSingleInstanceLock) return;
-  if (process.platform === "win32" && !process.env.CODEX_DECK_QA_SCREENSHOT) {
+  if (process.platform === "win32"
+    && process.env.SHARE_MASTER_QA !== "1"
+    && !process.env.CODEX_DECK_QA_SCREENSHOT) {
     try {
       ensureWindowsNotificationIdentity({
         appData: app.getPath("appData"),
@@ -2993,11 +3031,16 @@ app.whenReady().then(async () => {
       return rendererThreadWindow(await sharedReadThread(server, payload.threadId));
     }
   });
-  handleRendererIpc("codex:start-thread", (event, payload) => serverFor(event).startThread(
-    payload?.cwd,
-    payload?.model || null,
-    { approvalMode: payload?.approvalMode || "ask" },
-  ));
+  handleRendererIpc("codex:start-thread", async (event, payload) => {
+    const server = serverFor(event);
+    const result = await server.startThread(
+      payload?.cwd,
+      payload?.model || null,
+      { approvalMode: payload?.approvalMode || "ask" },
+    );
+    rememberNativeThread(server, result.thread?.id);
+    return result;
+  });
   handleRendererIpc("codex:start-turn", (event, payload) => startLogicalTurn(serverFor(event), payload));
   handleRendererIpc("codex:steer", (event, payload) => steerLogicalTurn(serverFor(event), payload));
   handleRendererIpc("codex:rename", (event, payload) => {

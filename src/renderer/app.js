@@ -120,13 +120,16 @@ window.shareMasterState = state;
 
 const INITIAL_VISIBLE_TURNS = 40;
 const EARLIER_TURN_BATCH = 40;
-const STREAM_RENDER_INTERVAL_MS = 80;
+const STREAM_RENDER_INTERVAL_MS = 140;
 const COMPOSER_ACTIVITY_WINDOW_MS = 600;
+const CHAT_BOTTOM_THRESHOLD_PX = 160;
 const pendingAgentStreamRenders = new Map();
 const pendingActivityStreamDeltas = new Map();
 const streamTextChunks = new WeakMap();
 let streamRenderTimer = null;
 let scrollFrame = null;
+let chatScrollStateFrame = null;
+let chatPinnedToBottom = true;
 let composerInputFrame = null;
 let lastComposerInputAt = Number.NEGATIVE_INFINITY;
 
@@ -758,6 +761,17 @@ async function loadThreads() {
     if (generation !== state.loadGeneration || connectionGeneration !== state.connectionGeneration) return;
     showDiagnostic(error.message, true);
   }
+}
+
+function touchThreadSummary(thread) {
+  if (!thread?.id) return;
+  const now = Math.floor(Date.now() / 1000);
+  const updated = { ...thread, updatedAt: now, recencyAt: now };
+  state.activeThreads = [updated, ...state.activeThreads.filter((item) => item.id !== updated.id)];
+  if (state.activeThread?.id === updated.id) state.activeThread = { ...state.activeThread, ...updated };
+  state.allThreads = threadsForCurrentView();
+  syncProjects();
+  applyThreadFilter(elements.search.value.trim());
 }
 
 function closeSkillMenu() {
@@ -2969,8 +2983,16 @@ function finalizeStreamingNode(node) {
 
 function shouldAutoScrollStream() {
   if (performance.now() - lastComposerInputAt < COMPOSER_ACTIVITY_WINDOW_MS) return false;
-  const gap = elements.chat.scrollHeight - elements.chat.scrollTop - elements.chat.clientHeight;
-  return elements.chat.clientHeight <= 0 || gap < 420;
+  return chatPinnedToBottom;
+}
+
+function scheduleChatScrollStateUpdate() {
+  if (chatScrollStateFrame) return;
+  chatScrollStateFrame = requestAnimationFrame(() => {
+    chatScrollStateFrame = null;
+    const gap = elements.chat.scrollHeight - elements.chat.scrollTop - elements.chat.clientHeight;
+    chatPinnedToBottom = elements.chat.clientHeight <= 0 || gap <= CHAT_BOTTOM_THRESHOLD_PX;
+  });
 }
 
 function flushPendingStreamUpdates(itemId = null, finalize = false) {
@@ -3241,6 +3263,7 @@ async function sendMessage(_deliveryMode = "auto") {
     queue.push(outgoing);
     state.messageQueues.set(initialThread.id, queue);
     await persistMessageQueue(initialThread.id);
+    touchThreadSummary(initialThread);
     showDiagnostic(`消息已排队（${queue.length}）`, false);
     syncActiveRunState();
     return;
@@ -3311,7 +3334,7 @@ async function sendMessage(_deliveryMode = "auto") {
       clientUserMessageId,
       ...sessionSettings,
     });
-    await loadThreads();
+    touchThreadSummary(targetThread);
   } catch (error) {
     if (generation === state.openThreadGeneration) {
       showDiagnostic(error.message, true);
@@ -3408,6 +3431,11 @@ async function startNextQueuedMessage(threadId) {
   }
 }
 
+function trackedThreadTitle(threadId) {
+  const thread = threadForId(threadId) || (state.activeThread?.id === threadId ? state.activeThread : null);
+  return thread ? titleOf(thread) : state.threadAliases[threadId] || null;
+}
+
 function setThreadRunning(threadId, running, turnId = null) {
   if (!threadId) return;
   if (running) {
@@ -3416,6 +3444,7 @@ function setThreadRunning(threadId, running, turnId = null) {
       stopRequested: false,
       interruptingTurnId: null,
       startedAt: Date.now(),
+      title: trackedThreadTitle(threadId),
     };
     if (turnId) current.turnId = turnId;
     state.runningThreads.set(threadId, current);
@@ -3585,9 +3614,9 @@ function threadForId(threadId) {
   return [...state.activeThreads, ...state.archivedThreads].find((thread) => thread.id === threadId) || null;
 }
 
-function notifyThreadCompletion(threadId, turn) {
+function notifyThreadCompletion(threadId, turn, run = null) {
   const thread = threadForId(threadId);
-  const title = titleOf(thread || { id: threadId });
+  const title = run?.title || (thread ? titleOf(thread) : state.threadAliases[threadId]) || "后台会话";
   const status = turn?.status;
   const body = status === "failed"
     ? `${title} 运行失败`
@@ -3597,6 +3626,7 @@ function notifyThreadCompletion(threadId, turn) {
 
 function completeThreadRun(threadId, turn) {
   const currentRun = state.runningThreads.get(threadId);
+  if (!currentRun) return;
   if (currentRun?.turnId && turn?.id && currentRun.turnId !== turn.id) return;
   const wasBackground = threadId !== state.activeThread?.id || document.hidden;
   setThreadRunning(threadId, false);
@@ -3606,7 +3636,7 @@ function completeThreadRun(threadId, turn) {
   if (queue.length) {
     setTimeout(() => startNextQueuedMessage(threadId), 0);
   } else if (wasBackground) {
-    notifyThreadCompletion(threadId, turn);
+    notifyThreadCompletion(threadId, turn, currentRun);
   }
   if (threadId === state.activeThread?.id) {
     if (turn?.status === "failed") {
@@ -3691,7 +3721,9 @@ function handleEvent(message) {
   }
   const eventThreadId = params.threadId || params.conversationId || null;
   if (method === "turn/started") {
-    setThreadRunning(eventThreadId, true, params.turn?.id || null);
+    if (state.runningThreads.has(eventThreadId)) {
+      setThreadRunning(eventThreadId, true, params.turn?.id || null);
+    }
     flushPendingInterrupt(eventThreadId);
     return;
   }
@@ -4185,9 +4217,11 @@ function scheduleComposerInputUpdate() {
 function scrollToBottom() {
   if (performance.now() - lastComposerInputAt < COMPOSER_ACTIVITY_WINDOW_MS) return;
   if (scrollFrame) return;
+  chatPinnedToBottom = true;
   scrollFrame = requestAnimationFrame(() => {
     scrollFrame = null;
-    elements.chat.scrollTop = elements.chat.scrollHeight;
+    // Browsers clamp this value without a synchronous scrollHeight read.
+    elements.chat.scrollTop = 1_000_000_000;
   });
 }
 function escapeHtml(value) { const node = document.createElement("div"); node.textContent = String(value ?? ""); return node.innerHTML; }
@@ -6202,6 +6236,7 @@ $("#workspace-button").addEventListener("click", async () => {
   }
 });
 elements.search.addEventListener("input", scheduleThreadSearch);
+elements.chat.addEventListener("scroll", scheduleChatScrollStateUpdate, { passive: true });
 elements.chat.addEventListener("click", (event) => {
   const link = event.target.closest("a");
   if (!link) return;

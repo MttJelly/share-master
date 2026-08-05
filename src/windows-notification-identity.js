@@ -12,6 +12,18 @@ function notificationShortcutArguments({ isPackaged, userData, applicationRoot }
   return `--user-data-dir=${quoteWindowsArgument(userData)} ${quoteWindowsArgument(applicationRoot)}`;
 }
 
+function windowsTaskbarDetails(options = {}) {
+  const target = options.target;
+  const args = notificationShortcutArguments(options);
+  return {
+    appId: options.appUserModelId,
+    appIconPath: options.icon || target,
+    appIconIndex: 0,
+    relaunchCommand: `${quoteWindowsArgument(target)}${args ? ` ${args}` : ""}`,
+    relaunchDisplayName: "Share Master",
+  };
+}
+
 function sameWindowsPath(left, right) {
   if (!left || !right) return false;
   return path.resolve(left).toLocaleLowerCase("en-US") === path.resolve(right).toLocaleLowerCase("en-US");
@@ -66,4 +78,5 @@ module.exports = {
   ensureWindowsNotificationIdentity,
   notificationShortcutArguments,
   quoteWindowsArgument,
+  windowsTaskbarDetails,
 };

@@ -651,16 +651,26 @@ class ProviderStore {
       changed = true;
     }
     const recoveredAt = Date.now();
+    const legacyLifecycle = metadata.turnLifecycleMigrationVersion < 1;
     for (const timeline of Object.values(metadata.threadTimeline)) {
       if (!Array.isArray(timeline)) continue;
       for (const entry of timeline) {
         if (entry?.status !== "inProgress") continue;
-        entry.status = "interrupted";
+        entry.status = legacyLifecycle ? "stale" : "interrupted";
         entry.updatedAt = recoveredAt;
-        entry.recoveredAt = recoveredAt;
-        entry.interruptionReason = "app-restarted";
+        if (legacyLifecycle) {
+          delete entry.recoveredAt;
+          delete entry.interruptionReason;
+        } else {
+          entry.recoveredAt = recoveredAt;
+          entry.interruptionReason = "app-restarted";
+        }
         changed = true;
       }
+    }
+    if (legacyLifecycle) {
+      metadata.turnLifecycleMigrationVersion = 1;
+      changed = true;
     }
     if (changed) {
       writeJson(METADATA_FILE, metadata);
@@ -702,6 +712,7 @@ class ProviderStore {
       localArchivedThreads: Array.isArray(value.localArchivedThreads) ? value.localArchivedThreads : [],
       pendingDeletions: Array.isArray(value.pendingDeletions) ? value.pendingDeletions : [],
       deletionMigrationVersion: Number(value.deletionMigrationVersion) || 0,
+      turnLifecycleMigrationVersion: Number(value.turnLifecycleMigrationVersion) || 0,
       scheduledTasks: Array.isArray(value.scheduledTasks) ? value.scheduledTasks : [],
       messageQueues: cleanMessageQueues(value.messageQueues),
       disabledSkills: Array.isArray(value.disabledSkills) ? value.disabledSkills : [],

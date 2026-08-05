@@ -1472,6 +1472,8 @@ html[data-theme="dark"] .import-safety-note { border-color: #315e50; background:
   padding-top: 44px;
   padding-left: max(30px, calc((100% - 860px)/2));
   padding-right: max(30px, calc((100% - 860px)/2));
+  contain: layout paint style;
+  overflow-anchor: none;
 }
 .message.agent .message-avatar { background: #1b2824; border-radius: 7px; }
 .message.user .message-body { border-color: #cee0d9; background: #e8f2ee; }

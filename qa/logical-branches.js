@@ -3,11 +3,13 @@ const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
 const { app, BrowserWindow } = require("electron");
+const { OpenAICompatibleServer } = require("../src/openai-compatible-server");
 
 const root = path.resolve(__dirname, "..");
 const storeRoot = fs.mkdtempSync(path.join(__dirname, ".logical-branch-store-"));
 const profileRoot = fs.mkdtempSync(path.join(__dirname, ".logical-branch-profile-"));
 process.env.SHARE_MASTER_STORE_ROOT = storeRoot;
+process.env.SHARE_MASTER_QA = "1";
 app.setPath("userData", profileRoot);
 process.on("exit", () => {
   try { fs.rmSync(storeRoot, { recursive: true, force: true }); } catch {}
@@ -15,6 +17,12 @@ process.on("exit", () => {
 });
 
 const requests = [];
+const originalCompatibleReadThread = OpenAICompatibleServer.prototype.readThread;
+let compatibleReadCalls = 0;
+OpenAICompatibleServer.prototype.readThread = function countedReadThread(...args) {
+  compatibleReadCalls += 1;
+  return originalCompatibleReadThread.apply(this, args);
+};
 const mockServer = http.createServer((request, response) => {
   const chunks = [];
   request.on("data", (chunk) => chunks.push(chunk));
@@ -231,6 +239,25 @@ async function run() {
   assert.ok(eventThreadIds.includes(logicalId));
   assert.equal(eventThreadIds.some((threadId) => branchIds.includes(threadId)), false, "A native branch ID leaked to the renderer.");
 
+  const native = await invoke(window, "startThread", { cwd: root, model: "mock-a" });
+  const readsBeforeNativeTurn = compatibleReadCalls;
+  const nativeTurn = await invoke(window, "startTurn", {
+    threadId: native.thread.id,
+    text: "native fast path",
+    displayText: "native fast path",
+    cwd: root,
+    clientUserMessageId: "client-native-fast-path",
+    model: "mock-a",
+  });
+  await waitUntil(
+    () => window.webContents.executeJavaScript(`window.__logicalBranchEvents.find((event) =>
+      event.method === 'turn/completed'
+      && event.params?.threadId === ${JSON.stringify(native.thread.id)}
+      && event.params?.turn?.id === ${JSON.stringify(nativeTurn.turn.id)}) || null`),
+    Boolean,
+  );
+  assert.equal(compatibleReadCalls, readsBeforeNativeTurn, "Native turn re-read the full thread before sending.");
+
   console.log(JSON.stringify({
     ok: true,
     logicalThreadId: logicalId,
@@ -243,6 +270,7 @@ async function run() {
   }));
   mockServer.closeAllConnections?.();
   mockServer.close();
+  OpenAICompatibleServer.prototype.readThread = originalCompatibleReadThread;
   app.exit(0);
 }
 
