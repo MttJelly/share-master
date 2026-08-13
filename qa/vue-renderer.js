@@ -7,6 +7,7 @@ const { APP_VERSION } = require("../src/app-version");
 const root = path.resolve(__dirname, "..");
 const artifactRoot = path.join(__dirname, "multi-window-artifacts");
 const desktopScreenshot = path.join(artifactRoot, "vue-renderer-desktop.png");
+const lightDesktopScreenshot = path.join(artifactRoot, "vue-renderer-desktop-light.png");
 const compactScreenshot = path.join(artifactRoot, "vue-renderer-compact.png");
 const conversationScreenshot = path.join(artifactRoot, "vue-renderer-conversation.png");
 const attachmentScreenshot = path.join(artifactRoot, "vue-renderer-attachment.png");
@@ -62,6 +63,12 @@ async function rendererSnapshot(window) {
 }
 
 async function capturePageWithRetry(window) {
+  await window.webContents.executeJavaScript(`new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      document.documentElement.getBoundingClientRect();
+      resolve();
+    }));
+  })`);
   interactiveLayoutAudits.push(await window.webContents.executeJavaScript(`(() => {
     const visible = (node) => {
       const rect = node.getBoundingClientRect();
@@ -105,7 +112,13 @@ async function capturePageWithRetry(window) {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
       const image = await window.webContents.capturePage();
-      if (!image.isEmpty()) return image;
+      if (!image.isEmpty()) {
+        if (attempt === 0) {
+          await new Promise((resolve) => setTimeout(resolve, 35));
+          continue;
+        }
+        return image;
+      }
       lastError = new Error("capturePage returned an empty image.");
     } catch (error) {
       lastError = error;
@@ -154,8 +167,10 @@ async function run() {
   const claimedQueues = [];
   const windowThemeRequests = [];
   const approvalResponses = [];
+  const localHistoryImportRequests = [];
   let clipboardPasteRequests = 0;
   let pendingSteerResolve = null;
+  let importedLocalHistoryThread = null;
   ipcMain.handle("app:bootstrap", () => ({
     providerPresets: [
       { id: "deepseek", label: "DeepSeek", group: "国内模型", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat", protocol: "chat_completions", note: "DeepSeek 兼容接口。" },
@@ -257,7 +272,10 @@ async function run() {
       modelProvider: "deepseek",
     };
   });
-  ipcMain.handle("codex:list", () => ({ data: [], nextCursor: null }));
+  ipcMain.handle("codex:list", () => ({
+    data: importedLocalHistoryThread ? [structuredClone(importedLocalHistoryThread)] : [],
+    nextCursor: null,
+  }));
   ipcMain.handle("codex:models", () => ({
     data: [{ id: "deepseek-chat", model: "deepseek-chat", displayName: "DeepSeek Chat", isDefault: true }],
     nextCursor: null,
@@ -275,7 +293,9 @@ async function run() {
     return { thread: { id: "unexpected-reconnect-thread", turns: [] } };
   });
   ipcMain.handle("codex:resume", (_event, input) => ({
-    thread: { id: input.threadId, name: "界面优化讨论", cwd: "F:\\codepro", turns: [] },
+    thread: input.threadId === importedLocalHistoryThread?.id
+      ? { ...structuredClone(importedLocalHistoryThread), turns: [] }
+      : { id: input.threadId, name: "界面优化讨论", cwd: "F:\\codepro", turns: [] },
   }));
   ipcMain.handle("codex:start-turn", (_event, input) => {
     startTurnRequests.push(structuredClone(input));
@@ -382,6 +402,29 @@ async function run() {
       { role: "assistant", text: "本地记录已安全显示", timestamp: Date.now() },
     ],
   }));
+  ipcMain.handle("local-history:import", (_event, input) => {
+    localHistoryImportRequests.push(structuredClone(input));
+    importedLocalHistoryThread = {
+      id: "local-imported-history-fixture",
+      name: "本地记录功能迭代",
+      preview: "读取本地聊天记录",
+      cwd: "F:\\codepro",
+      model: "gpt-fixture",
+      modelProvider: "share-master-import",
+      createdAt: Math.floor(Date.now() / 1000) - 60,
+      updatedAt: Math.floor(Date.now() / 1000),
+      recencyAt: Math.floor(Date.now() / 1000),
+      turns: [],
+      _historyEngine: "openai-compatible",
+    };
+    return {
+      imported: true,
+      duplicate: false,
+      sourceLabel: "Codex",
+      truncated: false,
+      thread: structuredClone(importedLocalHistoryThread),
+    };
+  });
   ipcMain.handle("local-providers:discover", () => ({
     sources: ["Codex · 用户配置"],
     warnings: [],
@@ -435,10 +478,14 @@ async function run() {
       }
     }, 50);
   })`);
+  await window.webContents.executeJavaScript("applyTheme('light')");
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  const lightDesktop = await rendererSnapshot(window);
+  fs.mkdirSync(artifactRoot, { recursive: true });
+  fs.writeFileSync(lightDesktopScreenshot, (await capturePageWithRetry(window)).toPNG());
   await window.webContents.executeJavaScript("applyTheme('dark')");
   await new Promise((resolve) => setTimeout(resolve, 150));
   const desktop = await rendererSnapshot(window);
-  fs.mkdirSync(artifactRoot, { recursive: true });
   fs.writeFileSync(desktopScreenshot, (await capturePageWithRetry(window)).toPNG());
   window.setSize(900, 640);
   await new Promise((resolve) => setTimeout(resolve, 250));
@@ -999,6 +1046,25 @@ async function run() {
     bodyOverflow: document.body.scrollWidth > document.body.clientWidth || document.body.scrollHeight > document.body.clientHeight,
     dialogOverflow: document.querySelector('.local-history-dialog').scrollHeight > document.querySelector('.local-history-dialog').clientHeight
   }))()`);
+  Object.assign(localHistory, await window.webContents.executeJavaScript(`(async () => {
+    const button = document.querySelector('.local-history-import-button');
+    const buttonLabel = button?.textContent || '';
+    const status = document.querySelector('.local-history-import-status');
+    button.click();
+    const started = Date.now();
+    while (!document.querySelector('#local-history-overlay').classList.contains('hidden')) {
+      if (Date.now() - started > 5000) throw new Error('Local history import timed out.');
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    return {
+      buttonLabel,
+      statusRole: status?.getAttribute('role') || '',
+      overlayClosedAfterImport: document.querySelector('#local-history-overlay').classList.contains('hidden'),
+      openedThreadId: state.activeThread?.id || null,
+      openedThreadName: state.activeThread?.name || null,
+    };
+  })()`));
+  localHistory.importRequests = structuredClone(localHistoryImportRequests);
   await window.webContents.executeJavaScript("closeLocalHistoryDialog(); openLocalProviderDialog()");
   await new Promise((resolve) => setTimeout(resolve, 100));
   fs.writeFileSync(localProviderScreenshot, (await capturePageWithRetry(window)).toPNG());
@@ -1063,6 +1129,8 @@ async function run() {
     webdavVisible: !document.querySelector('#sync-webdav-form').classList.contains('hidden'),
     webdavUrl: document.querySelector('#sync-webdav-form [name="url"]').value,
     pullLabel: document.querySelector('#sync-pull-label').textContent,
+    selectedTabs: [...document.querySelectorAll('[data-sync-backend]')].map((button) => button.getAttribute('aria-selected')),
+    description: document.querySelector('#sync-title').parentElement.textContent,
     bodyOverflow: document.body.scrollWidth > document.body.clientWidth || document.body.scrollHeight > document.body.clientHeight,
     dialogOverflow: document.querySelector('.sync-dialog').scrollHeight > document.querySelector('.sync-dialog').clientHeight
   }))()`);
@@ -1447,7 +1515,14 @@ async function run() {
   assert.equal(attachments.reactiveCountAfterRemove, 0);
   assert.deepEqual({ visible: localHistory.visible, sources: localHistory.sources, conversations: localHistory.conversations, messages: localHistory.messages }, { visible: true, sources: 2, conversations: 2, messages: 3 });
   assert.equal(localHistory.title, "本地记录功能迭代");
-  assert.match(localHistory.readOnlyNotice, /不修改原始文件/);
+  assert.match(localHistory.readOnlyNotice, /只读浏览原始会话/);
+  assert.match(localHistory.readOnlyNotice, /Share Master 私有记录/);
+  assert.match(localHistory.buttonLabel, /复制到 Share Master/);
+  assert.equal(localHistory.statusRole, "status");
+  assert.equal(localHistory.overlayClosedAfterImport, true);
+  assert.equal(localHistory.openedThreadId, "local-imported-history-fixture");
+  assert.equal(localHistory.openedThreadName, "本地记录功能迭代");
+  assert.deepEqual(localHistory.importRequests, [{ conversationId: "codex-local-1" }]);
   assert.equal(localHistory.bodyOverflow, false);
   assert.equal(localHistory.dialogOverflow, false);
   assert.deepEqual(
@@ -1474,6 +1549,8 @@ async function run() {
   );
   assert.equal(sync.bodyOverflow, false);
   assert.equal(sync.dialogOverflow, false);
+  assert.deepEqual(sync.selectedTabs, ["false", "true"]);
+  assert.match(sync.description, /不包含 API Key、MCP 密钥或聊天正文/);
   assert.deepEqual({ visible: appSettings.visible, toggles: appSettings.toggles, closeToTray: appSettings.closeToTray }, { visible: true, toggles: 2, closeToTray: true });
   assert.equal(appSettings.bodyOverflow, false);
   assert.equal(appSettings.updateState, "available");
@@ -1518,6 +1595,7 @@ async function run() {
 
   console.log(JSON.stringify({
     ok: true,
+    lightDesktop,
     desktop,
     compact,
     conversation,
@@ -1541,7 +1619,7 @@ async function run() {
     windowThemeRequests,
     interactiveLayoutAudits,
     errors,
-    screenshots: [desktopScreenshot, compactScreenshot, conversationScreenshot, confirmationScreenshot, attachmentScreenshot, localHistoryScreenshot, localProviderScreenshot, usageScreenshot, usageCompactScreenshot, backupScreenshot, syncScreenshot, appSettingsScreenshot, importPreviewScreenshot, healthScreenshot, extensionsScreenshot, skillInstallScreenshot, darkExtensionsScreenshot],
+    screenshots: [lightDesktopScreenshot, desktopScreenshot, compactScreenshot, conversationScreenshot, confirmationScreenshot, attachmentScreenshot, localHistoryScreenshot, localProviderScreenshot, usageScreenshot, usageCompactScreenshot, backupScreenshot, syncScreenshot, appSettingsScreenshot, importPreviewScreenshot, healthScreenshot, extensionsScreenshot, skillInstallScreenshot, darkExtensionsScreenshot],
   }));
   window.destroy();
   app.quit();

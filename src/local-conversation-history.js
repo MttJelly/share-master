@@ -156,7 +156,7 @@ async function parseConversationFile(filePath, sourceId, includeMessages = false
       updatedAt = Math.max(updatedAt, recordTime);
     }
 
-    if (sourceId === "codex") {
+    if (sourceId.startsWith("codex")) {
       if (record.type === "session_meta") {
         sessionId ||= String(record.payload?.id || record.payload?.session_id || "");
         cwd ||= String(record.payload?.cwd || "");
@@ -198,7 +198,7 @@ async function parseConversationFile(filePath, sourceId, includeMessages = false
     collector.add({ role, text, timestamp: recordTime || null });
   }
 
-  const useFallback = sourceId === "codex" && responseMessageCount === 0 && fallback.count() > 0;
+  const useFallback = sourceId.startsWith("codex") && responseMessageCount === 0 && fallback.count() > 0;
   return {
     sessionId,
     title: title || "未命名会话",
@@ -227,24 +227,46 @@ function decodeConversationId(value) {
   }
 }
 
-function createLocalHistoryReader({ homeDirectory = os.homedir() } = {}) {
-  const sourceDefinitions = [
-    {
-      id: "codex",
-      label: "Codex",
-      description: "Codex CLI 与桌面客户端",
-      base: path.join(homeDirectory, ".codex"),
+function createLocalHistoryReader({ homeDirectory = os.homedir(), codexHomes = [] } = {}) {
+  const sourceDefinitions = [];
+  const definitions = new Map();
+  const normalizedHomes = new Set();
+  function addSource(source) {
+    if (!source?.id || !source.base) return null;
+    const normalized = path.resolve(source.base).toLocaleLowerCase();
+    if (normalizedHomes.has(normalized)) return definitions.get(source.id) || null;
+    normalizedHomes.add(normalized);
+    const definition = { ...source, base: path.resolve(source.base) };
+    sourceDefinitions.push(definition);
+    definitions.set(definition.id, definition);
+    return definition;
+  }
+  addSource({
+    id: "codex",
+    label: "Codex",
+    description: "Codex CLI 与桌面客户端",
+    base: path.join(homeDirectory, ".codex"),
+    roots: ["sessions", "archived_sessions"],
+  });
+  let appIndex = 0;
+  for (const base of Array.isArray(codexHomes) ? codexHomes : [codexHomes]) {
+    const resolved = String(base || "").trim();
+    if (!resolved) continue;
+    addSource({
+      id: `codex-app-${++appIndex}`,
+      label: "Codex App",
+      description: "Codex App 本地会话（只读）",
+      base: resolved,
       roots: ["sessions", "archived_sessions"],
-    },
-    {
-      id: "claude",
-      label: "Claude Code",
-      description: "Claude Code 本地项目会话",
-      base: path.join(homeDirectory, ".claude"),
-      roots: ["projects"],
-    },
-  ];
-  const definitions = new Map(sourceDefinitions.map((source) => [source.id, source]));
+    });
+  }
+  addSource({
+    id: "claude",
+    label: "Claude Code",
+    description: "Claude Code 本地项目会话",
+    base: path.join(homeDirectory, ".claude"),
+    roots: ["projects"],
+  });
   const cache = new Map();
 
   async function sources() {
@@ -271,7 +293,7 @@ function createLocalHistoryReader({ homeDirectory = os.homedir() } = {}) {
     if (!allowedRoots.some((root) => inside(root, target))) throw new Error("不允许读取该位置。");
     const [realTarget, realRoots] = await Promise.all([
       fsp.realpath(target),
-      Promise.all(allowedRoots.map(async (root) => pathExists(root) ? fsp.realpath(root) : null)),
+      Promise.all(allowedRoots.map(async (root) => await pathExists(root) ? fsp.realpath(root) : null)),
     ]);
     if (!realRoots.filter(Boolean).some((root) => inside(root, realTarget))) throw new Error("不允许读取该位置。");
     return realTarget;
@@ -290,7 +312,7 @@ function createLocalHistoryReader({ homeDirectory = os.homedir() } = {}) {
       id: encodeConversationId(source.id, file.relativePath),
       sourceId: source.id,
       sourceLabel: source.label,
-      archived: source.id === "codex" && file.relativePath.split(path.sep)[0] === "archived_sessions",
+      archived: source.id.startsWith("codex") && file.relativePath.split(path.sep)[0] === "archived_sessions",
     };
     cache.set(file.fullPath, { key: cacheKey, full: includeMessages, value: result });
     return result;
@@ -338,7 +360,24 @@ function createLocalHistoryReader({ homeDirectory = os.homedir() } = {}) {
     return parsed(source, { fullPath, relativePath: decoded.relativePath }, true);
   }
 
-  return { sources, list, read };
+  return {
+    sources,
+    list,
+    read,
+    addCodexSource(base, id = null) {
+      const value = String(base || "").trim();
+      if (!value) return null;
+      const source = addSource({
+        id: id || `codex-app-${++appIndex}`,
+        label: "Codex App",
+        description: "Codex App 本地会话（只读）",
+        base: value,
+        roots: ["sessions", "archived_sessions"],
+      });
+      cache.clear();
+      return source?.id || null;
+    },
+  };
 }
 
 module.exports = {

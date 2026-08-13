@@ -11,12 +11,13 @@ export function render(_ctx, _cache) {
   const _component_app_confirmation_dialog = _resolveComponent("app-confirmation-dialog")
 
   return (_openBlock(), _createElementBlock(_Fragment, null, [
-    _cache[8] || (_cache[8] = _createStaticVNode("<header class=\"titlebar\"><div class=\"titlebar-brand\"><button id=\"sidebar-toggle\" class=\"icon-button\" title=\"切换侧栏\" aria-label=\"切换侧栏\"><span data-lucide=\"panel-left\"></span></button><span class=\"wordmark\"><img class=\"wordmark-icon\" src=\"../../build/icon.svg\" alt=\"\" draggable=\"false\"><span>Share Master</span></span></div><div id=\"window-thread-title\" class=\"window-thread-title\">未选择会话</div><div class=\"titlebar-actions\"><button id=\"workspace-button\" class=\"toolbar-button\" title=\"选择工作目录\"><span data-lucide=\"folder\"></span><span id=\"workspace-label\">选择工作目录</span></button><button id=\"theme-button\" class=\"icon-button\" title=\"主题：跟随系统\" aria-label=\"切换主题\"><span data-lucide=\"monitor\"></span></button><button id=\"new-window-button\" class=\"icon-button\" title=\"新建窗口\" aria-label=\"新建窗口\"><span data-lucide=\"panels-top-left\"></span></button></div></header>", 1)),
+    _cache[8] || (_cache[8] = _createStaticVNode("<header class=\"titlebar\"><div class=\"titlebar-brand\"><button id=\"sidebar-toggle\" class=\"icon-button\" type=\"button\" title=\"切换侧栏\" aria-label=\"切换侧栏\"><span data-lucide=\"panel-left\"></span></button><span class=\"wordmark\"><img class=\"wordmark-icon\" src=\"../../build/icon.svg\" alt=\"\" draggable=\"false\"><span>Share Master</span></span></div><div id=\"window-thread-title\" class=\"window-thread-title\">未选择会话</div><div class=\"titlebar-actions\"><button id=\"workspace-button\" class=\"toolbar-button\" type=\"button\" title=\"选择工作目录\"><span data-lucide=\"folder\"></span><span id=\"workspace-label\">选择工作目录</span></button><button id=\"theme-button\" class=\"icon-button\" type=\"button\" title=\"主题：跟随系统\" aria-label=\"切换主题\"><span data-lucide=\"monitor\"></span></button><button id=\"new-window-button\" class=\"icon-button\" type=\"button\" title=\"新建窗口\" aria-label=\"新建窗口\"><span data-lucide=\"panels-top-left\"></span></button></div></header>", 1)),
     _cache[9] || (_cache[9] = _createElementVNode("aside", { class: "sidebar" }, [
       _createElementVNode("div", { class: "sidebar-top" }, [
         _createElementVNode("button", {
           id: "new-chat-button",
-          class: "new-chat-button"
+          class: "new-chat-button",
+          type: "button"
         }, [
           _createElementVNode("span", { "data-lucide": "square-pen" }),
           _createElementVNode("span", null, "新会话")
@@ -36,6 +37,7 @@ export function render(_ctx, _cache) {
         _createElementVNode("button", {
           id: "add-project-button",
           class: "section-icon-button",
+          type: "button",
           title: "添加 Project",
           "aria-label": "添加 Project"
         }, [
@@ -54,6 +56,7 @@ export function render(_ctx, _cache) {
           _createElementVNode("button", {
             id: "local-history-button",
             class: "section-icon-button",
+            type: "button",
             title: "浏览 Codex、Claude 本地记录",
             "aria-label": "浏览本地记录"
           }, [
@@ -62,6 +65,7 @@ export function render(_ctx, _cache) {
           _createElementVNode("button", {
             id: "schedule-task-button",
             class: "section-icon-button",
+            type: "button",
             title: "安排任务",
             "aria-label": "安排任务"
           }, [
@@ -76,20 +80,38 @@ export function render(_ctx, _cache) {
       }, [
         _createElementVNode("button", {
           class: "active",
+          type: "button",
+          role: "tab",
+          "aria-selected": "true",
           "data-thread-view": "active"
         }, [
           _createTextVNode("活动 "),
           _createElementVNode("span", { id: "active-thread-count" }, "0")
         ]),
-        _createElementVNode("button", { "data-thread-view": "archived" }, [
+        _createElementVNode("button", {
+          type: "button",
+          role: "tab",
+          "aria-selected": "false",
+          "data-thread-view": "archived"
+        }, [
           _createTextVNode("归档 "),
           _createElementVNode("span", { id: "archived-thread-count" }, "0")
         ]),
-        _createElementVNode("button", { "data-thread-view": "scheduled" }, [
+        _createElementVNode("button", {
+          type: "button",
+          role: "tab",
+          "aria-selected": "false",
+          "data-thread-view": "scheduled"
+        }, [
           _createTextVNode("已安排 "),
           _createElementVNode("span", { id: "scheduled-thread-count" }, "0")
         ]),
-        _createElementVNode("button", { "data-thread-view": "removed" }, [
+        _createElementVNode("button", {
+          type: "button",
+          role: "tab",
+          "aria-selected": "false",
+          "data-thread-view": "removed"
+        }, [
           _createTextVNode("已移除 "),
           _createElementVNode("span", { id: "removed-thread-count" }, "0")
         ])
@@ -103,6 +125,7 @@ export function render(_ctx, _cache) {
         _createElementVNode("button", {
           id: "provider-switch",
           class: "provider-switch",
+          type: "button",
           title: "切换账号或 API"
         }, [
           _createElementVNode("span", {
@@ -223,7 +246,7 @@ export function render(_ctx, _cache) {
               })
             ])
           ], -1 /* CACHED */)),
-          _cache[4] || (_cache[4] = _createStaticVNode("<div class=\"composer-footer\"><div class=\"session-controls\"><button id=\"attach-button\" class=\"skill-button\" type=\"button\" title=\"添加图片附件\" aria-label=\"添加图片附件\" disabled><span data-lucide=\"paperclip\"></span></button><button id=\"skill-button\" class=\"skill-button\" type=\"button\" title=\"Skills\" aria-label=\"Skills\" aria-haspopup=\"menu\" aria-expanded=\"false\" disabled><span data-lucide=\"wand-sparkles\"></span></button><label class=\"session-select\" title=\"会话模型\"><img id=\"composer-brand-icon\" src=\"../../node_modules/simple-icons/icons/openai.svg\" alt=\"\"><select id=\"session-model\" aria-label=\"会话模型\" disabled><option>模型</option></select></label><label class=\"session-select\" title=\"推理强度\"><span data-lucide=\"brain\"></span><select id=\"session-effort\" aria-label=\"推理强度\" disabled><option value=\"high\">高</option></select></label><span id=\"applied-settings\" class=\"applied-settings\" title=\"服务端实际采用的会话设置\">待首轮确认</span></div><div class=\"composer-meta\"><button id=\"mode-badge\" class=\"mode-badge\" type=\"button\" aria-haspopup=\"menu\" aria-expanded=\"false\" disabled><span data-lucide=\"shield-check\"></span><span id=\"approval-mode-label\">请求批准</span><span data-lucide=\"chevron-up\"></span></button><span id=\"connection-badge\"><span class=\"status-dot\"></span>未连接</span></div><div class=\"composer-submit\" aria-label=\"消息操作\"><button id=\"send-button\" class=\"send-button\" title=\"发送\" aria-label=\"发送\" disabled><span data-lucide=\"arrow-up\"></span></button><button id=\"stop-button\" class=\"stop-button hidden\" title=\"停止\" aria-label=\"停止\"><span data-lucide=\"square\"></span></button></div></div>", 1))
+          _cache[4] || (_cache[4] = _createStaticVNode("<div class=\"composer-footer\"><div class=\"session-controls\"><button id=\"attach-button\" class=\"skill-button\" type=\"button\" title=\"添加图片附件\" aria-label=\"添加图片附件\" disabled><span data-lucide=\"paperclip\"></span></button><button id=\"skill-button\" class=\"skill-button\" type=\"button\" title=\"Skills\" aria-label=\"Skills\" aria-haspopup=\"menu\" aria-expanded=\"false\" disabled><span data-lucide=\"wand-sparkles\"></span></button><label class=\"session-select\" title=\"会话模型\"><img id=\"composer-brand-icon\" src=\"../../node_modules/simple-icons/icons/openai.svg\" alt=\"\"><select id=\"session-model\" aria-label=\"会话模型\" disabled><option>模型</option></select></label><label class=\"session-select\" title=\"推理强度\"><span data-lucide=\"brain\"></span><select id=\"session-effort\" aria-label=\"推理强度\" disabled><option value=\"high\">高</option></select></label><span id=\"applied-settings\" class=\"applied-settings\" title=\"服务端实际采用的会话设置\">待首轮确认</span></div><div class=\"composer-meta\"><button id=\"mode-badge\" class=\"mode-badge\" type=\"button\" aria-haspopup=\"menu\" aria-expanded=\"false\" disabled><span data-lucide=\"shield-check\"></span><span id=\"approval-mode-label\">请求批准</span><span data-lucide=\"chevron-up\"></span></button><span id=\"connection-badge\"><span class=\"status-dot\"></span>未连接</span></div><div class=\"composer-submit\" aria-label=\"消息操作\"><button id=\"send-button\" class=\"send-button\" type=\"button\" title=\"发送\" aria-label=\"发送\" disabled><span data-lucide=\"arrow-up\"></span></button><button id=\"stop-button\" class=\"stop-button hidden\" type=\"button\" title=\"停止\" aria-label=\"停止\"><span data-lucide=\"square\"></span></button></div></div>", 1))
         ])
       ])
     ]),
@@ -267,84 +290,96 @@ export function render(_ctx, _cache) {
           _createElementVNode("div", { class: "dialog-action-group" }, [
             _createElementVNode("button", {
               id: "add-connection-button",
-              class: "text-button"
+              class: "text-button",
+              type: "button"
             }, [
               _createElementVNode("span", { "data-lucide": "plus" }),
               _createTextVNode("添加连接")
             ]),
             _createElementVNode("button", {
               id: "local-provider-discovery-button",
-              class: "text-button"
+              class: "text-button",
+              type: "button"
             }, [
               _createElementVNode("span", { "data-lucide": "scan-search" }),
               _createTextVNode("发现本机配置")
             ]),
             _createElementVNode("button", {
               id: "official-login-button",
-              class: "text-button"
+              class: "text-button",
+              type: "button"
             }, [
               _createElementVNode("span", { "data-lucide": "log-in" }),
               _createTextVNode("登录默认官方账号")
             ]),
             _createElementVNode("button", {
               id: "record-home-button",
-              class: "text-button"
+              class: "text-button",
+              type: "button"
             }, [
               _createElementVNode("span", { "data-lucide": "database" }),
               _createTextVNode("记录位置")
             ]),
             _createElementVNode("button", {
               id: "health-button",
-              class: "text-button"
+              class: "text-button",
+              type: "button"
             }, [
               _createElementVNode("span", { "data-lucide": "activity" }),
               _createTextVNode("连接监控")
             ]),
             _createElementVNode("button", {
               id: "extensions-button",
-              class: "text-button"
+              class: "text-button",
+              type: "button"
             }, [
               _createElementVNode("span", { "data-lucide": "blocks" }),
               _createTextVNode("扩展中心")
             ]),
             _createElementVNode("button", {
               id: "usage-button",
-              class: "text-button"
+              class: "text-button",
+              type: "button"
             }, [
               _createElementVNode("span", { "data-lucide": "chart-no-axes-combined" }),
               _createTextVNode("用量与成本")
             ]),
             _createElementVNode("button", {
               id: "config-import-button",
-              class: "text-button"
+              class: "text-button",
+              type: "button"
             }, [
               _createElementVNode("span", { "data-lucide": "file-up" }),
               _createTextVNode("导入")
             ]),
             _createElementVNode("button", {
               id: "config-export-button",
-              class: "text-button"
+              class: "text-button",
+              type: "button"
             }, [
               _createElementVNode("span", { "data-lucide": "file-down" }),
               _createTextVNode("导出")
             ]),
             _createElementVNode("button", {
               id: "backup-button",
-              class: "text-button"
+              class: "text-button",
+              type: "button"
             }, [
               _createElementVNode("span", { "data-lucide": "archive-restore" }),
               _createTextVNode("备份")
             ]),
             _createElementVNode("button", {
               id: "sync-button",
-              class: "text-button"
+              class: "text-button",
+              type: "button"
             }, [
               _createElementVNode("span", { "data-lucide": "cloud-cog" }),
               _createTextVNode("同步")
             ]),
             _createElementVNode("button", {
               id: "app-settings-button",
-              class: "text-button"
+              class: "text-button",
+              type: "button"
             }, [
               _createElementVNode("span", { "data-lucide": "settings-2" }),
               _createTextVNode("应用设置")
@@ -446,20 +481,31 @@ export function render(_ctx, _cache) {
           _createElementVNode("button", {
             id: "close-connection-button",
             class: "icon-button dialog-close",
-            title: "关闭"
+            type: "button",
+            title: "关闭",
+            "aria-label": "关闭"
           }, [
             _createElementVNode("span", { "data-lucide": "x" })
           ])
         ]),
         _createElementVNode("div", {
           class: "segmented-control",
-          role: "tablist"
+          role: "tablist",
+          "aria-label": "连接类型"
         }, [
           _createElementVNode("button", {
             class: "active",
+            type: "button",
+            role: "tab",
+            "aria-selected": "true",
             "data-connection-tab": "relay"
           }, "模型 API"),
-          _createElementVNode("button", { "data-connection-tab": "account" }, "GPT 账号")
+          _createElementVNode("button", {
+            type: "button",
+            role: "tab",
+            "aria-selected": "false",
+            "data-connection-tab": "account"
+          }, "GPT 账号")
         ]),
         _createElementVNode("form", {
           id: "relay-form",
@@ -980,7 +1026,7 @@ export function render(_ctx, _cache) {
           ]),
           _createElementVNode("div", null, [
             _createElementVNode("h2", { id: "local-history-title" }, "本地聊天记录"),
-            _createElementVNode("p", null, "只读浏览 Codex、Claude Code 保存在本机的会话，不修改原始文件。")
+            _createElementVNode("p", null, "只读浏览原始会话；需要继续时，可复制到 Share Master 私有记录。")
           ]),
           _createElementVNode("button", {
             id: "local-history-close-button",
@@ -1038,7 +1084,7 @@ export function render(_ctx, _cache) {
             _createElementVNode("div", { class: "local-history-empty" }, [
               _createElementVNode("span", { "data-lucide": "messages-square" }),
               _createElementVNode("strong", null, "选择一条本地会话"),
-              _createElementVNode("span", null, "消息只会显示在此窗口中，不会导入或改写。")
+              _createElementVNode("span", null, "预览不会改写原始记录，复制操作会创建独立的 Share Master 副本。")
             ])
           ])
         ])
@@ -1181,7 +1227,7 @@ export function render(_ctx, _cache) {
           ]),
           _createElementVNode("div", null, [
             _createElementVNode("h2", { id: "sync-title" }, "配置同步"),
-            _createElementVNode("p", null, "通过自选目录同步 Share Master 配置，不包含 API Key 或 MCP 密钥。")
+            _createElementVNode("p", null, "同步 Share Master 配置，不包含 API Key、MCP 密钥或聊天正文。")
           ]),
           _createElementVNode("button", {
             id: "sync-close-button",
@@ -1201,6 +1247,8 @@ export function render(_ctx, _cache) {
           _createElementVNode("button", {
             class: "active",
             type: "button",
+            role: "tab",
+            "aria-selected": "true",
             "data-sync-backend": "directory"
           }, [
             _createElementVNode("span", { "data-lucide": "folder-sync" }),
@@ -1208,6 +1256,8 @@ export function render(_ctx, _cache) {
           ]),
           _createElementVNode("button", {
             type: "button",
+            role: "tab",
+            "aria-selected": "false",
             "data-sync-backend": "webdav"
           }, [
             _createElementVNode("span", { "data-lucide": "cloud" }),
@@ -2369,6 +2419,6 @@ export function render(_ctx, _cache) {
         ])
       ])
     ], -1 /* CACHED */)),
-    _cache[28] || (_cache[28] = _createStaticVNode("<div id=\"thread-menu\" class=\"context-menu hidden\"><button data-action=\"archive\"><span data-lucide=\"archive\"></span>归档</button><button data-action=\"rename\"><span data-lucide=\"pencil\"></span>重命名</button><button class=\"hidden\" data-action=\"clear-queue\"><span data-lucide=\"list-x\"></span>清空待发送</button><button class=\"danger-action\" data-action=\"remove\"><span data-lucide=\"trash-2\"></span>移除会话</button><button class=\"danger-action hidden\" data-action=\"delete-now\"><span data-lucide=\"circle-x\"></span>立即删除</button></div>", 1))
+    _cache[28] || (_cache[28] = _createStaticVNode("<div id=\"thread-menu\" class=\"context-menu hidden\"><button type=\"button\" data-action=\"archive\"><span data-lucide=\"archive\"></span>归档</button><button type=\"button\" data-action=\"rename\"><span data-lucide=\"pencil\"></span>重命名</button><button class=\"hidden\" type=\"button\" data-action=\"clear-queue\"><span data-lucide=\"list-x\"></span>清空待发送</button><button class=\"danger-action\" type=\"button\" data-action=\"remove\"><span data-lucide=\"trash-2\"></span>移除会话</button><button class=\"danger-action hidden\" type=\"button\" data-action=\"delete-now\"><span data-lucide=\"circle-x\"></span>立即删除</button></div>", 1))
   ], 64 /* STABLE_FRAGMENT */))
 }

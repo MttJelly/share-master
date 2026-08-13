@@ -236,6 +236,81 @@ function parseCodexThreadFile(file) {
   return { ...summary, turns };
 }
 
+function importedLocalThread(conversation, now = Date.now()) {
+  const sourceId = String(conversation?.id || "").trim();
+  if (!sourceId) throw new Error("本地会话标识无效。");
+  const fingerprint = crypto.createHash("sha256").update(sourceId).digest("hex").slice(0, 40);
+  const id = `local-${fingerprint}`;
+  const messages = Array.isArray(conversation.messages) ? conversation.messages : [];
+  const turns = [];
+  let turn = null;
+  let itemIndex = 0;
+  const nextItemId = () => `${id}-item-${++itemIndex}`;
+  for (const message of messages) {
+    const text = String(message?.text || "").trim();
+    if (!text) continue;
+    if (message.role === "user") {
+      turn = {
+        id: `${id}-turn-${turns.length + 1}`,
+        status: "completed",
+        items: [{
+          id: nextItemId(),
+          type: "userMessage",
+          content: [{ type: "text", text }],
+        }],
+      };
+      turns.push(turn);
+      continue;
+    }
+    if (!turn) {
+      turn = { id: `${id}-turn-${turns.length + 1}`, status: "completed", items: [] };
+      turns.push(turn);
+    }
+    if (message.role === "reasoning") {
+      turn.items.push({
+        id: nextItemId(),
+        type: "reasoning",
+        content: [],
+        summary: [{ type: "summary_text", text }],
+        sourceLabel: conversation.sourceLabel || "本地记录",
+      });
+    } else if (message.role === "assistant") {
+      turn.items.push({
+        id: nextItemId(),
+        type: "agentMessage",
+        text,
+        phase: "final_answer",
+        sourceLabel: conversation.sourceLabel || "本地记录",
+      });
+    }
+  }
+  if (!turns.length) throw new Error("该本地会话没有可复制的消息。");
+  const importedAt = Math.floor(Number(now) / 1000);
+  const sourceUpdatedAt = Math.floor((Number(conversation.updatedAt) || Number(now)) / 1000);
+  const firstUserText = messages.find((message) => message?.role === "user" && String(message.text || "").trim())?.text || "";
+  return {
+    id,
+    name: String(conversation.title || "未命名会话").trim().slice(0, 160),
+    preview: String(firstUserText || conversation.title || "本地会话副本").split(/\r?\n/)[0].slice(0, 160),
+    modelProvider: "share-master-import",
+    model: String(conversation.model || "").trim() || null,
+    cwd: String(conversation.cwd || "").trim() || null,
+    createdAt: Math.floor((Number(conversation.createdAt) || Number(conversation.updatedAt) || Number(now)) / 1000),
+    updatedAt: importedAt,
+    recencyAt: importedAt,
+    turns,
+    _importedLocalHistory: {
+      sourceConversationId: sourceId,
+      sourceId: String(conversation.sourceId || "").trim() || null,
+      sourceLabel: String(conversation.sourceLabel || "本地记录").trim(),
+      sourceSessionId: String(conversation.sessionId || "").trim() || null,
+      sourceUpdatedAt,
+      importedAt,
+      truncated: Boolean(conversation.truncated),
+    },
+  };
+}
+
 function parseSseBlock(block) {
   const data = block.split(/\r?\n/)
     .filter((line) => line.startsWith("data:"))
@@ -385,6 +460,16 @@ class OpenAICompatibleServer extends EventEmitter {
 
   saveThread(thread) {
     writeJsonAtomic(this.threadFile(thread.id), thread);
+  }
+
+  importLocalConversation(conversation) {
+    const imported = importedLocalThread(conversation);
+    const existing = readJson(this.threadFile(imported.id));
+    if (existing?.id && Array.isArray(existing.turns)) {
+      return { imported: false, duplicate: true, thread: existing };
+    }
+    this.saveThread(imported);
+    return { imported: true, duplicate: false, thread: imported };
   }
 
   summary(thread) {
@@ -855,4 +940,5 @@ module.exports = {
   messagesForThread,
   parseCodexThreadFile,
   parseSseBlock,
+  importedLocalThread,
 };

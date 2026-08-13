@@ -27,6 +27,7 @@ const { ClaudeServer, claudePermissionArgs } = require("../src/claude-server");
 const {
   OpenAICompatibleServer,
   chatCompletionsEndpoint,
+  importedLocalThread,
   parseCodexThreadFile,
   parseSseBlock,
 } = require("../src/openai-compatible-server");
@@ -1623,6 +1624,84 @@ async function testOpenAICompatibleSharedCodexHistory() {
   }
 }
 
+async function testImportedLocalConversation() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "share-master-local-import-"));
+  const conversation = {
+    id: "codex-app:F:\\source\\session.jsonl",
+    sourceId: "codex",
+    sourceLabel: "Codex App",
+    sessionId: "source-session",
+    title: "共享记录迭代",
+    cwd: "F:\\codepro",
+    model: "gpt-fixture",
+    createdAt: 1760000000000,
+    updatedAt: 1760000060000,
+    messages: [
+      { role: "user", text: "继续检查聊天记录共享" },
+      { role: "reasoning", text: "先验证只读源和私有副本" },
+      { role: "assistant", text: "共享链路验证完成" },
+    ],
+  };
+  try {
+    const converted = importedLocalThread(conversation, 1760000120000);
+    assert.match(converted.id, /^local-[a-f0-9]{40}$/);
+    assert.equal(importedLocalThread(conversation, 1760000180000).id, converted.id);
+    assert.equal(converted.name, "共享记录迭代");
+    assert.equal(converted.cwd, "F:\\codepro");
+    assert.equal(converted.turns.length, 1);
+    assert.deepEqual(converted.turns[0].items.map((item) => item.type), [
+      "userMessage",
+      "reasoning",
+      "agentMessage",
+    ]);
+    assert.equal(converted.turns[0].items[0].content[0].text, "继续检查聊天记录共享");
+    assert.equal(converted.turns[0].items[1].summary[0].text, "先验证只读源和私有副本");
+    assert.equal(converted.turns[0].items[2].text, "共享链路验证完成");
+    assert.equal(converted._importedLocalHistory.sourceConversationId, conversation.id);
+    assert.equal(converted._importedLocalHistory.sourceLabel, "Codex App");
+
+    const server = new OpenAICompatibleServer({
+      id: "local-import-fixture",
+      label: "Local import fixture",
+      baseUrl: "https://example.test/v1",
+      model: "fixture-model",
+      apiKey: "local-key",
+      codexHome: root,
+    });
+    await server.start();
+    const first = server.importLocalConversation(conversation);
+    assert.equal(first.imported, true);
+    assert.equal(first.duplicate, false);
+    assert.equal(fs.existsSync(server.threadFile(converted.id)), true);
+
+    const continued = server.loadThread(converted.id);
+    continued.turns.push({
+      id: `${converted.id}-continued-turn`,
+      status: "completed",
+      items: [{
+        id: `${converted.id}-continued-item`,
+        type: "agentMessage",
+        text: "Share Master 中后续产生的内容",
+        phase: "final_answer",
+      }],
+    });
+    server.saveThread(continued);
+    const duplicate = server.importLocalConversation({
+      ...conversation,
+      messages: [...conversation.messages, { role: "assistant", text: "源文件后来新增的内容" }],
+    });
+    assert.equal(duplicate.imported, false);
+    assert.equal(duplicate.duplicate, true);
+    assert.equal(duplicate.thread.turns.length, 2);
+    assert.equal(duplicate.thread.turns[1].items[0].text, "Share Master 中后续产生的内容");
+    assert.equal(JSON.stringify(duplicate.thread).includes("源文件后来新增的内容"), false);
+    assert.throws(() => importedLocalThread({ id: "empty", messages: [] }), /没有可复制的消息/);
+    server.stop();
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
 async function testNewApiBalance() {
   const calls = [];
   const fetchImpl = async (url, options) => {
@@ -1851,12 +1930,16 @@ async function testLocalConversationHistoryReader() {
     const codexSessions = path.join(home, ".codex", "sessions", "2026", "08", "02");
     const codexArchived = path.join(home, ".codex", "archived_sessions");
     const claudeProjects = path.join(home, ".claude", "projects", "fixture-project");
+    const codexAppHome = path.join(home, "Codex App Data");
+    const codexAppSessions = path.join(codexAppHome, "sessions", "2026", "08", "03");
     fs.mkdirSync(codexSessions, { recursive: true });
     fs.mkdirSync(codexArchived, { recursive: true });
     fs.mkdirSync(claudeProjects, { recursive: true });
+    fs.mkdirSync(codexAppSessions, { recursive: true });
     const codexFile = path.join(codexSessions, "codex-fixture.jsonl");
     const archivedFile = path.join(codexArchived, "codex-archived.jsonl");
     const claudeFile = path.join(claudeProjects, "claude-fixture.jsonl");
+    const codexAppFile = path.join(codexAppSessions, "codex-app-fixture.jsonl");
     const codexContents = [
       JSON.stringify({ timestamp: "2026-08-02T01:00:00.000Z", type: "session_meta", payload: { id: "codex-session", cwd: "F:\\codepro", model_provider: "openai" } }),
       JSON.stringify({ timestamp: "2026-08-02T01:00:01.000Z", type: "turn_context", payload: { model: "gpt-fixture" } }),
@@ -1878,10 +1961,17 @@ async function testLocalConversationHistoryReader() {
       JSON.stringify({ type: "assistant", sessionId: "claude-session", timestamp: "2026-08-02T02:00:02.000Z", message: { role: "assistant", model: "claude-fixture", content: [{ type: "text", text: "只读预览完成" }, { type: "tool_use", name: "ignored" }] } }),
       "",
     ].join("\n"), "utf8");
+    const codexAppContents = [
+      JSON.stringify({ timestamp: "2026-08-03T01:00:00.000Z", type: "session_meta", payload: { id: "codex-app-session", cwd: "F:\\codex-app", model_provider: "openai" } }),
+      JSON.stringify({ timestamp: "2026-08-03T01:00:01.000Z", type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "只读取 Codex App 会话" }] } }),
+      JSON.stringify({ timestamp: "2026-08-03T01:00:02.000Z", type: "response_item", payload: { type: "message", role: "assistant", content: [{ type: "output_text", text: "无需安装 CLI" }] } }),
+      "",
+    ].join("\n");
+    fs.writeFileSync(codexAppFile, codexAppContents, "utf8");
 
-    const reader = createLocalHistoryReader({ homeDirectory: home });
+    const reader = createLocalHistoryReader({ homeDirectory: home, codexHomes: [codexAppHome] });
     const sources = await reader.sources();
-    assert.deepEqual(sources.map((source) => [source.id, source.available]), [["codex", true], ["claude", true]]);
+    assert.deepEqual(sources.map((source) => [source.id, source.available]), [["codex", true], ["codex-app-1", true], ["claude", true]]);
     const codex = await reader.list({ sourceId: "codex" });
     assert.equal(codex.total, 2);
     assert.equal(codex.conversations.some((conversation) => conversation.archived), true);
@@ -1892,6 +1982,13 @@ async function testLocalConversationHistoryReader() {
     assert.deepEqual(codexPreview.messages.map((message) => message.role), ["user", "reasoning", "assistant"]);
     assert.equal(codexPreview.messages.some((message) => message.text.includes("hidden context")), false);
     assert.equal(fs.readFileSync(codexFile, "utf8"), codexContents);
+
+    const codexApp = await reader.list({ sourceId: "codex-app-1" });
+    assert.equal(codexApp.total, 1);
+    assert.equal(codexApp.conversations[0].title, "只读取 Codex App 会话");
+    const codexAppPreview = await reader.read({ conversationId: codexApp.conversations[0].id });
+    assert.deepEqual(codexAppPreview.messages.map((message) => message.text), ["只读取 Codex App 会话", "无需安装 CLI"]);
+    assert.equal(fs.readFileSync(codexAppFile, "utf8"), codexAppContents);
 
     const claude = await reader.list({ sourceId: "claude", search: "Claude 本地" });
     assert.equal(claude.total, 1);
@@ -2153,7 +2250,8 @@ Promise.resolve()
   .then(testOpenAICompatibleCompletionValidation)
   .then(testOpenAICompatibleInterrupt)
   .then(testOpenAICompatibleSharedCodexHistory)
-  .then(() => console.log(JSON.stringify({ ok: true, tests: 56 })))
+  .then(testImportedLocalConversation)
+  .then(() => console.log(JSON.stringify({ ok: true, tests: 57 })))
   .catch((error) => {
     console.error(error.stack || error.message);
     process.exitCode = 1;

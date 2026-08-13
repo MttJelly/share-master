@@ -107,6 +107,7 @@ const state = ShareMasterVueRuntime.shallowReactive({
   localHistorySourceId: null,
   localHistoryConversations: [],
   localHistorySelectedId: null,
+  localHistorySelectedConversation: null,
   localHistoryLoading: false,
   localHistoryGeneration: 0,
   localProviderCandidates: [],
@@ -1339,7 +1340,9 @@ function updateThreadViewControls() {
     : state.scheduledTasks.length;
   document.body.classList.toggle("non-composer-view", state.threadView !== "active");
   document.querySelectorAll("[data-thread-view]").forEach((button) => {
-    button.classList.toggle("active", button.dataset.threadView === state.threadView);
+    const active = button.dataset.threadView === state.threadView;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
   });
 }
 
@@ -4429,6 +4432,7 @@ function closeRecordHomeDialog() {
 }
 
 function localHistoryEmpty(icon, title, detail) {
+  state.localHistorySelectedConversation = null;
   elements.localHistoryPreview.innerHTML = "";
   const empty = document.createElement("div");
   empty.className = "local-history-empty";
@@ -4531,11 +4535,15 @@ async function loadLocalHistory() {
 }
 
 function renderLocalHistoryPreview(conversation) {
+  state.localHistorySelectedConversation = conversation;
   elements.localHistoryPreview.innerHTML = "";
   const header = document.createElement("header");
   header.className = "local-history-preview-heading";
+  const headingCopy = document.createElement("div");
+  headingCopy.className = "local-history-preview-copy";
   const title = document.createElement("h3");
   title.textContent = conversation.title || "未命名会话";
+  title.title = title.textContent;
   const badges = document.createElement("div");
   badges.className = "local-history-badges";
   for (const label of [conversation.sourceLabel, conversation.model, conversation.archived ? "已归档" : ""].filter(Boolean)) {
@@ -4547,7 +4555,21 @@ function renderLocalHistoryPreview(conversation) {
   const date = conversation.updatedAt ? new Date(conversation.updatedAt).toLocaleString("zh-CN") : "时间未知";
   meta.textContent = `${conversation.cwd || "未记录工作目录"} · ${date} · ${conversation.messageCount || 0} 条消息`;
   meta.title = meta.textContent;
-  header.append(title, badges, meta);
+  headingCopy.append(title, badges, meta);
+  const actions = document.createElement("div");
+  actions.className = "local-history-preview-actions";
+  const status = document.createElement("span");
+  status.className = "local-history-import-status provider-error neutral-status";
+  status.setAttribute("role", "status");
+  status.setAttribute("aria-live", "polite");
+  if (conversation.truncated) status.textContent = "该预览已截断，副本仅包含当前可见消息。";
+  const copy = document.createElement("button");
+  copy.type = "button";
+  copy.className = "primary-command local-history-import-button";
+  copy.innerHTML = '<span data-lucide="copy-plus"></span><span>复制到 Share Master</span>';
+  copy.addEventListener("click", () => importLocalHistoryConversation(conversation, copy, status));
+  actions.append(status, copy);
+  header.append(headingCopy, actions);
   elements.localHistoryPreview.appendChild(header);
 
   const messages = document.createElement("div");
@@ -4583,6 +4605,38 @@ function renderLocalHistoryPreview(conversation) {
     messages.appendChild(empty);
   }
   elements.localHistoryPreview.appendChild(messages);
+  refreshIcons();
+}
+
+async function importLocalHistoryConversation(conversation, button, status) {
+  if (!conversation?.id || button.disabled) return;
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  status.classList.remove("local-history-import-error");
+  status.textContent = "正在创建私有副本…";
+  try {
+    const result = await api.importLocalHistory({ conversationId: conversation.id });
+    const prefix = result.duplicate ? "已存在 Share Master 副本。" : "已复制到 Share Master。";
+    status.textContent = result.truncated
+      ? `${prefix} 当前副本只包含预览中可读取的消息。`
+      : `${prefix} 原始记录保持不变。`;
+    button.innerHTML = '<span data-lucide="check"></span><span>已复制</span>';
+    refreshIcons();
+    if (!state.connected) return;
+    await loadThreads();
+    const thread = [...state.activeThreads, ...state.archivedThreads]
+      .find((item) => item.id === result.thread?.id) || result.thread;
+    closeLocalHistoryDialog();
+    if (thread?.id) await openThread(thread);
+  } catch (error) {
+    status.textContent = error.message || "复制本地会话失败。";
+    status.classList.add("local-history-import-error");
+    button.disabled = false;
+    button.innerHTML = '<span data-lucide="copy-plus"></span><span>重试复制</span>';
+    refreshIcons();
+  } finally {
+    button.removeAttribute("aria-busy");
+  }
 }
 
 async function openLocalHistoryConversation(conversation) {
@@ -4916,7 +4970,11 @@ function closeBackupDialog() {
 
 function renderSyncStatus(snapshot) {
   state.syncBackend = snapshot.backend === "webdav" ? "webdav" : "directory";
-  document.querySelectorAll("[data-sync-backend]").forEach((button) => button.classList.toggle("active", button.dataset.syncBackend === state.syncBackend));
+  document.querySelectorAll("[data-sync-backend]").forEach((button) => {
+    const active = button.dataset.syncBackend === state.syncBackend;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+  });
   $("#sync-directory-fields").classList.toggle("hidden", state.syncBackend !== "directory");
   elements.syncWebdavForm.classList.toggle("hidden", state.syncBackend !== "webdav");
   elements.syncDirectoryInput.value = snapshot.directory || "";
@@ -5788,7 +5846,11 @@ elements.credentialForm.addEventListener("submit", async (event) => {
   }
 });
 document.querySelectorAll("[data-connection-tab]").forEach((button) => button.addEventListener("click", () => {
-  document.querySelectorAll("[data-connection-tab]").forEach((item) => item.classList.toggle("active", item === button));
+  document.querySelectorAll("[data-connection-tab]").forEach((item) => {
+    const active = item === button;
+    item.classList.toggle("active", active);
+    item.setAttribute("aria-selected", String(active));
+  });
   $("#relay-form").classList.toggle("hidden", button.dataset.connectionTab !== "relay");
   $("#account-form").classList.toggle("hidden", button.dataset.connectionTab !== "account");
 }));
@@ -6174,7 +6236,11 @@ $("#sync-directory-choose").addEventListener("click", async () => {
 });
 document.querySelectorAll("[data-sync-backend]").forEach((button) => button.addEventListener("click", () => {
   state.syncBackend = button.dataset.syncBackend;
-  document.querySelectorAll("[data-sync-backend]").forEach((item) => item.classList.toggle("active", item === button));
+  document.querySelectorAll("[data-sync-backend]").forEach((item) => {
+    const active = item === button;
+    item.classList.toggle("active", active);
+    item.setAttribute("aria-selected", String(active));
+  });
   $("#sync-directory-fields").classList.toggle("hidden", state.syncBackend !== "directory");
   elements.syncWebdavForm.classList.toggle("hidden", state.syncBackend !== "webdav");
   $("#sync-pull-label").textContent = state.syncBackend === "webdav" ? "使用 WebDAV" : "使用同步目录";

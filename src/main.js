@@ -91,11 +91,44 @@ const APPLICATION_ROOT = path.resolve(__dirname, "..");
 const DEVELOPMENT_ICON = path.join(APPLICATION_ROOT, "build", "icon.ico");
 const DEFAULT_WORKSPACE = app.isPackaged ? os.homedir() : APPLICATION_ROOT;
 const TITLE_BAR_OVERLAYS = Object.freeze({
-  light: { color: "#f9fbfa", symbolColor: "#1d2925", height: 48 },
-  dark: { color: "#1d221f", symbolColor: "#edf1ef", height: 48 },
+  light: { color: "#fafbfc", symbolColor: "#273139", height: 48 },
+  dark: { color: "#171c1f", symbolColor: "#edf1f3", height: 48 },
 });
 let applicationUpdateCheck = null;
 const localHistoryReader = createLocalHistoryReader({ homeDirectory: os.homedir() });
+
+function codexAppHistoryHomes() {
+  if (process.platform !== "win32") return [];
+  const roots = [];
+  const localAppData = process.env.LOCALAPPDATA;
+  const appData = process.env.APPDATA;
+  if (localAppData) {
+    roots.push(
+      path.join(localAppData, "OpenAI", "Codex"),
+      path.join(localAppData, "Codex"),
+    );
+    const packages = path.join(localAppData, "Packages");
+    try {
+      for (const entry of fs.readdirSync(packages, { withFileTypes: true })) {
+        if (!entry.isDirectory() || !entry.name.toLocaleLowerCase().startsWith("openai.codex_")) continue;
+        const packageRoot = path.join(packages, entry.name);
+        roots.push(
+          path.join(packageRoot, "LocalState"),
+          path.join(packageRoot, "LocalCache", "Local", "Codex"),
+          path.join(packageRoot, "LocalCache", "Local", "OpenAI", "Codex"),
+          path.join(packageRoot, "LocalCache", "Roaming", "Codex"),
+          path.join(packageRoot, "LocalCache", "Roaming", "OpenAI", "Codex"),
+        );
+      }
+    } catch {
+      // The AppX package directory may be unavailable to a standard user.
+    }
+  }
+  if (appData) roots.push(path.join(appData, "OpenAI", "Codex"), path.join(appData, "Codex"));
+  return [...new Set(roots.map((value) => path.resolve(value)))];
+}
+
+for (const home of codexAppHistoryHomes()) localHistoryReader.addCodexSource(home);
 
 function applicationIcon() {
   const source = app.isPackaged ? process.execPath : DEVELOPMENT_ICON;
@@ -104,6 +137,24 @@ function applicationIcon() {
     return icon.isEmpty() ? null : icon;
   } catch {
     return null;
+  }
+}
+
+function applyWindowIdentity(window) {
+  if (!window || window.isDestroyed()) return;
+  const icon = applicationIcon();
+  if (icon && typeof window.setIcon === "function") window.setIcon(icon);
+  if (process.platform !== "win32") return;
+  if (typeof window.setSkipTaskbar === "function") window.setSkipTaskbar(false);
+  if (typeof window.setAppDetails === "function") {
+    window.setAppDetails(windowsTaskbarDetails({
+      isPackaged: app.isPackaged,
+      userData: app.getPath("userData"),
+      applicationRoot: APPLICATION_ROOT,
+      appUserModelId: WINDOWS_APP_ID,
+      target: process.execPath,
+      icon: app.isPackaged ? process.execPath : DEVELOPMENT_ICON,
+    }));
   }
 }
 
@@ -378,17 +429,9 @@ function createWindow(providerId = null, projectRoot = null, threadId = null, pr
       sandbox: true,
     },
   });
-  if (icon && typeof window.setIcon === "function") window.setIcon(icon);
-  if (process.platform === "win32" && typeof window.setAppDetails === "function") {
-    window.setAppDetails(windowsTaskbarDetails({
-      isPackaged: app.isPackaged,
-      userData: app.getPath("userData"),
-      applicationRoot: APPLICATION_ROOT,
-      appUserModelId: WINDOWS_APP_ID,
-      target: process.execPath,
-      icon: app.isPackaged ? process.execPath : DEVELOPMENT_ICON,
-    }));
-  }
+  applyWindowIdentity(window);
+  window.once("ready-to-show", () => applyWindowIdentity(window));
+  window.webContents.once("did-finish-load", () => applyWindowIdentity(window));
   const webContentsId = window.webContents.id;
   lastActiveWindow = window;
   window.on("focus", () => { lastActiveWindow = window; });
@@ -819,6 +862,7 @@ function activeAppWindow() {
 function showAppWindow() {
   const window = activeAppWindow() || createWindow();
   if (window.isMinimized()) window.restore();
+  applyWindowIdentity(window);
   window.show();
   window.focus();
   lastActiveWindow = window;
@@ -2187,6 +2231,9 @@ app.whenReady().then(async () => {
     }
   }
   providerStore = new ProviderStore();
+  // The original Codex App/CLI source is read independently of the optional app-server.
+  // This keeps local history available on machines that do not have the CLI installed.
+  localHistoryReader.addCodexSource(providerStore.conversationMirrorSource());
   localProviderDiscovery = createLocalProviderDiscovery({
     homeDirectory: os.homedir(),
     codexHomes: [CODEX_HOME],
@@ -2277,6 +2324,20 @@ app.whenReady().then(async () => {
   ipcMain.handle("local-history:sources", () => localHistoryReader.sources());
   ipcMain.handle("local-history:list", (_event, input = {}) => localHistoryReader.list(input));
   ipcMain.handle("local-history:read", (_event, input = {}) => localHistoryReader.read(input));
+  ipcMain.handle("local-history:import", async (_event, input = {}) => {
+    const conversation = await localHistoryReader.read(input);
+    const result = sharedHistoryReaders().compatible.importLocalConversation(conversation);
+    return {
+      ...result,
+      thread: {
+        ...result.thread,
+        turns: [],
+        _historyEngine: "openai-compatible",
+      },
+      sourceLabel: conversation.sourceLabel,
+      truncated: Boolean(conversation.truncated),
+    };
+  });
   ipcMain.handle("deep-link:confirm-import", async (_event, input = {}) => {
     const importType = String(input.importType || "").trim();
     const rawConfig = input.config && typeof input.config === "object" ? input.config : {};

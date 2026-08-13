@@ -39,6 +39,7 @@ contextBridge.exposeInMainWorld("codexDeck", {
   localHistorySources: () => ipcRenderer.invoke("local-history:sources"),
   listLocalHistory: (input) => ipcRenderer.invoke("local-history:list", input),
   readLocalHistory: (input) => ipcRenderer.invoke("local-history:read", input),
+  importLocalHistory: (input) => ipcRenderer.invoke("local-history:import", input),
   discoverLocalProviders: () => ipcRenderer.invoke("local-providers:discover"),
   importLocalProviders: (candidateIds) => ipcRenderer.invoke("local-providers:import", candidateIds),
   confirmDeepLinkImport: (input) => ipcRenderer.invoke("deep-link:confirm-import", input),
