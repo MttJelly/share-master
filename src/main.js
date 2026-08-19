@@ -95,6 +95,7 @@ const pendingDeepLinks = [];
 const DEFAULT_RENDERER_THREAD_TURNS = 40;
 const APPLICATION_ROOT = path.resolve(__dirname, "..");
 const DEVELOPMENT_ICON = path.join(APPLICATION_ROOT, "build", "icon.ico");
+const PACKAGED_ICON = path.join(process.resourcesPath, "icon.ico");
 const DEFAULT_WORKSPACE = app.isPackaged ? os.homedir() : APPLICATION_ROOT;
 const TITLE_BAR_OVERLAYS = Object.freeze({
   light: { color: "#fafbfc", symbolColor: "#273139", height: 48 },
@@ -136,14 +137,21 @@ function codexAppHistoryHomes() {
 
 for (const home of codexAppHistoryHomes()) localHistoryReader.addCodexSource(home);
 
+function applicationIconPath() {
+  if (!app.isPackaged) return DEVELOPMENT_ICON;
+  return fs.existsSync(PACKAGED_ICON) ? PACKAGED_ICON : process.execPath;
+}
+
 function applicationIcon() {
-  const source = app.isPackaged ? process.execPath : DEVELOPMENT_ICON;
-  try {
-    const icon = nativeImage.createFromPath(source);
-    return icon.isEmpty() ? null : icon;
-  } catch {
-    return null;
+  for (const source of [applicationIconPath(), process.execPath]) {
+    try {
+      const icon = nativeImage.createFromPath(source);
+      if (!icon.isEmpty()) return icon;
+    } catch {
+      // Fall through to the executable resource when a standalone icon is unavailable.
+    }
   }
+  return null;
 }
 
 function applyWindowIdentity(window) {
@@ -159,7 +167,7 @@ function applyWindowIdentity(window) {
       applicationRoot: APPLICATION_ROOT,
       appUserModelId: WINDOWS_APP_ID,
       target: process.execPath,
-      icon: app.isPackaged ? process.execPath : DEVELOPMENT_ICON,
+      icon: applicationIconPath(),
     }));
   }
 }
@@ -1177,7 +1185,7 @@ async function runMultiProviderWindowQa(firstWindow) {
     console.log(JSON.stringify({
       ok: true,
       appUserModelId: WINDOWS_APP_ID,
-      runtimeIconAvailable: app.isPackaged || !nativeImage.createFromPath(DEVELOPMENT_ICON).isEmpty(),
+      runtimeIconAvailable: Boolean(applicationIcon()),
       windowCount: windows.length,
       serverCount: servers.size,
       providerReturn: true,
@@ -2285,7 +2293,7 @@ app.whenReady().then(async () => {
           applicationRoot: APPLICATION_ROOT,
         }),
         cwd: APPLICATION_ROOT,
-        icon: app.isPackaged ? process.execPath : DEVELOPMENT_ICON,
+        icon: applicationIconPath(),
         shellApi: shell,
       });
     } catch (error) {
