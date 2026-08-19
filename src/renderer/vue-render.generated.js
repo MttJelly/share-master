@@ -287,7 +287,14 @@ export function render(_ctx, _cache) {
           "aria-live": "polite"
         }),
         _createElementVNode("div", { class: "dialog-actions" }, [
-          _createElementVNode("div", { class: "dialog-action-group" }, [
+          _createElementVNode("div", {
+            class: "dialog-action-group",
+            "aria-labelledby": "connection-actions-title"
+          }, [
+            _createElementVNode("h3", {
+              id: "connection-actions-title",
+              class: "dialog-action-group-title"
+            }, "连接管理"),
             _createElementVNode("button", {
               id: "add-connection-button",
               class: "text-button",
@@ -327,7 +334,16 @@ export function render(_ctx, _cache) {
             }, [
               _createElementVNode("span", { "data-lucide": "activity" }),
               _createTextVNode("连接监控")
-            ]),
+            ])
+          ]),
+          _createElementVNode("div", {
+            class: "dialog-action-group",
+            "aria-labelledby": "data-actions-title"
+          }, [
+            _createElementVNode("h3", {
+              id: "data-actions-title",
+              class: "dialog-action-group-title"
+            }, "数据与同步"),
             _createElementVNode("button", {
               id: "extensions-button",
               class: "text-button",
@@ -375,7 +391,16 @@ export function render(_ctx, _cache) {
             }, [
               _createElementVNode("span", { "data-lucide": "cloud-cog" }),
               _createTextVNode("同步")
-            ]),
+            ])
+          ]),
+          _createElementVNode("div", {
+            class: "dialog-action-group",
+            "aria-labelledby": "app-actions-title"
+          }, [
+            _createElementVNode("h3", {
+              id: "app-actions-title",
+              class: "dialog-action-group-title"
+            }, "应用"),
             _createElementVNode("button", {
               id: "app-settings-button",
               class: "text-button",
@@ -655,25 +680,30 @@ export function render(_ctx, _cache) {
           class: "connection-form hidden"
         }, [
           _createElementVNode("label", null, [
-            _createElementVNode("span", null, "账号名称"),
+            _createElementVNode("span", null, "本地标签（可选）"),
             _createElementVNode("input", {
               name: "label",
-              required: "",
-              placeholder: "例如：个人账号 / 实验室账号"
+              placeholder: "留空则使用 ChatGPT 官方账号",
+              "aria-describedby": "account-label-help"
             })
           ]),
-          _createElementVNode("p", { class: "form-note" }, "创建后会打开官方 Codex 登录窗口。该账号拥有独立认证文件，但聊天记录仍与其他连接共享。"),
+          _createElementVNode("p", {
+            id: "account-label-help",
+            class: "form-note"
+          }, "点击后会直接打开 OpenAI 官方 ChatGPT 登录页面。这里不填写邮箱或密码；标签只用于区分多个本地账号。"),
           _createElementVNode("div", { class: "form-actions" }, [
             _createElementVNode("span", {
               id: "account-error",
-              class: "provider-error"
+              class: "provider-error",
+              role: "status",
+              "aria-live": "polite"
             }),
             _createElementVNode("button", {
               class: "primary-command",
               type: "submit"
             }, [
               _createElementVNode("span", { "data-lucide": "log-in" }),
-              _createTextVNode("创建并登录")
+              _createTextVNode("打开 ChatGPT 登录")
             ])
           ])
         ])

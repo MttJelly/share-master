@@ -1,12 +1,12 @@
 <h1 align="center">Share Master</h1>
 
 <p align="center">
-  <strong>把模型、会话和工作流放进同一个 Windows 工作台</strong>
+  <strong>一份会话，连接多个模型，持续完成工作</strong>
 </p>
 
 <p align="center">
-  在一份连续的本地会话中连接 Codex、Claude Code、DeepSeek、Qwen<br />
-  以及 OpenAI 兼容服务，同时管理项目、任务、附件、Skills 与并行回复。
+  在同一个本地工作区连接 Codex、Claude Code、DeepSeek、Qwen<br />
+  以及 OpenAI 兼容服务，同时管理聊天、项目、附件、Skills 与后台任务。
 </p>
 
 <p align="center">
@@ -21,22 +21,25 @@
   &nbsp;&nbsp;·&nbsp;&nbsp;
   <a href="https://github.com/MttJelly/share-master/releases/latest/download/Share-Master-setup-win-x64.msi"><strong>下载 MSI 安装版</strong></a>
   &nbsp;&nbsp;·&nbsp;&nbsp;
-  <a href="docs/USER_GUIDE.zh-CN.md"><strong>中文使用指南</strong></a>
+  <a href="docs/WORKSPACE_GUIDE.zh-CN.md"><strong>界面与功能指南</strong></a>
 </p>
 
 ---
 
 ## 产品界面
 
-<p align="center">
-  <img src="docs/assets/share-master-connections.png" width="100%" alt="Share Master 多模型连接管理" />
-</p>
-<p align="center"><sub>统一管理账号、API、中转服务、模型和连接状态</sub></p>
+<table>
+  <tr>
+    <td width="50%" valign="top"><img src="docs/assets/share-master-connections-dark.png" alt="Share Master 连接中心" /><br /><sub>连接中心：账号、API、同步和用量</sub></td>
+    <td width="50%" valign="top"><img src="docs/assets/share-master-conversation-dark.png" alt="Share Master 聊天工作区" /><br /><sub>聊天工作区：思考摘要、回复、中断和继续生成</sub></td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top"><img src="docs/assets/share-master-extensions.png" alt="Share Master 扩展中心" /><br /><sub>扩展中心：Skills、Prompt 和 MCP</sub></td>
+    <td width="50%" valign="top"><img src="docs/assets/share-master-sync.png" alt="Share Master 配置同步" /><br /><sub>配置同步：本地目录、WebDAV 和同步历史</sub></td>
+  </tr>
+</table>
 
-<p align="center">
-  <img src="docs/assets/share-master-conversation-queue.png" width="100%" alt="Share Master 会话与待发送队列" />
-</p>
-<p align="center"><sub>在回答期间继续输入，通过排队或引导控制下一步工作</sub></p>
+<p align="center"><sub>截图来自隔离测试数据，仅用于展示界面，不包含真实账号、API Key 或私人聊天。</sub></p>
 
 ## 一个工作区，持续完成工作
 
@@ -54,6 +57,12 @@ Share Master 是面向 Windows 的多模型桌面客户端。你可以在同一�
 | **06** | **完整输入** | 拖放、选择或粘贴图片附件，通过 `/` 使用 Skills，并连接 Prompt 与 MCP |
 | **07** | **任务安排** | 创建一次、每小时、每天、工作日、每周或每月执行的自动任务 |
 | **08** | **本地协作** | 浏览本机 Codex 与 Claude Code 会话，并按需复制到 Share Master 工作区 |
+
+## 按钮与工作流
+
+连接中心右侧的入口分别负责本机配置发现、聊天记录位置、连接健康检查、扩展管理、用量统计、配置导入导出、本地备份、目录/WebDAV 配置同步和应用行为设置。
+
+完整的逐项说明、官方账号登录、额度查看、WebDAV 使用方式和数据边界，见 [界面与功能指南](docs/WORKSPACE_GUIDE.zh-CN.md)。
 
 ## 多端协同目标
 
@@ -127,6 +136,7 @@ Share Master 默认将自己的配置与聊天数据保存在：
 | 文档 | 内容 |
 | --- | --- |
 | [中文使用指南](docs/USER_GUIDE.zh-CN.md) | 安装、连接、会话、附件、任务、同步与故障排查 |
+| [界面与功能指南](docs/WORKSPACE_GUIDE.zh-CN.md) | 主界面和连接中心每个按钮的作用与使用方法 |
 | [English User Guide](docs/USER_GUIDE.en.md) | Complete English setup and usage guide |
 | [更新日志](CHANGELOG.md) | 每个版本的新增、优化与修复 |
 | [发布维护流程](docs/RELEASE_PROCESS.md) | 版本、测试、构建与发布规范 |

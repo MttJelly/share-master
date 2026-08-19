@@ -47,6 +47,8 @@ const result = spawnSync(electron, [`--user-data-dir=${profile}`, root], {
   stdio: ["ignore", processLogHandle, processLogHandle],
   env: {
     ...process.env,
+    SHARE_MASTER_QA: "1",
+    CODEX_DECK_QA_OFFICIAL_AUTHENTICATED: "1",
     SHARE_MASTER_STORE_ROOT: store,
     CODEX_DECK_QA_PROVIDER: "official",
     CODEX_DECK_QA_SCENARIO: "thread-actions",

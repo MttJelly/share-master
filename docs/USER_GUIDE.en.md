@@ -44,9 +44,10 @@ If a command is unavailable, install the CLI using its vendor's official instruc
 
 1. Open Select connection (`选择连接方式`) and choose Add connection (`添加连接`).
 2. Select the GPT account (`GPT 账号`) tab.
-3. Enter an account label and choose Create and log in (`创建并登录`).
+3. Leave the local label blank if you do not need to distinguish accounts, then choose Open ChatGPT login (`打开 ChatGPT 登录`).
+4. Complete sign-in on the official OpenAI ChatGPT page opened in your browser. Do not enter your ChatGPT email or password in Share Master.
 
-Each separate account has its own authentication files while still using Share Master's shared conversation history.
+The local label only distinguishes accounts. Each separate account has its own authentication files while still using Share Master's shared conversation history. An incomplete official login keeps the chat workspace locked.
 
 ## 4. Add DeepSeek, Qwen, or a compatible API
 

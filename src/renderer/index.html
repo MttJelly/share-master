@@ -144,18 +144,25 @@
         <div id="provider-options" class="provider-options"></div>
         <section id="account-panel" class="account-panel hidden" aria-live="polite"></section>
         <div class="dialog-actions">
-          <div class="dialog-action-group">
+          <div class="dialog-action-group" aria-labelledby="connection-actions-title">
+            <h3 id="connection-actions-title" class="dialog-action-group-title">连接管理</h3>
             <button id="add-connection-button" class="text-button" type="button"><span data-lucide="plus"></span>添加连接</button>
             <button id="local-provider-discovery-button" class="text-button" type="button"><span data-lucide="scan-search"></span>发现本机配置</button>
             <button id="official-login-button" class="text-button" type="button"><span data-lucide="log-in"></span>登录默认官方账号</button>
             <button id="record-home-button" class="text-button" type="button"><span data-lucide="database"></span>记录位置</button>
             <button id="health-button" class="text-button" type="button"><span data-lucide="activity"></span>连接监控</button>
+          </div>
+          <div class="dialog-action-group" aria-labelledby="data-actions-title">
+            <h3 id="data-actions-title" class="dialog-action-group-title">数据与同步</h3>
             <button id="extensions-button" class="text-button" type="button"><span data-lucide="blocks"></span>扩展中心</button>
             <button id="usage-button" class="text-button" type="button"><span data-lucide="chart-no-axes-combined"></span>用量与成本</button>
             <button id="config-import-button" class="text-button" type="button"><span data-lucide="file-up"></span>导入</button>
             <button id="config-export-button" class="text-button" type="button"><span data-lucide="file-down"></span>导出</button>
             <button id="backup-button" class="text-button" type="button"><span data-lucide="archive-restore"></span>备份</button>
             <button id="sync-button" class="text-button" type="button"><span data-lucide="cloud-cog"></span>同步</button>
+          </div>
+          <div class="dialog-action-group" aria-labelledby="app-actions-title">
+            <h3 id="app-actions-title" class="dialog-action-group-title">应用</h3>
             <button id="app-settings-button" class="text-button" type="button"><span data-lucide="settings-2"></span>应用设置</button>
           </div>
           <span id="provider-error" class="provider-error"></span>
@@ -220,9 +227,9 @@
           <div class="form-actions"><span id="connection-error" class="provider-error"></span><button class="primary-command" type="submit"><span data-lucide="check"></span><span id="provider-submit-label">添加供应商</span></button></div>
         </form>
         <form id="account-form" class="connection-form hidden">
-          <label><span>账号名称</span><input name="label" required placeholder="例如：个人账号 / 实验室账号" /></label>
-          <p class="form-note">创建后会打开官方 Codex 登录窗口。该账号拥有独立认证文件，但聊天记录仍与其他连接共享。</p>
-          <div class="form-actions"><span id="account-error" class="provider-error"></span><button class="primary-command" type="submit"><span data-lucide="log-in"></span>创建并登录</button></div>
+          <label><span>本地标签（可选）</span><input name="label" placeholder="留空则使用 ChatGPT 官方账号" aria-describedby="account-label-help" /></label>
+          <p id="account-label-help" class="form-note">点击后会直接打开 OpenAI 官方 ChatGPT 登录页面。这里不填写邮箱或密码；标签只用于区分多个本地账号。</p>
+          <div class="form-actions"><span id="account-error" class="provider-error" role="status" aria-live="polite"></span><button class="primary-command" type="submit"><span data-lucide="log-in"></span>打开 ChatGPT 登录</button></div>
         </form>
       </section>
     </div>

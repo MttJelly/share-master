@@ -25,6 +25,10 @@ const state = ShareMasterVueRuntime.shallowReactive({
   threadAliases: {},
   account: null,
   rateLimits: null,
+  accountUsage: null,
+  rateLimitsError: null,
+  accountUsageError: null,
+  accountUsageLoading: false,
   relayBalance: null,
   relayBalanceLoading: false,
   connected: false,
@@ -80,6 +84,7 @@ const state = ShareMasterVueRuntime.shallowReactive({
   providerPresets: {},
   pendingDeepLinkImport: null,
   connectingProvider: null,
+  officialLoginProvider: "official",
   connectionGeneration: 0,
   loadGeneration: 0,
   openThreadGeneration: 0,
@@ -301,27 +306,45 @@ function quotaWindowLabel(window, index) {
 
 function resetTimeLabel(timestamp) {
   if (!timestamp) return "重置时间未知";
-  return `${new Date(timestamp * 1000).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })} 重置`;
+  const numeric = Number(timestamp);
+  if (!Number.isFinite(numeric)) return "重置时间未知";
+  const milliseconds = numeric > 100000000000 ? numeric : numeric * 1000;
+  const date = new Date(milliseconds);
+  if (Number.isNaN(date.getTime())) return "重置时间未知";
+  return `${date.toLocaleString("zh-CN", {
+    year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
+  })} 重置`;
 }
 
+const compactAccountNumber = (value) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? new Intl.NumberFormat("zh-CN", { notation: "compact", maximumFractionDigits: 1 }).format(number) : "暂无";
+};
+
 function renderAccountPanel() {
-  const isOfficial = ["official", "account"].includes(state.providerType);
-  const isRelay = ["api", "relay"].includes(state.providerType);
-  elements.accountPanel.classList.toggle("hidden", !isOfficial && !isRelay);
+  const selectedProviderId = state.provider || state.connectingProvider || null;
+  const selectedProvider = state.providers.find((item) => item.id === selectedProviderId) || null;
+  const selectedType = selectedProvider?.type || state.providerType;
+  const isOfficial = ["official", "account"].includes(selectedType);
+  const isRelay = ["api", "relay"].includes(selectedType);
+  const selectedLabel = selectedProvider?.connectionLabel || selectedProvider?.label
+    || (isOfficial ? "OpenAI 官方" : isRelay ? "模型中转" : "当前连接");
+  const context = `<div class="connection-context"><span class="connection-context-label">当前连接</span><strong>${escapeHtml(selectedLabel)}</strong><span class="connection-context-state ${state.connected ? "connected" : state.connectingProvider ? "pending" : "idle"}">${state.connected ? "已连接" : state.connectingProvider ? "连接中" : "未连接"}</span></div>`;
+  elements.accountPanel.classList.toggle("hidden", !selectedProvider && !isOfficial && !isRelay);
   const loginButton = $("#official-login-button");
   loginButton.classList.toggle("hidden", isRelay);
   if (isRelay) {
     if (state.relayBalanceLoading) {
-      elements.accountPanel.innerHTML = '<div class="account-empty"><strong>正在查询中转余额</strong><span>正在连接厂商的余额接口...</span></div>';
+      elements.accountPanel.innerHTML = `${context}<div class="account-empty"><strong>正在查询中转余额</strong><span>正在连接当前中转的余额接口...</span></div>`;
       return;
     }
     const balance = state.relayBalance;
     if (!balance) {
-      elements.accountPanel.innerHTML = '<div class="account-empty"><strong>中转余额</strong><span>连接后自动查询余额。</span></div>';
+      elements.accountPanel.innerHTML = `${context}<div class="account-empty"><strong>当前连接余额</strong><span>连接后自动查询 ${escapeHtml(selectedLabel)} 的余额。</span></div>`;
       return;
     }
     if (!balance.supported) {
-      elements.accountPanel.innerHTML = `<div class="account-empty"><strong>无法显示中转余额</strong><span>${escapeHtml(balance.message || "该厂商未提供兼容余额接口。")}</span></div>`;
+      elements.accountPanel.innerHTML = `${context}<div class="account-empty"><strong>无法显示当前连接余额</strong><span>${escapeHtml(balance.message || (selectedLabel + " 未提供兼容余额接口。"))}</span></div>`;
       return;
     }
     const symbol = balance.displayType === "USD" ? "$" : balance.displayType === "CNY" ? "¥" : "";
@@ -339,37 +362,58 @@ function renderAccountPanel() {
     const balanceDetail = balance.unlimited
       ? `<span>累计已用 <strong>${amount(balance.used)}</strong></span>`
       : `<span>总额度 <strong>${amount(balance.granted)}</strong></span>`;
-    elements.accountPanel.innerHTML = `<div class="account-heading"><div><strong>${escapeHtml(balance.name || state.providers.find((item) => item.id === state.provider)?.label || "中转账号")}</strong><span>${escapeHtml(expiry)}</span></div><span class="account-auth-state"><span class="status-dot connected"></span>余额已同步</span></div><div class="relay-balance-value"><span>可用余额</span><strong>${balance.unlimited ? "无限" : amount(balance.balance)}</strong></div>${usedPercent === null ? "" : `<div class="quota-row"><div><strong>剩余额度</strong><span>剩余 ${100 - usedPercent}% · ${amount(balance.balance)}</span></div><div class="quota-track"><span style="width:${100 - usedPercent}%"></span></div></div>`}<div class="credit-row">${balanceDetail}<button id="refresh-relay-balance" class="inline-icon-button" type="button" title="刷新余额"><span data-lucide="refresh-cw"></span></button></div>`;
+    elements.accountPanel.innerHTML = `${context}<div class="account-heading"><div><strong>${escapeHtml(balance.name || selectedLabel)}</strong><span>${escapeHtml(expiry)}</span></div><span class="account-auth-state"><span class="status-dot connected"></span>余额已同步</span></div><div class="relay-balance-value"><span>可用余额</span><strong>${balance.unlimited ? "无限" : amount(balance.balance)}</strong></div>${usedPercent === null ? "" : `<div class="quota-row"><div><strong>剩余额度</strong><span>剩余 ${100 - usedPercent}% · ${amount(balance.balance)}</span></div><div class="quota-track"><span style="width:${100 - usedPercent}%"></span></div></div>`}<div class="credit-row">${balanceDetail}<button id="refresh-relay-balance" class="inline-icon-button" type="button" title="刷新余额" aria-label="刷新当前连接余额"><span data-lucide="refresh-cw"></span></button></div>`;
     $("#refresh-relay-balance").addEventListener("click", refreshRelayBalance);
     refreshIcons();
     return;
   }
   if (!isOfficial) return;
   const account = state.account;
-  const response = state.rateLimits;
-  const snapshot = response?.rateLimitsByLimitId?.codex || response?.rateLimits || null;
+  const groups = Array.isArray(state.rateLimits?.groups) ? state.rateLimits.groups : [];
   loginButton.classList.remove("hidden");
   loginButton.innerHTML = `<span data-lucide="log-in"></span>${account ? "切换或重新登录" : "登录当前官方账号"}`;
   if (!account) {
-    elements.accountPanel.innerHTML = '<div class="account-empty"><strong>尚未登录</strong><span>登录后可查看账号、套餐和 Codex 额度。</span></div>';
+    elements.accountPanel.innerHTML = `${context}<div class="account-empty"><strong>尚未登录</strong><span>登录 ${escapeHtml(selectedLabel)} 后可查看账号、套餐和 Codex 额度。</span></div>`;
     refreshIcons();
     return;
   }
-  const windows = [snapshot?.primary, snapshot?.secondary].filter(Boolean);
-  const quotaRows = windows.map((window, index) => {
-    const used = Math.max(0, Math.min(100, Number(window.usedPercent || 0)));
-    return `<div class="quota-row"><div><strong>${quotaWindowLabel(window, index)}</strong><span>剩余 ${100 - used}% · ${resetTimeLabel(window.resetsAt)}</span></div><div class="quota-track"><span style="width:${100 - used}%"></span></div></div>`;
+  const quotaGroups = groups.map((group, groupIndex) => {
+    const title = group.name || (groups.length > 1 ? `Codex 额度 ${groupIndex + 1}` : "Codex 使用额度");
+    const rows = (group.windows || []).map((window, index) => {
+      const used = window.usedPercent === null ? null : Math.round(Number(window.usedPercent) * 10) / 10;
+      const remaining = used === null ? null : Math.round((100 - used) * 10) / 10;
+      return `<div class="quota-row"><div><strong>${escapeHtml(quotaWindowLabel(window, index))}</strong><span>${used === null ? "用量未知" : `已用 ${used}% · 剩余 ${remaining}%`} · ${escapeHtml(resetTimeLabel(window.resetsAt))}</span></div><div class="quota-track" role="progressbar" aria-label="${escapeHtml(quotaWindowLabel(window, index))}剩余额度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${remaining ?? 0}"><span style="width:${remaining ?? 0}%"></span></div></div>`;
+    }).join("");
+    return `<section class="quota-group" aria-label="${escapeHtml(title)}"><strong class="quota-group-title">${escapeHtml(title)}</strong>${rows}</section>`;
   }).join("");
-  const credits = snapshot?.credits;
-  const creditsText = credits?.unlimited ? "无限" : credits?.balance ?? (credits?.hasCredits ? "可用" : "0");
-  const resetCredits = response?.rateLimitResetCredits?.availableCount || 0;
-  elements.accountPanel.innerHTML = `<div class="account-heading"><div><strong>${escapeHtml(account.email || "ChatGPT 账号")}</strong><span>${escapeHtml(planLabel(account.planType))}</span></div><span class="account-auth-state"><span class="status-dot connected"></span>已登录</span></div><div class="quota-list">${quotaRows || '<div class="quota-unavailable">暂未返回额度窗口</div>'}</div><div class="credit-row"><span>Credits <strong>${escapeHtml(creditsText)}</strong></span>${resetCredits ? `<span>可用完整重置 <strong>${resetCredits}</strong> 次</span>` : ""}</div>`;
+  const credits = groups.find((group) => group.credits)?.credits || null;
+  const creditsText = credits?.unlimited ? "无限" : credits?.balance ?? (credits?.hasCredits ? "可用" : null);
+  const resetCredits = state.rateLimits?.resetCredits || 0;
+  const usage = state.accountUsage;
+  const usageSummary = usage
+    ? `<div class="account-usage-summary" aria-label="ChatGPT 账号用量"><span>累计 Token <strong>${compactAccountNumber(usage.lifetimeTokens)}</strong></span><span>峰值日用量 <strong>${compactAccountNumber(usage.peakDailyTokens)}</strong></span><span>当前连续使用 <strong>${usage.currentStreakDays ?? "暂无"}${usage.currentStreakDays === null ? "" : " 天"}</strong></span></div>`
+    : "";
+  const errors = [
+    state.rateLimitsError ? `额度读取失败：${state.rateLimitsError}` : null,
+    state.accountUsageError ? `账号用量读取失败：${state.accountUsageError}` : null,
+  ].filter(Boolean);
+  const unavailable = !quotaGroups
+    ? `<div class="quota-unavailable">${state.accountUsageLoading ? "正在读取账号额度..." : "官方服务暂未返回额度窗口，请点击刷新重试。"}</div>`
+    : "";
+  const creditRow = creditsText !== null || resetCredits
+    ? `<div class="credit-row">${creditsText === null ? "" : `<span>Credits <strong>${escapeHtml(creditsText)}</strong></span>`}${resetCredits ? `<span>可用完整重置 <strong>${resetCredits}</strong> 次</span>` : ""}</div>`
+    : "";
+  elements.accountPanel.innerHTML = `${context}<div class="account-heading"><div><strong>${escapeHtml(account.email || "ChatGPT 账号")}</strong><span>${escapeHtml(planLabel(account.planType))}</span></div><div class="account-heading-actions"><span class="account-auth-state"><span class="status-dot connected"></span>已登录</span><button id="refresh-account-usage" class="inline-icon-button" type="button" title="刷新账号用量" aria-label="刷新 ChatGPT 账号用量" ${state.accountUsageLoading ? 'disabled aria-busy="true"' : ""}><span data-lucide="refresh-cw"></span></button></div></div><div class="quota-list">${quotaGroups}${unavailable}</div>${usageSummary}${creditRow}${errors.length ? `<div class="account-usage-error" role="status">${errors.map((error) => `<span>${escapeHtml(error)}</span>`).join("")}</div>` : ""}`;
+  $("#refresh-account-usage").addEventListener("click", () => refreshAccountStatus(true));
   refreshIcons();
 }
 
 function applyAccountSnapshot(snapshot = {}) {
   state.account = snapshot.account || null;
   state.rateLimits = snapshot.rateLimits || null;
+  state.accountUsage = snapshot.accountUsage || null;
+  state.rateLimitsError = snapshot.rateLimitsError || null;
+  state.accountUsageError = snapshot.accountUsageError || null;
   if (state.connected && state.account?.email) elements.providerState.textContent = `${state.account.email} · ${planLabel(state.account.planType)}`;
   renderAccountPanel();
 }
@@ -660,7 +704,13 @@ function connect(provider, closeOverlay = true, reconnecting = false) {
     return Promise.resolve(true);
   }
   const generation = ++state.connectionGeneration;
+  const requestedProvider = state.providers.find((item) => item.id === provider);
+  if (["official", "account"].includes(requestedProvider?.type)) {
+    state.officialLoginProvider = provider;
+  }
   state.connectingProvider = provider;
+  renderProviderOptions();
+  renderAccountPanel();
   ++state.loadGeneration;
   ++state.openThreadGeneration;
   elements.providerError.textContent = "正在连接...";
@@ -670,6 +720,9 @@ function connect(provider, closeOverlay = true, reconnecting = false) {
     try {
       const result = await api.connect(provider);
       if (generation !== state.connectionGeneration || result?.superseded) return false;
+      if (["official", "account"].includes(result.providerType) && !result.account) {
+        throw new Error("尚未登录 ChatGPT。请先登录官方账号，再进入聊天。");
+      }
       state.provider = provider;
       state.connectingProvider = null;
       state.providerType = result.providerType;
@@ -679,6 +732,8 @@ function connect(provider, closeOverlay = true, reconnecting = false) {
       state.relayBalance = null;
       applyAccountSnapshot(result);
       setConnected(true, result.label);
+      renderProviderOptions();
+      renderAccountPanel();
       clearReconnectTimer(true);
       const visual = providerVisual(currentProviderDefinition() || {
         brand: result.brand,
@@ -703,10 +758,21 @@ function connect(provider, closeOverlay = true, reconnecting = false) {
     } catch (error) {
       if (generation !== state.connectionGeneration) return false;
       setConnected(false);
+      state.connectingProvider = null;
+      renderProviderOptions();
+      const definition = state.providers.find((item) => item.id === provider);
+      if (["official", "account"].includes(definition?.type)) {
+        state.provider = provider;
+        state.providerType = definition.type;
+        state.providerEngine = definition.engine || "codex";
+        state.modelProvider = definition.modelProvider || "openai";
+        state.account = null;
+        state.rateLimits = null;
+        renderAccountPanel();
+      }
       elements.providerError.textContent = error.message;
       if (closeOverlay) elements.overlay.classList.remove("hidden");
       showDiagnostic(error.message, true);
-      const definition = state.providers.find((item) => item.id === provider);
       if (definition?.id === "claude") {
         openClaudeDialog(definition, error.message);
       } else if (definition?.keyConfigurable && error.message.includes(definition.envKey || "_API_KEY")) {
@@ -1702,9 +1768,11 @@ function renderProviderOptions() {
       previousGroup = group.label;
     }
     const row = document.createElement("div");
-    row.className = `provider-option-row provider-${provider.preset || provider.brand || "default"}`;
+    const selected = provider.id === state.provider || provider.id === state.connectingProvider;
+    row.className = `provider-option-row provider-${provider.preset || provider.brand || "default"}${selected ? " is-selected" : ""}`;
     row.dataset.providerRow = provider.id;
     row.dataset.providerGroup = group.label;
+    row.setAttribute("aria-current", selected ? "true" : "false");
     const drag = document.createElement("button");
     drag.className = "provider-drag";
     drag.type = "button";
@@ -1747,7 +1815,7 @@ function renderProviderOptions() {
       }
     });
     const option = document.createElement("button");
-    option.className = "provider-option";
+    option.className = `provider-option${selected ? " is-selected" : ""}`;
     option.dataset.provider = provider.id;
     const visual = providerVisual(provider);
     const health = state.providerHealth[provider.id] || null;
@@ -3662,16 +3730,25 @@ function syncComposerState() {
       : state.providerEngine === "openai-compatible" ? "给当前模型发送消息" : "给 Codex 发送消息";
 }
 
-function refreshAccountStatus() {
+function refreshAccountStatus(announce = false) {
   if (!state.connected || !["official", "account"].includes(state.providerType)) return Promise.resolve();
   if (state.accountRefreshPromise) return state.accountRefreshPromise;
   const generation = state.connectionGeneration;
+  state.accountUsageLoading = true;
+  renderAccountPanel();
   const task = api.accountStatus()
     .then((snapshot) => {
-      if (generation === state.connectionGeneration) applyAccountSnapshot(snapshot);
+      if (generation === state.connectionGeneration) {
+        applyAccountSnapshot(snapshot);
+        if (announce) showDiagnostic("ChatGPT 账号用量已刷新。", false);
+      }
     })
     .catch((error) => showDiagnostic(`账号状态刷新失败：${error.message}`, true))
     .finally(() => {
+      if (generation === state.connectionGeneration) {
+        state.accountUsageLoading = false;
+        renderAccountPanel();
+      }
       if (state.accountRefreshPromise === task) state.accountRefreshPromise = null;
     });
   state.accountRefreshPromise = task;
@@ -4311,7 +4388,12 @@ function scrollToBottom() {
   });
 }
 function escapeHtml(value) { const node = document.createElement("div"); node.textContent = String(value ?? ""); return node.innerHTML; }
-function showActionError(error) { showDiagnostic(error?.message || String(error), true); }
+function actionErrorMessage(error) {
+  return String(error?.message || error || "操作失败。")
+    .replace(/^Error invoking remote method '[^']+': Error:\s*/i, "")
+    .trim();
+}
+function showActionError(error) { showDiagnostic(actionErrorMessage(error), true); }
 
 function openCredentialDialog(provider) {
   state.pendingCredentialProvider = provider;
@@ -5345,17 +5427,23 @@ async function removeScheduledTask(task, button) {
 
 $("#official-login-button").addEventListener("click", async (event) => {
   const button = event.currentTarget;
-  const providerId = ["official", "account"].includes(state.providerType) ? state.provider : "official";
+  const providerId = ["official", "account"].includes(state.providerType)
+    ? state.provider
+    : state.officialLoginProvider || "official";
   button.disabled = true;
   elements.providerError.textContent = "请在浏览器中完成 ChatGPT 登录...";
   try {
     const snapshot = await api.officialLogin(providerId);
+    if (!snapshot?.account) {
+      throw new Error("ChatGPT 登录未完成，请在浏览器中完成认证后重试。");
+    }
     applyAccountSnapshot(snapshot);
     elements.providerError.textContent = "登录成功，正在重新连接...";
-    await connect(providerId);
+    const connected = await connect(providerId);
+    if (!connected) return;
     showDiagnostic(`已登录 ${snapshot.account?.email || "ChatGPT 账号"}。`, false);
   } catch (error) {
-    elements.providerError.textContent = error.message;
+    elements.providerError.textContent = actionErrorMessage(error);
     showActionError(error);
   } finally {
     button.disabled = false;
@@ -5897,6 +5985,7 @@ $("#relay-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
   const data = Object.fromEntries(new FormData(form));
+  data.label = String(data.label || "").trim() || "ChatGPT 官方账号";
   data.discoveredModels = [...state.probedProviderModels];
   const button = form.querySelector("button[type=submit]");
   button.disabled = true;
@@ -5931,7 +6020,8 @@ $("#relay-form").addEventListener("submit", async (event) => {
     state.probedProviderModels = [];
     $("#connection-error").textContent = "";
     $("#connection-overlay").classList.add("hidden");
-    await connect(provider.id);
+    const connected = await connect(provider.id);
+    if (!connected) throw new Error("账号已登录，但连接初始化失败，请重试。");
   } catch (error) {
     $("#connection-error").textContent = error.message;
   } finally {
@@ -5941,17 +6031,42 @@ $("#relay-form").addEventListener("submit", async (event) => {
 $("#account-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
+  const button = form.querySelector("button[type=submit]");
   const data = Object.fromEntries(new FormData(form));
+  data.label = String(data.label || "").trim() || "ChatGPT 官方账号";
+  let createdProvider = null;
+  button.disabled = true;
+  $("#account-error").textContent = "正在创建账号连接...";
   try {
     const provider = await api.addAccount(data);
+    createdProvider = provider;
+    state.officialLoginProvider = provider.id;
     upsertProvider(provider);
     renderProviderOptions();
+    $("#connection-overlay").classList.add("hidden");
+    $("#account-error").textContent = "请在浏览器中完成 ChatGPT 登录...";
+    const snapshot = await api.officialLogin(provider.id);
+    if (!snapshot?.account) {
+      throw new Error("ChatGPT 登录未完成，请重试。");
+    }
     form.reset();
     $("#connection-overlay").classList.add("hidden");
-    await api.officialLogin(provider.id);
     elements.overlay.classList.remove("hidden");
-    elements.providerError.textContent = `已创建 ${provider.label}，请在登录窗口完成认证后选择该账号。`;
-  } catch (error) { $("#account-error").textContent = error.message; }
+    elements.providerError.textContent = "登录成功，正在连接...";
+    await connect(provider.id);
+  } catch (error) {
+    if (createdProvider) {
+      form.reset();
+      $("#connection-overlay").classList.add("hidden");
+      elements.overlay.classList.remove("hidden");
+      elements.providerError.textContent = `${createdProvider.label} 已创建，但登录未完成：${error.message}`;
+    } else {
+      $("#account-error").textContent = error.message;
+      $("#connection-overlay").classList.remove("hidden");
+    }
+  } finally {
+    button.disabled = false;
+  }
 });
 $("#provider-switch").addEventListener("click", () => {
   elements.overlay.classList.remove("hidden");

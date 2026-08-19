@@ -48,6 +48,12 @@ const {
   remapBranchMessage,
 } = require("./conversation-branches");
 const { createStreamEventBatcher } = require("./stream-event-batcher");
+const {
+  isOfficialProvider,
+  isAuthenticatedOfficialSnapshot,
+  requireAuthenticatedOfficialSnapshot,
+} = require("./openai-auth");
+const { normalizeRateLimits, normalizeAccountUsage } = require("./openai-account-usage");
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 const servers = new Map();
@@ -348,25 +354,51 @@ function apiKeyForProvider(provider, environment) {
 }
 
 async function accountSnapshot(server) {
-  if (!["official", "account"].includes(server.provider.type)) {
+  if (!isOfficialProvider(server.provider)) {
     return { account: null, requiresOpenaiAuth: false, rateLimits: null };
   }
+  if (process.env.SHARE_MASTER_QA === "1" && process.env.CODEX_DECK_QA_OFFICIAL_AUTHENTICATED === "1") {
+    return {
+      account: { type: "chatgpt", email: "qa@share-master.test", planType: "plus" },
+      requiresOpenaiAuth: true,
+      rateLimits: { groups: [], resetCredits: 0 },
+      accountUsage: null,
+      rateLimitsError: null,
+      accountUsageError: null,
+    };
+  }
   const account = await server.request("account/read", { refreshToken: false });
-  let rateLimits = null;
+  let rateLimits = { groups: [], resetCredits: 0 };
+  let accountUsage = null;
+  let rateLimitsError = null;
+  let accountUsageError = null;
   if (account.account?.type === "chatgpt") {
-    try {
-      rateLimits = await server.request("account/rateLimits/read", {});
-    } catch (error) {
-      server.emit("diagnostic", `无法读取账号额度：${error.message}`);
+    const [limitsResult, usageResult] = await Promise.allSettled([
+      server.request("account/rateLimits/read", {}),
+      server.request("account/usage/read", {}),
+    ]);
+    if (limitsResult.status === "fulfilled") {
+      rateLimits = normalizeRateLimits(limitsResult.value);
+    } else {
+      rateLimitsError = String(limitsResult.reason?.message || limitsResult.reason || "未知错误").slice(0, 500);
+      server.emit("diagnostic", `无法读取账号额度：${rateLimitsError}`);
+    }
+    if (usageResult.status === "fulfilled") {
+      accountUsage = normalizeAccountUsage(usageResult.value);
+    } else {
+      accountUsageError = String(usageResult.reason?.message || usageResult.reason || "未知错误").slice(0, 500);
+      server.emit("diagnostic", `无法读取账号用量：${accountUsageError}`);
     }
   }
-  return { ...account, rateLimits };
+  return { ...account, rateLimits, accountUsage, rateLimitsError, accountUsageError };
 }
 
 async function loginOfficialAccount(provider) {
   const server = new CodexServer(provider, await providerEnvironment());
   let expectedLoginId = null;
   let earlyCompletion = null;
+  let authenticated = false;
+  let loginActive = true;
   let resolveCompletion;
   const completion = new Promise((resolve) => { resolveCompletion = resolve; });
   const onNotification = (message) => {
@@ -393,17 +425,47 @@ async function loginOfficialAccount(provider) {
     await shell.openExternal(started.authUrl);
     const timeoutMs = 5 * 60 * 1000;
     let timer;
+    const pollForAuthentication = (async () => {
+      while (loginActive) {
+        await new Promise((resolve) => setTimeout(resolve, 750));
+        if (!loginActive) return null;
+        try {
+          const identity = await server.request("account/read", { refreshToken: false });
+          if (isAuthenticatedOfficialSnapshot(identity)) return { authenticated: true };
+        } catch (error) {
+          if (loginActive) throw error;
+          return null;
+        }
+      }
+      return null;
+    })();
     const result = await Promise.race([
-      completion,
+      completion.then((value) => ({ completion: value })),
+      pollForAuthentication,
       new Promise((_, reject) => {
         timer = setTimeout(() => reject(new Error("登录等待超时，请重试。")), timeoutMs);
       }),
-    ]).finally(() => clearTimeout(timer));
-    if (!result?.success) throw new Error(result?.error || "Codex 官方登录失败。");
-    return accountSnapshot(server);
+    ]).finally(() => {
+      loginActive = false;
+      clearTimeout(timer);
+    });
+    if (result.completion?.success === false) {
+      throw new Error(result.completion.error || "Codex 官方登录失败。");
+    }
+    let snapshot = await accountSnapshot(server);
+    if (!isAuthenticatedOfficialSnapshot(snapshot)) {
+      for (let attempt = 0; attempt < 10 && !isAuthenticatedOfficialSnapshot(snapshot); attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        snapshot = await accountSnapshot(server);
+      }
+    }
+    requireAuthenticatedOfficialSnapshot(provider, snapshot, { afterLogin: true });
+    authenticated = true;
+    return snapshot;
   } finally {
+    loginActive = false;
     server.off("notification", onNotification);
-    if (expectedLoginId) {
+    if (expectedLoginId && !authenticated) {
       server.request("account/login/cancel", { loginId: expectedLoginId }, 5000).catch(() => {});
     }
     server.stop();
@@ -2970,7 +3032,6 @@ app.whenReady().then(async () => {
             }
           }
         }
-        runDueScheduledTasks().catch((error) => console.error(`[scheduled-task] ${error.message}`));
       } catch (error) {
         const wasCurrentRequest = requestIsCurrent();
         if (servers.get(senderId) === server) servers.delete(senderId);
@@ -2982,7 +3043,17 @@ app.whenReady().then(async () => {
         server.stop();
         return { superseded: true };
       }
-      const account = await accountSnapshot(server);
+      let account;
+      try {
+        account = await accountSnapshot(server);
+        requireAuthenticatedOfficialSnapshot(provider, account);
+      } catch (error) {
+        if (servers.get(senderId) === server) servers.delete(senderId);
+        server.stop();
+        if (!requestIsCurrent()) return { superseded: true };
+        throw error;
+      }
+      runDueScheduledTasks().catch((error) => console.error(`[scheduled-task] ${error.message}`));
       if (!isCurrent()) {
         server.stop();
         return { superseded: true };

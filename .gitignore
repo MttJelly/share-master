@@ -10,6 +10,7 @@ share-master-profile/
 
 # QA runtime profiles, stores, schemas, and screenshots
 qa/.*/
+qa/manual-openai-login-profile/
 qa/*.png
 qa/multi-window-artifacts/
 

@@ -2457,8 +2457,7 @@ class ProviderStore {
   }
 
   addAccount(input) {
-    const label = String(input.label || "").trim();
-    if (!label) throw new Error("账号名称不能为空。");
+    const label = String(input?.label || "").trim() || "ChatGPT 官方账号";
     const id = cleanId("account");
     const home = path.join(STORE_ROOT, "accounts", id);
     fs.mkdirSync(home, { recursive: true });

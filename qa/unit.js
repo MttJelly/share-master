@@ -42,6 +42,11 @@ const { createLocalHistoryReader } = require("../src/local-conversation-history"
 const { createLocalProviderDiscovery, parseCodexConfig } = require("../src/local-provider-discovery");
 const { APP_VERSION, USER_AGENT, compareVersions, updateFromRelease } = require("../src/app-version");
 const {
+  isAuthenticatedOfficialSnapshot,
+  requireAuthenticatedOfficialSnapshot,
+} = require("../src/openai-auth");
+const { normalizeRateLimits, normalizeAccountUsage } = require("../src/openai-account-usage");
+const {
   buildContinuationPrompt,
   mergeLogicalThread,
   remapBranchMessage,
@@ -106,6 +111,70 @@ function testApprovalNotifications() {
   assert.match(userInputSpec.body, /点击通知/);
   const mcpSpec = approvalNotificationSpec({ method: "mcpServer/elicitation/request" });
   assert.equal(mcpSpec.actions.length, 0);
+}
+
+function testOfficialAuthenticationGate() {
+  const provider = { type: "official" };
+  const account = { account: { type: "chatgpt", email: "person@example.test" }, requiresOpenaiAuth: true };
+  assert.equal(isAuthenticatedOfficialSnapshot(account), true);
+  assert.equal(isAuthenticatedOfficialSnapshot({
+    account: { type: "chatgpt", email: "person@example.test" },
+    requiresOpenaiAuth: false,
+  }), true);
+  assert.equal(isAuthenticatedOfficialSnapshot({ account: null, requiresOpenaiAuth: true }), false);
+  assert.equal(isAuthenticatedOfficialSnapshot({ account: null, requiresOpenaiAuth: false }), false);
+  assert.equal(requireAuthenticatedOfficialSnapshot(provider, account), account);
+  assert.throws(
+    () => requireAuthenticatedOfficialSnapshot(provider, { account: null, requiresOpenaiAuth: true }),
+    /尚未登录 ChatGPT/,
+  );
+  assert.throws(
+    () => requireAuthenticatedOfficialSnapshot(provider, { account: null }, { afterLogin: true }),
+    /登录未完成/,
+  );
+  assert.deepEqual(
+    requireAuthenticatedOfficialSnapshot({ type: "relay" }, { account: null }),
+    { account: null },
+  );
+}
+
+function testOfficialAccountUsageNormalization() {
+  const response = normalizeRateLimits({
+    rateLimits: {
+      limitId: "codex-default",
+      primary: { usedPercent: 20, windowDurationMins: 300, resetsAt: 1786753800 },
+      secondary: { usedPercent: 40, windowDurationMins: 10080, resetsAt: 1787013000 },
+      credits: { hasCredits: true, unlimited: false, balance: "12.5" },
+    },
+    rateLimitsByLimitId: {
+      "codex-dynamic-id": {
+        limitId: "codex-dynamic-id",
+        limitName: "Codex",
+        primary: { usedPercent: 12.5, windowDurationMins: 300, resetsAt: 1786753800 },
+        secondary: { usedPercent: 55, windowDurationMins: 10080, resetsAt: 1787013000 },
+        credits: { hasCredits: true, unlimited: false, balance: "8.0" },
+      },
+    },
+    rateLimitResetCredits: { availableCount: "2" },
+  });
+  assert.equal(response.groups.length, 2);
+  assert.equal(response.groups[0].id, "codex-dynamic-id");
+  assert.deepEqual(response.groups[0].windows.map((window) => window.windowDurationMins), [300, 10080]);
+  assert.deepEqual(response.groups[0].windows.map((window) => window.usedPercent), [12.5, 55]);
+  assert.equal(response.resetCredits, 2);
+  assert.deepEqual(normalizeAccountUsage({ summary: {
+    lifetimeTokens: "1250000",
+    peakDailyTokens: 250000,
+    longestRunningTurnSec: 360,
+    currentStreakDays: 7,
+    longestStreakDays: 12,
+  } }), {
+    lifetimeTokens: 1250000,
+    peakDailyTokens: 250000,
+    longestRunningTurnSec: 360,
+    currentStreakDays: 7,
+    longestStreakDays: 12,
+  });
 }
 
 function testWindowsNotificationIdentity() {
@@ -2193,6 +2262,8 @@ function testStreamEventBatcher() {
 }
 
 Promise.resolve()
+  .then(testOfficialAuthenticationGate)
+  .then(testOfficialAccountUsageNormalization)
   .then(testOfficialCliArguments)
   .then(testDiagnosticNormalization)
   .then(testRawCodexDiagnosticsStayInternal)
@@ -2251,7 +2322,7 @@ Promise.resolve()
   .then(testOpenAICompatibleInterrupt)
   .then(testOpenAICompatibleSharedCodexHistory)
   .then(testImportedLocalConversation)
-  .then(() => console.log(JSON.stringify({ ok: true, tests: 57 })))
+  .then(() => console.log(JSON.stringify({ ok: true, tests: 59 })))
   .catch((error) => {
     console.error(error.stack || error.message);
     process.exitCode = 1;

@@ -8,6 +8,7 @@ const root = path.resolve(__dirname, "..");
 const artifactRoot = path.join(__dirname, "multi-window-artifacts");
 const desktopScreenshot = path.join(artifactRoot, "vue-renderer-desktop.png");
 const lightDesktopScreenshot = path.join(artifactRoot, "vue-renderer-desktop-light.png");
+const accountUsageScreenshot = path.join(artifactRoot, "vue-renderer-account-usage.png");
 const compactScreenshot = path.join(artifactRoot, "vue-renderer-compact.png");
 const conversationScreenshot = path.join(artifactRoot, "vue-renderer-conversation.png");
 const attachmentScreenshot = path.join(artifactRoot, "vue-renderer-attachment.png");
@@ -56,6 +57,8 @@ async function rendererSnapshot(window) {
     relayColumns: getComputedStyle(document.querySelector('#relay-form')).gridTemplateColumns,
     formActionsBackground: getComputedStyle(document.querySelector('#relay-form .form-actions')).backgroundColor,
     providerGroups: [...document.querySelectorAll('.provider-group-label')].map((node) => node.textContent),
+    actionGroups: [...document.querySelectorAll('.dialog-action-group-title')].map((node) => node.textContent),
+    selectedProviderRows: document.querySelectorAll('.provider-option-row.is-selected').length,
     providerActionLayout,
     fatal: document.querySelector('.renderer-fatal')?.textContent || null
     };
@@ -171,6 +174,12 @@ async function run() {
   let clipboardPasteRequests = 0;
   let pendingSteerResolve = null;
   let importedLocalHistoryThread = null;
+  let accountStatusRequests = 0;
+  let officialLoginRequests = 0;
+  const officialLoginProviderIds = [];
+  const accountAddRequests = [];
+  let accountFixtureProviderId = null;
+  let officialAuthenticated = false;
   ipcMain.handle("app:bootstrap", () => ({
     providerPresets: [
       { id: "deepseek", label: "DeepSeek", group: "国内模型", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat", protocol: "chat_completions", note: "DeepSeek 兼容接口。" },
@@ -262,6 +271,19 @@ async function run() {
   }));
   ipcMain.handle("codex:connect", (_event, providerId) => {
     connectRequests.push(providerId);
+    if (providerId === "official" || providerId === accountFixtureProviderId) {
+      return {
+        provider: providerId,
+        label: "OpenAI 官方",
+        brand: "openai",
+        providerType: "official",
+        providerEngine: "codex",
+        modelProvider: "openai",
+        account: officialAuthenticated ? { type: "chatgpt", email: "tester@example.test", planType: "plus" } : null,
+        requiresOpenaiAuth: true,
+        rateLimits: officialAuthenticated ? { groups: [], resetCredits: 0 } : null,
+      };
+    }
     return {
       provider: providerId,
       label: "DeepSeek",
@@ -272,6 +294,63 @@ async function run() {
       modelProvider: "deepseek",
     };
   });
+  ipcMain.handle("provider:add-account", (_event, input) => {
+    accountAddRequests.push(structuredClone(input || {}));
+    accountFixtureProviderId = "account_fixture";
+    const label = String(input?.label || "").trim() || "ChatGPT 官方账号";
+    return {
+      id: accountFixtureProviderId,
+      type: "account",
+      brand: "openai",
+      label,
+      connectionLabel: label,
+      modelProvider: "openai",
+      deletable: true,
+    };
+  });
+  ipcMain.handle("auth:official-login", (_event, providerId) => {
+    officialLoginRequests += 1;
+    officialLoginProviderIds.push(providerId);
+    if (officialLoginRequests === 1) throw new Error("ChatGPT 登录未完成，请在浏览器中完成认证后重试。");
+    officialAuthenticated = true;
+    return {
+      account: { type: "chatgpt", email: "tester@example.test", planType: "plus" },
+      requiresOpenaiAuth: true,
+      rateLimits: { groups: [], resetCredits: 0 },
+      accountUsage: null,
+    };
+  });
+  ipcMain.handle("codex:account-status", () => {
+    accountStatusRequests += 1;
+    return {
+      account: { type: "chatgpt", email: "tester@example.test", planType: "plus" },
+      requiresOpenaiAuth: true,
+      rateLimits: {
+        groups: [{
+          id: "codex-dynamic-id",
+          name: "Codex",
+          planType: "plus",
+          windows: [
+            { kind: "primary", usedPercent: 22.5, windowDurationMins: 300, resetsAt: 1786753800 },
+            { kind: "secondary", usedPercent: 48, windowDurationMins: 10080, resetsAt: 1787013000 },
+          ],
+          credits: { hasCredits: true, unlimited: false, balance: "9.5" },
+          individualLimit: null,
+          reachedType: null,
+        }],
+        resetCredits: 1,
+      },
+      accountUsage: {
+        lifetimeTokens: 1250000,
+        peakDailyTokens: 250000,
+        longestRunningTurnSec: 360,
+        currentStreakDays: 7,
+        longestStreakDays: 12,
+      },
+      rateLimitsError: null,
+      accountUsageError: null,
+    };
+  });
   ipcMain.handle("codex:list", () => ({
     data: importedLocalHistoryThread ? [structuredClone(importedLocalHistoryThread)] : [],
     nextCursor: null,
@@ -280,6 +359,7 @@ async function run() {
     data: [{ id: "deepseek-chat", model: "deepseek-chat", displayName: "DeepSeek Chat", isDefault: true }],
     nextCursor: null,
   }));
+  ipcMain.handle("codex:skills", () => ({ data: [] }));
   ipcMain.handle("thread:save-settings", (_event, input) => ({
     [`${input.threadId}::${input.providerId}`]: {
       model: input.model,
@@ -478,10 +558,157 @@ async function run() {
       }
     }, 50);
   })`);
+  const authGate = await window.webContents.executeJavaScript(`(async () => {
+    document.querySelector('[data-provider="official"]').click();
+    const started = Date.now();
+    while (!document.querySelector('#provider-error').textContent.includes('尚未登录 ChatGPT')) {
+      if (Date.now() - started > 3000) throw new Error('Official auth gate timed out.');
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    const beforeHistory = {
+      connected: state.connected,
+      provider: state.provider,
+      providerType: state.providerType,
+      providerOverlayVisible: !document.querySelector('#provider-overlay').classList.contains('hidden'),
+      sendDisabled: document.querySelector('#send-button').disabled,
+      error: document.querySelector('#provider-error').textContent,
+      loginButtonVisible: !document.querySelector('#official-login-button').classList.contains('hidden'),
+      accountPanelText: document.querySelector('#account-panel').textContent.replace(/\s+/g, ' ').trim(),
+      localHistoryEnabled: !document.querySelector('#local-history-button').disabled,
+    };
+    document.querySelector('#local-history-button').click();
+    const historyStarted = Date.now();
+    while (document.querySelector('#local-history-overlay').classList.contains('hidden')) {
+      if (Date.now() - historyStarted > 3000) throw new Error('Disconnected local history did not open.');
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    const localHistoryVisible = !document.querySelector('#local-history-overlay').classList.contains('hidden');
+    document.querySelector('#local-history-close-button').click();
+    return { ...beforeHistory, localHistoryVisible };
+  })()`);
+  const loginFlow = await window.webContents.executeJavaScript(`(async () => {
+    const login = document.querySelector('#official-login-button');
+    login.click();
+    let started = Date.now();
+    while (!document.querySelector('#provider-error').textContent.includes('登录未完成')) {
+      if (Date.now() - started > 3000) throw new Error('Incomplete login state timed out.');
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    const failed = {
+      connected: state.connected,
+      overlayVisible: !document.querySelector('#provider-overlay').classList.contains('hidden'),
+      error: document.querySelector('#provider-error').textContent,
+    };
+    login.click();
+    started = Date.now();
+    while (!state.connected) {
+      if (Date.now() - started > 3000) throw new Error('Successful login state timed out.');
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    const succeeded = {
+      connected: state.connected,
+      overlayHidden: document.querySelector('#provider-overlay').classList.contains('hidden'),
+      accountEmail: state.account?.email || null,
+    };
+    state.connected = false;
+    state.account = null;
+    state.rateLimits = null;
+    state.accountUsage = null;
+    document.querySelector('#provider-overlay').classList.remove('hidden');
+    setConnected(false);
+    renderAccountPanel();
+    return { failed, succeeded };
+  })()`);
+  const accountFormFlow = await window.webContents.executeJavaScript(`(async () => {
+    document.querySelector('#add-connection-button').click();
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    document.querySelector('[data-connection-tab="account"]').click();
+    const input = document.querySelector('#account-form [name="label"]');
+    const submit = document.querySelector('#account-form button[type="submit"]');
+    const before = {
+      visible: !document.querySelector('#connection-overlay').classList.contains('hidden'),
+      accountTabSelected: document.querySelector('[data-connection-tab="account"]').getAttribute('aria-selected'),
+      labelRequired: input.required,
+      labelValue: input.value,
+      submitText: submit.textContent.replace(/\\s+/g, ' ').trim(),
+      helperText: document.querySelector('#account-label-help').textContent,
+    };
+    input.value = '';
+    submit.click();
+    const started = Date.now();
+    while (!(state.connected && state.provider === 'account_fixture')) {
+      if (Date.now() - started > 5000) throw new Error('Account form login flow timed out.');
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    return {
+      ...before,
+      connected: state.connected,
+      provider: state.provider,
+      overlayHidden: document.querySelector('#connection-overlay').classList.contains('hidden'),
+      providerOverlayHidden: document.querySelector('#provider-overlay').classList.contains('hidden'),
+      accountEmail: state.account?.email || null,
+    };
+  })()`);
+  accountFormFlow.addRequest = structuredClone(accountAddRequests.at(-1) || null);
+  accountFormFlow.loginProviderId = officialLoginProviderIds.at(-1) || null;
+  const accountStatusRequestOffset = accountStatusRequests;
+  const accountUsage = await window.webContents.executeJavaScript(`(async () => {
+    state.connected = true;
+    state.provider = 'official';
+    state.providerType = 'official';
+    state.providerEngine = 'codex';
+    state.modelProvider = 'openai';
+    applyAccountSnapshot({
+      account: { type: 'chatgpt', email: 'tester@example.test', planType: 'plus' },
+      requiresOpenaiAuth: true,
+      rateLimits: {
+        groups: [{
+          id: 'codex-dynamic-id', name: 'Codex', planType: 'plus',
+          windows: [
+            { kind: 'primary', usedPercent: 22.5, windowDurationMins: 300, resetsAt: 1786753800 },
+            { kind: 'secondary', usedPercent: 48, windowDurationMins: 10080, resetsAt: 1787013000 },
+          ],
+          credits: { hasCredits: true, unlimited: false, balance: '9.5' },
+        }],
+        resetCredits: 1,
+      },
+      accountUsage: { lifetimeTokens: 1250000, peakDailyTokens: 250000, longestRunningTurnSec: 360, currentStreakDays: 7, longestStreakDays: 12 },
+    });
+    const panel = document.querySelector('#account-panel');
+    const refresh = document.querySelector('#refresh-account-usage');
+    refresh.click();
+    const started = Date.now();
+    while (state.accountRefreshPromise) {
+      if (Date.now() - started > 3000) throw new Error('Account usage refresh timed out.');
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    const result = {
+      text: panel.textContent.replace(/\s+/g, ' ').trim(),
+      quotaRows: panel.querySelectorAll('.quota-row').length,
+      progressBars: panel.querySelectorAll('[role="progressbar"]').length,
+      progressValues: [...panel.querySelectorAll('[role="progressbar"]')].map((node) => node.getAttribute('aria-valuenow')),
+      refreshLabel: panel.querySelector('#refresh-account-usage')?.getAttribute('aria-label') || '',
+      refreshDisabled: panel.querySelector('#refresh-account-usage')?.disabled || false,
+    };
+    return result;
+  })()`);
+  accountUsage.refreshRequests = accountStatusRequests - accountStatusRequestOffset;
+  fs.mkdirSync(artifactRoot, { recursive: true });
+  fs.writeFileSync(accountUsageScreenshot, (await capturePageWithRetry(window)).toPNG());
+  await window.webContents.executeJavaScript(`(() => {
+    state.connected = false;
+    state.account = null;
+    state.rateLimits = null;
+    state.accountUsage = null;
+    state.provider = 'official';
+    state.providerType = 'official';
+    elements.overlay.classList.remove('hidden');
+    setConnected(false);
+    renderAccountPanel();
+  })()`);
   await window.webContents.executeJavaScript("applyTheme('light')");
   await new Promise((resolve) => setTimeout(resolve, 150));
   const lightDesktop = await rendererSnapshot(window);
-  fs.mkdirSync(artifactRoot, { recursive: true });
   fs.writeFileSync(lightDesktopScreenshot, (await capturePageWithRetry(window)).toPNG());
   await window.webContents.executeJavaScript("applyTheme('dark')");
   await new Promise((resolve) => setTimeout(resolve, 150));
@@ -1336,6 +1563,48 @@ async function run() {
   }))()`);
 
   assert.equal(desktop.vueMounted, true);
+  assert.equal(authGate.connected, false);
+  assert.equal(authGate.provider, "official");
+  assert.equal(authGate.providerType, "official");
+  assert.equal(authGate.providerOverlayVisible, true);
+  assert.equal(authGate.sendDisabled, true);
+  assert.match(authGate.error, /尚未登录 ChatGPT/);
+  assert.equal(authGate.loginButtonVisible, true);
+  assert.match(authGate.accountPanelText, /尚未登录/);
+  assert.equal(authGate.localHistoryEnabled, true);
+  assert.equal(authGate.localHistoryVisible, true);
+  assert.equal(loginFlow.failed.connected, false);
+  assert.equal(loginFlow.failed.overlayVisible, true);
+  assert.match(loginFlow.failed.error, /登录未完成/);
+  assert.equal(loginFlow.succeeded.connected, true);
+  assert.equal(loginFlow.succeeded.overlayHidden, true);
+  assert.equal(loginFlow.succeeded.accountEmail, "tester@example.test");
+  assert.equal(accountFormFlow.visible, true);
+  assert.equal(accountFormFlow.accountTabSelected, "true");
+  assert.equal(accountFormFlow.labelRequired, false);
+  assert.equal(accountFormFlow.labelValue, "");
+  assert.match(accountFormFlow.submitText, /打开 ChatGPT 登录/);
+  assert.match(accountFormFlow.helperText, /不填写邮箱或密码/);
+  assert.deepEqual(accountFormFlow.addRequest, { label: "ChatGPT 官方账号" });
+  assert.equal(accountFormFlow.loginProviderId, "account_fixture");
+  assert.equal(accountFormFlow.connected, true);
+  assert.equal(accountFormFlow.provider, "account_fixture");
+  assert.equal(accountFormFlow.overlayHidden, true);
+  assert.equal(accountFormFlow.providerOverlayHidden, true);
+  assert.equal(accountFormFlow.accountEmail, "tester@example.test");
+  assert.equal(accountUsage.quotaRows, 2);
+  assert.equal(accountUsage.progressBars, 2);
+  assert.deepEqual(accountUsage.progressValues, ["77.5", "52"]);
+  assert.equal(accountUsage.refreshLabel, "刷新 ChatGPT 账号用量");
+  assert.equal(accountUsage.refreshDisabled, false);
+  assert.equal(accountUsage.refreshRequests, 1);
+  assert.match(accountUsage.text, /5 小时额度/);
+  assert.match(accountUsage.text, /每周额度/);
+  assert.match(accountUsage.text, /已用 22\.5% · 剩余 77\.5%/);
+  assert.match(accountUsage.text, /2026/);
+  assert.match(accountUsage.text, /累计 Token 125万/);
+  assert.match(accountUsage.text, /峰值日用量 25万/);
+  assert.match(accountUsage.text, /当前连续使用 7 天/);
   assert.equal(desktop.wordmarkIconLoaded, true);
   assert.equal(desktop.stateExposed, true);
   assert.equal(desktop.pending, false);
@@ -1346,7 +1615,9 @@ async function run() {
   assert.equal(desktop.fatal, null);
   assert.notEqual(desktop.formActionsBackground, "rgb(255, 255, 255)");
   assert.deepEqual(desktop.providerGroups, ["OpenAI 账号", "Chat Completions 模型"]);
-  assert.equal(desktop.providerActionLayout.length, 3);
+  assert.deepEqual(desktop.actionGroups, ["连接管理", "数据与同步", "应用"]);
+  assert.equal(desktop.selectedProviderRows, 1);
+  assert.equal(desktop.providerActionLayout.length, 4);
   assert.equal(desktop.providerActionLayout.every((row) => row.actions === 1 && !row.overlaps), true);
   assert.equal(compact.vueMounted, true);
   assert.equal(compact.wordmarkIconLoaded, true);
@@ -1379,8 +1650,8 @@ async function run() {
   assert.match(conversation.interruptionText, /qa-request-1/);
   assert.equal(conversation.interruptionButtons, 1);
   assert.deepEqual(backgroundInterruption, { stored: true, visible: true, buttons: 1 });
-  assert.equal(connectRequests.length, 1);
-  assert.equal(connectRequests[0], "deepseek-fixture");
+  assert.deepEqual(connectRequests.filter((id) => id === "official"), ["official", "official"]);
+  assert.deepEqual(connectRequests.filter((id) => id === "deepseek-fixture"), ["deepseek-fixture"]);
   assert.equal(startThreadRequests.length, 0);
   assert.equal(reconnect.connected, true);
   assert.equal(reconnect.reconnecting, false);
@@ -1595,6 +1866,9 @@ async function run() {
 
   console.log(JSON.stringify({
     ok: true,
+    authGate,
+    loginFlow,
+    accountUsage,
     lightDesktop,
     desktop,
     compact,
@@ -1619,7 +1893,7 @@ async function run() {
     windowThemeRequests,
     interactiveLayoutAudits,
     errors,
-    screenshots: [lightDesktopScreenshot, desktopScreenshot, compactScreenshot, conversationScreenshot, confirmationScreenshot, attachmentScreenshot, localHistoryScreenshot, localProviderScreenshot, usageScreenshot, usageCompactScreenshot, backupScreenshot, syncScreenshot, appSettingsScreenshot, importPreviewScreenshot, healthScreenshot, extensionsScreenshot, skillInstallScreenshot, darkExtensionsScreenshot],
+    screenshots: [accountUsageScreenshot, lightDesktopScreenshot, desktopScreenshot, compactScreenshot, conversationScreenshot, confirmationScreenshot, attachmentScreenshot, localHistoryScreenshot, localProviderScreenshot, usageScreenshot, usageCompactScreenshot, backupScreenshot, syncScreenshot, appSettingsScreenshot, importPreviewScreenshot, healthScreenshot, extensionsScreenshot, skillInstallScreenshot, darkExtensionsScreenshot],
   }));
   window.destroy();
   app.quit();

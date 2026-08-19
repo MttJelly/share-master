@@ -47,6 +47,7 @@ const result = spawnSync(electron, [
   env: {
     ...process.env,
     SHARE_MASTER_QA: "1",
+    CODEX_DECK_QA_OFFICIAL_AUTHENTICATED: "1",
     CODEX_DECK_QA_PROVIDER: "official",
     CODEX_DECK_QA_MULTI_PROVIDER: "1",
     CODEX_DECK_QA_OUTPUT_DIR: outputDirectory,
