@@ -635,7 +635,11 @@ function createWindow(providerId = null, projectRoot = null, threadId = null, pr
               const form = document.querySelector('#relay-form');
               form.elements.label.value = 'QA Relay Form';
               form.elements.baseUrl.value = 'https://relay.example/v1';
-              form.elements.model.value = 'gpt-test';
+              const modelSelect = form.elements.model;
+              window.shareMasterState.probedProviderModels = ['gpt-test'];
+              modelSelect.replaceChildren(new Option('gpt-test', 'gpt-test'));
+              modelSelect.disabled = false;
+              modelSelect.value = 'gpt-test';
               form.elements.apiKey.value = 'share-master-relay-qa-key';
               form.requestSubmit();
               const started = Date.now();
@@ -3106,6 +3110,9 @@ app.whenReady().then(async () => {
     const server = serverFor(event);
     if (server.provider.type !== "claude") {
       const response = await server.listModels();
+      if (server.provider.type === "relay" && !server.provider.discoveredModels?.length) {
+        return { ...response, data: [] };
+      }
       if (!["api", "relay"].includes(server.provider.type)) return response;
       return {
         ...response,

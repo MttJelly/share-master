@@ -670,8 +670,8 @@ async function run() {
     select.dispatchEvent(new Event('change', { bubbles: true }));
     const result = {
       visible: !document.querySelector('#connection-overlay').classList.contains('hidden'),
-      manualLabel: document.querySelector('#relay-form input[name="model"]').closest('label').querySelector('span').textContent,
-      pickerVisible: !document.querySelector('#provider-model-picker').classList.contains('hidden'),
+      modelLabel: document.querySelector('#provider-model-select').closest('label').querySelector('span').textContent,
+      modelDisabled: select.disabled,
       optionCount: select.querySelectorAll('option').length,
       selected: select.value,
       inputValue: form.elements.model.value,
@@ -1622,8 +1622,8 @@ async function run() {
   assert.equal(accountFormFlow.providerOverlayHidden, true);
   assert.equal(accountFormFlow.accountEmail, "tester@example.test");
   assert.equal(relayModelFlow.visible, true);
-  assert.match(relayModelFlow.manualLabel, /可手动填写/);
-  assert.equal(relayModelFlow.pickerVisible, true);
+  assert.match(relayModelFlow.modelLabel, /来自中转商/);
+  assert.equal(relayModelFlow.modelDisabled, false);
   assert.equal(relayModelFlow.optionCount, 2);
   assert.equal(relayModelFlow.selected, "deepseek-chat");
   assert.equal(relayModelFlow.inputValue, "deepseek-chat");
@@ -1870,7 +1870,7 @@ async function run() {
   assert.equal(importPreview.bodyOverflow, false);
   assert.equal(importPreview.connectionVisible, true);
   assert.equal(importPreview.importedLabel, "Imported Lab API");
-  assert.equal(importPreview.importedModel, "lab-model");
+  assert.equal(importPreview.importedModel, "");
   assert.equal(importPreview.apiKey, "");
   assert.equal(importPreview.apiKeyRequired, true);
   assert.deepEqual({ visible: skillInstall.visible, kind: skillInstall.kind, sourceType: skillInstall.sourceType, browseHidden: skillInstall.browseHidden }, { visible: true, kind: "github", sourceType: "url", browseHidden: true });

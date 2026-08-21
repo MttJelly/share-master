@@ -209,11 +209,8 @@
           <label><span>供应商预设</span><select id="provider-preset" name="preset"><option value="">正在读取预设...</option></select></label>
           <label><span>显示名称</span><input name="label" required placeholder="例如：实验室模型 API" /></label>
           <label><span>Base URL</span><input name="baseUrl" type="url" required placeholder="https://example.com/v1" /></label>
-          <label><span>默认模型 ID（可手动填写）</span><input name="model" list="provider-model-options" required placeholder="例如：gpt-4o、deepseek-chat 或中转商自定义 ID" aria-describedby="provider-model-help connection-error" /><datalist id="provider-model-options"></datalist></label>
-          <div id="provider-model-picker" class="provider-model-picker hidden">
-            <label><span>已读取的模型列表</span><select id="provider-model-select" aria-label="从已读取的模型列表选择"><option value="">选择一个模型（也可以继续手动填写）</option></select></label>
-          </div>
-          <p id="provider-model-help" class="form-note">模型 ID 会原样发送给中转商。点击“测试连接并读取模型”可从兼容的 <code>/models</code> 接口获取列表；如果中转商不提供该接口，直接手动填写即可。</p>
+          <label><span>可用模型（来自中转商）</span><select id="provider-model-select" name="model" required disabled aria-describedby="provider-model-help connection-error"><option value="">请先测试连接并读取模型</option></select></label>
+          <p id="provider-model-help" class="form-note">Share Master 会从中转商的 <code>/models</code> 或 <code>/v1/models</code> 接口读取可用模型。只有读取成功后，才能选择模型并保存连接。</p>
           <label><span>API 协议</span><select name="protocol"><option value="chat_completions">OpenAI Chat Completions</option><option value="responses">OpenAI Responses（Codex 代理）</option></select></label>
           <label><span>API Key</span><input name="apiKey" type="password" required autocomplete="new-password" placeholder="仅加密保存在本机" /></label>
           <div class="model-load-row provider-model-load-row">

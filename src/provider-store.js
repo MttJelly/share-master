@@ -2366,6 +2366,8 @@ class ProviderStore {
     const rawBaseUrl = String(request.baseUrl || "").trim();
     const model = String(request.model || "").trim();
     const apiKey = String(request.apiKey || "").trim();
+    const discoveredModels = [...new Set((Array.isArray(request.discoveredModels) ? request.discoveredModels : [])
+      .map((item) => String(item || "").trim()).filter(Boolean))];
     const preset = Object.hasOwn(PROVIDER_PRESETS, request.preset) ? request.preset : "custom";
     const protocol = ["responses", "chat_completions"].includes(request.protocol)
       ? request.protocol
@@ -2388,8 +2390,6 @@ class ProviderStore {
     secrets[id] = safeStorage.encryptString(apiKey).toString("base64");
     writeJson(SECRETS_FILE, secrets);
     const metadata = this.metadata();
-    const discoveredModels = [...new Set((Array.isArray(request.discoveredModels) ? request.discoveredModels : [])
-      .map((item) => String(item || "").trim()).filter(Boolean))];
     metadata.relays.push({ id, label, baseUrl, model, protocol, preset, discoveredModels, createdAt: Date.now() });
     writeJson(METADATA_FILE, metadata);
     return this.publicProvider(id);

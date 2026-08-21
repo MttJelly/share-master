@@ -29,6 +29,7 @@ async function run() {
     label: "QA Relay",
     baseUrl: "https://relay.example/v1/",
     model: "gpt-test",
+    protocol: "responses",
     apiKey: "first-secret",
   });
   assert.equal(created.keyConfigurable, true);

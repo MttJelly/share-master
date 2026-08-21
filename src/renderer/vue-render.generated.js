@@ -567,37 +567,26 @@ export function render(_ctx, _cache) {
             })
           ]),
           _createElementVNode("label", null, [
-            _createElementVNode("span", null, "默认模型 ID（可手动填写）"),
-            _createElementVNode("input", {
+            _createElementVNode("span", null, "可用模型（来自中转商）"),
+            _createElementVNode("select", {
+              id: "provider-model-select",
               name: "model",
-              list: "provider-model-options",
               required: "",
-              placeholder: "例如：gpt-4o、deepseek-chat 或中转商自定义 ID",
+              disabled: "",
               "aria-describedby": "provider-model-help connection-error"
-            }),
-            _createElementVNode("datalist", { id: "provider-model-options" })
-          ]),
-          _createElementVNode("div", {
-            id: "provider-model-picker",
-            class: "provider-model-picker hidden"
-          }, [
-            _createElementVNode("label", null, [
-              _createElementVNode("span", null, "已读取的模型列表"),
-              _createElementVNode("select", {
-                id: "provider-model-select",
-                "aria-label": "从已读取的模型列表选择"
-              }, [
-                _createElementVNode("option", { value: "" }, "选择一个模型（也可以继续手动填写）")
-              ])
+            }, [
+              _createElementVNode("option", { value: "" }, "请先测试连接并读取模型")
             ])
           ]),
           _createElementVNode("p", {
             id: "provider-model-help",
             class: "form-note"
           }, [
-            _createTextVNode("模型 ID 会原样发送给中转商。点击“测试连接并读取模型”可从兼容的 "),
+            _createTextVNode("Share Master 会从中转商的 "),
             _createElementVNode("code", null, "/models"),
-            _createTextVNode(" 接口获取列表；如果中转商不提供该接口，直接手动填写即可。")
+            _createTextVNode(" 或 "),
+            _createElementVNode("code", null, "/v1/models"),
+            _createTextVNode(" 接口读取可用模型。只有读取成功后，才能选择模型并保存连接。")
           ]),
           _createElementVNode("label", null, [
             _createElementVNode("span", null, "API 协议"),

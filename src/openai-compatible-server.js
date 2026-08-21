@@ -581,10 +581,9 @@ class OpenAICompatibleServer extends EventEmitter {
   }
 
   async listModels() {
-    const models = [...new Set([
-      this.provider.model,
-      ...(this.provider.discoveredModels || []),
-    ].map((model) => String(model || "").trim()).filter(Boolean))];
+    const models = [...new Set((this.provider.discoveredModels || [])
+      .map((model) => String(model || "").trim())
+      .filter(Boolean))];
     return {
       data: models.map((model, index) => ({
         id: model,

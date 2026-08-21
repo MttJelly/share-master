@@ -646,8 +646,16 @@ async function loadSessionModels() {
   } catch (error) {
     if (generation !== state.connectionGeneration) return;
     state.modelCatalog = [];
+    const provider = currentProviderDefinition();
     const fallback = currentProviderDefinition()?.model || "默认模型";
     elements.sessionModel.innerHTML = "";
+    if (provider?.type === "relay") {
+      elements.sessionModel.appendChild(new Option("请先读取中转商模型列表", ""));
+      elements.sessionModel.disabled = true;
+      renderEffortOptions();
+      showDiagnostic(`中转商模型列表读取失败：${error.message}。请重新测试连接后再继续。`, true);
+      return;
+    }
     elements.sessionModel.appendChild(new Option(fallback, fallback === "默认模型" ? "" : fallback));
     renderEffortOptions();
     showDiagnostic(`模型列表读取失败：${error.message}`, true);
@@ -5475,7 +5483,7 @@ function applyProviderPreset(overwrite = true) {
   if (overwrite) {
     form.elements.label.value = preset.label;
     form.elements.baseUrl.value = preset.baseUrl;
-    form.elements.model.value = preset.model;
+    form.elements.model.value = "";
   }
   form.elements.protocol.value = preset.protocol;
   $("#provider-protocol-note").textContent = preset.note;
@@ -5488,19 +5496,15 @@ function applyProviderPreset(overwrite = true) {
 }
 
 function renderProviderModelOptions() {
-  const list = $("#provider-model-options");
-  const picker = $("#provider-model-picker");
   const select = $("#provider-model-select");
-  list.replaceChildren(...state.probedProviderModels.map((model) => {
-    const option = document.createElement("option");
-    option.value = model;
-    return option;
-  }));
-  select.replaceChildren(new Option("选择一个模型（也可以继续手动填写）", ""), ...state.probedProviderModels.map((model) => (
+  const currentModel = select.value;
+  select.replaceChildren(new Option(
+    state.probedProviderModels.length ? "请选择中转商返回的模型" : "请先测试连接并读取模型",
+    "",
+  ), ...state.probedProviderModels.map((model) => (
     new Option(model, model)
   )));
-  picker.classList.toggle("hidden", state.probedProviderModels.length === 0);
-  const currentModel = $("#relay-form")?.elements?.model?.value?.trim() || "";
+  select.disabled = state.probedProviderModels.length === 0;
   select.value = state.probedProviderModels.includes(currentModel) ? currentModel : "";
 }
 
@@ -5600,7 +5604,7 @@ function renderLocalProviderCandidates() {
     return;
   }
   if (!state.localProviderCandidates.length) {
-    elements.localProviderList.innerHTML = '<div class="local-provider-empty"><span data-lucide="search-x"></span><strong>没有发现可识别的模型配置</strong><small>你仍可通过“添加连接”手动填写 Base URL、模型和 API Key。</small></div>';
+    elements.localProviderList.innerHTML = '<div class="local-provider-empty"><span data-lucide="search-x"></span><strong>没有发现可识别的模型配置</strong><small>你仍可通过“添加连接”测试中转并读取可用模型列表。</small></div>';
     elements.localProviderImportButton.disabled = true;
     refreshIcons();
     return;
@@ -5737,7 +5741,6 @@ function openRelayDialog(provider = null, draft = null) {
     form.elements.preset.value = provider.preset || "custom";
     form.elements.label.value = provider.label || "";
     form.elements.baseUrl.value = provider.baseUrl || "";
-    form.elements.model.value = provider.model || "";
     form.elements.protocol.value = provider.protocol || "chat_completions";
     form.elements.apiKey.required = false;
     form.elements.apiKey.placeholder = "留空则继续使用已加密保存的密钥";
@@ -5750,7 +5753,6 @@ function openRelayDialog(provider = null, draft = null) {
       form.elements.preset.value = state.providerPresets[draft.preset] ? draft.preset : "custom";
       form.elements.label.value = draft.label || "";
       form.elements.baseUrl.value = draft.baseUrl || "";
-      form.elements.model.value = draft.model || "";
       form.elements.protocol.value = draft.protocol || "chat_completions";
       applyProviderPreset(false);
     }
@@ -5761,6 +5763,9 @@ function openRelayDialog(provider = null, draft = null) {
   $("#provider-cooldown-seconds").value = Math.round((route?.cooldownMs || 60000) / 1000);
   syncProviderRouteControls(route);
   renderProviderModelOptions();
+  if (provider?.model && state.probedProviderModels.includes(provider.model)) {
+    form.elements.model.value = provider.model;
+  }
   $("#connection-title").textContent = provider ? "编辑模型供应商" : "添加连接";
   $("#provider-submit-label").textContent = provider ? "保存供应商" : "添加供应商";
   $("#provider-model-status").textContent = state.probedProviderModels.length
@@ -5989,17 +5994,16 @@ $("#provider-load-models").addEventListener("click", async (event) => {
     button.disabled = false;
   }
 });
-$("#provider-model-select").addEventListener("change", (event) => {
-  const model = event.currentTarget.value;
-  if (!model) return;
-  $("#relay-form").elements.model.value = model;
-});
 $("#relay-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.currentTarget;
   const data = Object.fromEntries(new FormData(form));
   data.label = String(data.label || "").trim() || "ChatGPT 官方账号";
   data.discoveredModels = [...state.probedProviderModels];
+  if (!data.model || !data.discoveredModels.includes(data.model)) {
+    $("#connection-error").textContent = "请先测试连接并从中转商返回的模型列表中选择一个模型。";
+    return;
+  }
   const button = form.querySelector("button[type=submit]");
   button.disabled = true;
   $("#connection-error").textContent = "";
@@ -6031,6 +6035,7 @@ $("#relay-form").addEventListener("submit", async (event) => {
     state.editingRelay = null;
     state.routeFallbackDraft = [];
     state.probedProviderModels = [];
+    renderProviderModelOptions();
     $("#connection-error").textContent = "";
     $("#connection-overlay").classList.add("hidden");
     const connected = await connect(provider.id);

@@ -1323,6 +1323,7 @@ async function testOpenAICompatibleStreaming() {
       label: "DeepSeek unit",
       baseUrl: "https://api.deepseek.com/v1/",
       model: "deepseek-chat",
+      discoveredModels: ["deepseek-chat"],
       apiKey: "encrypted-store-value",
       codexHome: root,
     }, fetchImpl);

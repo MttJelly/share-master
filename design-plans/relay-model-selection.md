@@ -1,10 +1,10 @@
-# 中转模型选择与手动输入
+# 中转模型读取与选择
 
 ## Scope
 
 - Surface: 编辑模型供应商对话框中的“默认模型”字段。
-- Evidence: `src/renderer/index.html` renders a required text input with a hidden native `datalist`; `src/renderer/app.js` already calls `provider:probe-models` and stores `state.probedProviderModels`, but the result is only exposed through browser autocomplete.
-- User goal: users can enter the exact model ID themselves, while providers that expose `/models` offer a visible selectable list.
+- Evidence: `src/renderer/index.html` renders the required model control in the relay form; `src/renderer/app.js` calls `provider:probe-models` and stores `state.probedProviderModels`.
+- User goal: users must select a model returned by the relay; the connection must not accept an unverified, hand-typed model ID.
 
 ## Design language
 
@@ -14,10 +14,10 @@
 
 ## Implementation contract
 
-1. Rename the field label to make it explicit that the value is a model ID and can be entered manually.
-2. Add a visible model selector that appears when discovered models exist. Selecting an option writes to the existing `model` input.
-3. Keep the text input as the source of truth so custom/private model IDs remain valid even when `/models` is unavailable.
-4. Announce probe success and failure beside the probe control; associate the helper text with the input for assistive technology.
+1. Replace the free-text model field with a required native select that is disabled until discovery succeeds.
+2. Populate the select only from `state.probedProviderModels` or a previously saved provider catalog.
+3. Reject add/update when no discovered model is selected; preset model strings must never bypass discovery.
+4. Announce probe success and failure beside the probe control; associate the helper text with the select for assistive technology.
 5. Preserve `discoveredModels` in add/update payloads and provider persistence.
 
 ## Verification
