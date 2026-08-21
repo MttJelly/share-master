@@ -651,6 +651,35 @@ async function run() {
   })()`);
   accountFormFlow.addRequest = structuredClone(accountAddRequests.at(-1) || null);
   accountFormFlow.loginProviderId = officialLoginProviderIds.at(-1) || null;
+  const relayModelFlow = await window.webContents.executeJavaScript(`(async () => {
+    document.querySelector('#add-connection-button').click();
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    document.querySelector('[data-connection-tab="relay"]').click();
+    const form = document.querySelector('#relay-form');
+    form.elements.baseUrl.value = 'https://relay.example/v1';
+    form.elements.apiKey.value = 'fixture-key';
+    const probe = document.querySelector('#provider-load-models');
+    probe.click();
+    const started = Date.now();
+    while (document.querySelectorAll('#provider-model-select option').length < 2) {
+      if (Date.now() - started > 3000) throw new Error('Relay model discovery timed out.');
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    const select = document.querySelector('#provider-model-select');
+    select.value = 'deepseek-chat';
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    const result = {
+      visible: !document.querySelector('#connection-overlay').classList.contains('hidden'),
+      manualLabel: document.querySelector('#relay-form input[name="model"]').closest('label').querySelector('span').textContent,
+      pickerVisible: !document.querySelector('#provider-model-picker').classList.contains('hidden'),
+      optionCount: select.querySelectorAll('option').length,
+      selected: select.value,
+      inputValue: form.elements.model.value,
+      helper: document.querySelector('#provider-model-help').textContent,
+    };
+    document.querySelector('#close-connection-button').click();
+    return result;
+  })()`);
   const accountStatusRequestOffset = accountStatusRequests;
   const accountUsage = await window.webContents.executeJavaScript(`(async () => {
     state.connected = true;
@@ -1592,6 +1621,13 @@ async function run() {
   assert.equal(accountFormFlow.overlayHidden, true);
   assert.equal(accountFormFlow.providerOverlayHidden, true);
   assert.equal(accountFormFlow.accountEmail, "tester@example.test");
+  assert.equal(relayModelFlow.visible, true);
+  assert.match(relayModelFlow.manualLabel, /可手动填写/);
+  assert.equal(relayModelFlow.pickerVisible, true);
+  assert.equal(relayModelFlow.optionCount, 2);
+  assert.equal(relayModelFlow.selected, "deepseek-chat");
+  assert.equal(relayModelFlow.inputValue, "deepseek-chat");
+  assert.match(relayModelFlow.helper, /\/models/);
   assert.equal(accountUsage.quotaRows, 2);
   assert.equal(accountUsage.progressBars, 2);
   assert.deepEqual(accountUsage.progressValues, ["77.5", "52"]);
@@ -1869,6 +1905,7 @@ async function run() {
     authGate,
     loginFlow,
     accountUsage,
+    relayModelFlow,
     lightDesktop,
     desktop,
     compact,

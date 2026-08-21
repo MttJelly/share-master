@@ -209,7 +209,11 @@
           <label><span>供应商预设</span><select id="provider-preset" name="preset"><option value="">正在读取预设...</option></select></label>
           <label><span>显示名称</span><input name="label" required placeholder="例如：实验室模型 API" /></label>
           <label><span>Base URL</span><input name="baseUrl" type="url" required placeholder="https://example.com/v1" /></label>
-          <label><span>默认模型</span><input name="model" list="provider-model-options" required placeholder="测试连接后选择模型" /><datalist id="provider-model-options"></datalist></label>
+          <label><span>默认模型 ID（可手动填写）</span><input name="model" list="provider-model-options" required placeholder="例如：gpt-4o、deepseek-chat 或中转商自定义 ID" aria-describedby="provider-model-help connection-error" /><datalist id="provider-model-options"></datalist></label>
+          <div id="provider-model-picker" class="provider-model-picker hidden">
+            <label><span>已读取的模型列表</span><select id="provider-model-select" aria-label="从已读取的模型列表选择"><option value="">选择一个模型（也可以继续手动填写）</option></select></label>
+          </div>
+          <p id="provider-model-help" class="form-note">模型 ID 会原样发送给中转商。点击“测试连接并读取模型”可从兼容的 <code>/models</code> 接口获取列表；如果中转商不提供该接口，直接手动填写即可。</p>
           <label><span>API 协议</span><select name="protocol"><option value="chat_completions">OpenAI Chat Completions</option><option value="responses">OpenAI Responses（Codex 代理）</option></select></label>
           <label><span>API Key</span><input name="apiKey" type="password" required autocomplete="new-password" placeholder="仅加密保存在本机" /></label>
           <div class="model-load-row provider-model-load-row">
@@ -224,7 +228,7 @@
             <div id="provider-fallback-chain" class="provider-fallback-chain" aria-label="备用连接顺序"></div>
           </div>
           <p id="provider-protocol-note" class="form-note">直接调用 DeepSeek 的聊天接口；支持流式回复、中断和本地会话，不包含 Codex 本地工具。</p>
-          <div class="form-actions"><span id="connection-error" class="provider-error"></span><button class="primary-command" type="submit"><span data-lucide="check"></span><span id="provider-submit-label">添加供应商</span></button></div>
+          <div class="form-actions"><span id="connection-error" class="provider-error" role="status" aria-live="polite"></span><button class="primary-command" type="submit"><span data-lucide="check"></span><span id="provider-submit-label">添加供应商</span></button></div>
         </form>
         <form id="account-form" class="connection-form hidden">
           <label><span>本地标签（可选）</span><input name="label" placeholder="留空则使用 ChatGPT 官方账号" aria-describedby="account-label-help" /></label>

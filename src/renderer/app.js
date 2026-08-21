@@ -5489,11 +5489,19 @@ function applyProviderPreset(overwrite = true) {
 
 function renderProviderModelOptions() {
   const list = $("#provider-model-options");
+  const picker = $("#provider-model-picker");
+  const select = $("#provider-model-select");
   list.replaceChildren(...state.probedProviderModels.map((model) => {
     const option = document.createElement("option");
     option.value = model;
     return option;
   }));
+  select.replaceChildren(new Option("选择一个模型（也可以继续手动填写）", ""), ...state.probedProviderModels.map((model) => (
+    new Option(model, model)
+  )));
+  picker.classList.toggle("hidden", state.probedProviderModels.length === 0);
+  const currentModel = $("#relay-form")?.elements?.model?.value?.trim() || "";
+  select.value = state.probedProviderModels.includes(currentModel) ? currentModel : "";
 }
 
 function syncProviderRouteControls(route = null) {
@@ -5980,6 +5988,11 @@ $("#provider-load-models").addEventListener("click", async (event) => {
   } finally {
     button.disabled = false;
   }
+});
+$("#provider-model-select").addEventListener("change", (event) => {
+  const model = event.currentTarget.value;
+  if (!model) return;
+  $("#relay-form").elements.model.value = model;
 });
 $("#relay-form").addEventListener("submit", async (event) => {
   event.preventDefault();

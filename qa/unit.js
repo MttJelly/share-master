@@ -33,7 +33,7 @@ const {
 } = require("../src/openai-compatible-server");
 const { explicitBoolean, fetchRelayBalance } = require("../src/relay-balance");
 const { fetchClaudeModels, fetchClaudeModelsSafely } = require("../src/claude-models");
-const { fetchOpenAIModels, modelsEndpoint } = require("../src/openai-models");
+const { fetchOpenAIModels, modelsEndpoint, modelsEndpointCandidates } = require("../src/openai-models");
 const { executeScheduledTask, finalizeScheduledTask } = require("../src/scheduled-task-runner");
 const { syncConversationMirror, syncConversationMirrors } = require("../src/conversation-mirror");
 const { installSkillSource, listManagedSkills, syncManagedSkills, syncSkillRoots } = require("../src/skill-mirror");
@@ -764,6 +764,11 @@ async function testApprovalModes() {
 
 async function testOpenAIModelDiscovery() {
   assert.equal(modelsEndpoint("https://relay.example/v1/"), "https://relay.example/v1/models");
+  assert.deepEqual(modelsEndpointCandidates("https://relay.example/v1"), ["https://relay.example/v1/models"]);
+  assert.deepEqual(modelsEndpointCandidates("https://relay.example"), [
+    "https://relay.example/models",
+    "https://relay.example/v1/models",
+  ]);
   const calls = [];
   const models = await fetchOpenAIModels("https://relay.example/v1", "secret", async (url, options) => {
     calls.push({ url, options });
@@ -778,6 +783,15 @@ async function testOpenAIModelDiscovery() {
   assert.deepEqual(models, ["gpt-real-a", "gpt-real-b"]);
   assert.equal(calls[0].url, "https://relay.example/v1/models");
   assert.equal(calls[0].options.headers.Authorization, "Bearer secret");
+  const fallbackCalls = [];
+  const fallbackModels = await fetchOpenAIModels("https://root-relay.example", "secret", async (url) => {
+    fallbackCalls.push(url);
+    return url.endsWith("/v1/models")
+      ? { ok: true, status: 200, text: async () => JSON.stringify({ data: [{ id: "root-model" }] }) }
+      : { ok: false, status: 404, statusText: "Not Found", text: async () => "" };
+  });
+  assert.deepEqual(fallbackCalls, ["https://root-relay.example/models", "https://root-relay.example/v1/models"]);
+  assert.deepEqual(fallbackModels, ["root-model"]);
   await assert.rejects(
     () => fetchOpenAIModels("https://relay.example/v1", "secret", async () => ({
       ok: false,

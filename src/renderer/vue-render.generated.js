@@ -567,14 +567,37 @@ export function render(_ctx, _cache) {
             })
           ]),
           _createElementVNode("label", null, [
-            _createElementVNode("span", null, "默认模型"),
+            _createElementVNode("span", null, "默认模型 ID（可手动填写）"),
             _createElementVNode("input", {
               name: "model",
               list: "provider-model-options",
               required: "",
-              placeholder: "测试连接后选择模型"
+              placeholder: "例如：gpt-4o、deepseek-chat 或中转商自定义 ID",
+              "aria-describedby": "provider-model-help connection-error"
             }),
             _createElementVNode("datalist", { id: "provider-model-options" })
+          ]),
+          _createElementVNode("div", {
+            id: "provider-model-picker",
+            class: "provider-model-picker hidden"
+          }, [
+            _createElementVNode("label", null, [
+              _createElementVNode("span", null, "已读取的模型列表"),
+              _createElementVNode("select", {
+                id: "provider-model-select",
+                "aria-label": "从已读取的模型列表选择"
+              }, [
+                _createElementVNode("option", { value: "" }, "选择一个模型（也可以继续手动填写）")
+              ])
+            ])
+          ]),
+          _createElementVNode("p", {
+            id: "provider-model-help",
+            class: "form-note"
+          }, [
+            _createTextVNode("模型 ID 会原样发送给中转商。点击“测试连接并读取模型”可从兼容的 "),
+            _createElementVNode("code", null, "/models"),
+            _createTextVNode(" 接口获取列表；如果中转商不提供该接口，直接手动填写即可。")
           ]),
           _createElementVNode("label", null, [
             _createElementVNode("span", null, "API 协议"),
@@ -664,7 +687,9 @@ export function render(_ctx, _cache) {
           _createElementVNode("div", { class: "form-actions" }, [
             _createElementVNode("span", {
               id: "connection-error",
-              class: "provider-error"
+              class: "provider-error",
+              role: "status",
+              "aria-live": "polite"
             }),
             _createElementVNode("button", {
               class: "primary-command",
