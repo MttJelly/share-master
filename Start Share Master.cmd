@@ -14,6 +14,6 @@ if exist "%PACKAGED_APP%" if exist "%PACKAGED_DIR%\resources\app.asar" if exist 
   if errorlevel 1 exit /b 1
   call npm run build:renderer >nul
   if errorlevel 1 exit /b 1
-  start "" "%~dp0node_modules\electron\dist\electron.exe" --user-data-dir="%~dp0share-master-profile" .
+  start "" "%~dp0node_modules\electron\dist\electron.exe" --user-data-dir="%~dp0synclattice-profile" .
 )
 endlocal
