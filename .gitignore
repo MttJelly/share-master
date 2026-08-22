@@ -8,7 +8,7 @@ release-build-*/
 # Bundled at build time from an installed Codex runtime
 build/codex-runtime/
 
-# Share Master private runtime data
+# Synclattice private runtime data
 share-master-data/
 share-master-profile/
 
