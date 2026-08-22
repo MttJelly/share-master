@@ -20,7 +20,7 @@ function windowsTaskbarDetails(options = {}) {
     appIconPath: options.icon || target,
     appIconIndex: 0,
     relaunchCommand: `${quoteWindowsArgument(target)}${args ? ` ${args}` : ""}`,
-    relaunchDisplayName: "Share Master",
+    relaunchDisplayName: "Synclattice",
   };
 }
 
@@ -38,15 +38,19 @@ function ensureWindowsNotificationIdentity(options = {}) {
   }
 
   const programsDirectory = path.join(options.appData, ...START_MENU_PARTS);
-  const shortcutPath = path.join(programsDirectory, "Share Master.lnk");
-  const legacyShortcutPath = path.join(programsDirectory, "Electron.lnk");
+  const shortcutPath = path.join(programsDirectory, "Synclattice.lnk");
+  const legacyShortcutPaths = [
+    path.join(programsDirectory, "ThreadLattice.lnk"),
+    path.join(programsDirectory, "Share Master.lnk"),
+    path.join(programsDirectory, "Electron.lnk"),
+  ];
   fsApi.mkdirSync(programsDirectory, { recursive: true });
 
   const shortcut = {
     target: options.target,
     args: options.args || "",
     cwd: options.cwd || path.dirname(options.target),
-    description: "Share Master",
+    description: "Synclattice",
     icon: options.icon || options.target,
     iconIndex: 0,
     appUserModelId: options.appUserModelId,
@@ -54,15 +58,25 @@ function ensureWindowsNotificationIdentity(options = {}) {
   };
   const operation = fsApi.existsSync(shortcutPath) ? "replace" : "create";
   if (!shellApi.writeShortcutLink(shortcutPath, operation, shortcut)) {
-    throw new Error("Unable to register the Share Master notification shortcut.");
+    throw new Error("Unable to register the Synclattice notification shortcut.");
   }
 
   let removedLegacy = false;
-  if (fsApi.existsSync(legacyShortcutPath)) {
+  for (const legacyShortcutPath of legacyShortcutPaths) {
+    if (!fsApi.existsSync(legacyShortcutPath)) continue;
     try {
       const legacy = shellApi.readShortcutLink(legacyShortcutPath);
-      if (legacy?.appUserModelId === options.appUserModelId
-        && sameWindowsPath(legacy.target, options.target)) {
+      const oldProductAppId = new Set([
+        "com.sharemaster.desktop",
+        "com.sharemaster.desktop.dev",
+        "com.threadlattice.desktop",
+        "com.threadlattice.desktop.dev",
+      ]).has(legacy?.appUserModelId);
+      const matchesCurrentIdentity = legacy?.appUserModelId === options.appUserModelId
+        && sameWindowsPath(legacy.target, options.target);
+      // Old product identities are unambiguously ours even when the executable
+      // path changed during an upgrade; a current identity still needs a path match.
+      if (oldProductAppId || matchesCurrentIdentity) {
         fsApi.unlinkSync(legacyShortcutPath);
         removedLegacy = true;
       }

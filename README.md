@@ -1,4 +1,4 @@
-<h1 align="center">Share Master</h1>
+<h1 align="center">Synclattice</h1>
 
 <p align="center">
   <strong>一份会话，连接多个模型，持续完成工作</strong>
@@ -10,16 +10,16 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MttJelly/share-master/releases/latest"><img src="https://img.shields.io/github/v/release/MttJelly/share-master?style=for-the-badge&label=Latest&labelColor=17211e&color=24a47b" alt="Latest release" /></a>
+  <a href="https://github.com/MttJelly/synclattice/releases/latest"><img src="https://img.shields.io/github/v/release/MttJelly/synclattice?style=for-the-badge&label=Latest&labelColor=17211e&color=24a47b" alt="Latest release" /></a>
   <img src="https://img.shields.io/badge/Windows-x64-1676d2?style=for-the-badge&labelColor=17211e&logo=windows11&logoColor=white" alt="Windows x64" />
   <img src="https://img.shields.io/badge/Vue-3-42b883?style=for-the-badge&labelColor=17211e&logo=vuedotjs&logoColor=white" alt="Vue 3" />
   <img src="https://img.shields.io/badge/Electron-43-4f9aa8?style=for-the-badge&labelColor=17211e&logo=electron&logoColor=white" alt="Electron 43" />
 </p>
 
 <p align="center">
-  <a href="https://github.com/MttJelly/share-master/releases/latest/download/Share-Master-portable-win-x64.zip"><strong>下载 ZIP 便携版</strong></a>
+  <a href="https://github.com/MttJelly/synclattice/releases/latest/download/Synclattice-portable-win-x64.zip"><strong>下载 ZIP 便携版</strong></a>
   &nbsp;&nbsp;·&nbsp;&nbsp;
-  <a href="https://github.com/MttJelly/share-master/releases/latest/download/Share-Master-setup-win-x64.msi"><strong>下载 MSI 安装版</strong></a>
+  <a href="https://github.com/MttJelly/synclattice/releases/latest/download/Synclattice-setup-win-x64.msi"><strong>下载 MSI 安装版</strong></a>
   &nbsp;&nbsp;·&nbsp;&nbsp;
   <a href="docs/WORKSPACE_GUIDE.zh-CN.md"><strong>界面与功能指南</strong></a>
 </p>
@@ -30,12 +30,12 @@
 
 <table>
   <tr>
-    <td width="50%" valign="top"><img src="docs/assets/share-master-connections-dark.png" alt="Share Master 连接中心" /><br /><sub>连接中心：账号、API、同步和用量</sub></td>
-    <td width="50%" valign="top"><img src="docs/assets/share-master-conversation-dark.png" alt="Share Master 聊天工作区" /><br /><sub>聊天工作区：思考摘要、回复、中断和继续生成</sub></td>
+    <td width="50%" valign="top"><img src="docs/assets/share-master-connections-dark.png" alt="Synclattice 连接中心" /><br /><sub>连接中心：账号、API、同步和用量</sub></td>
+    <td width="50%" valign="top"><img src="docs/assets/share-master-conversation-dark.png" alt="Synclattice 聊天工作区" /><br /><sub>聊天工作区：思考摘要、回复、中断和继续生成</sub></td>
   </tr>
   <tr>
-    <td width="50%" valign="top"><img src="docs/assets/share-master-extensions.png" alt="Share Master 扩展中心" /><br /><sub>扩展中心：Skills、Prompt 和 MCP</sub></td>
-    <td width="50%" valign="top"><img src="docs/assets/share-master-sync.png" alt="Share Master 配置同步" /><br /><sub>配置同步：本地目录、WebDAV 和同步历史</sub></td>
+    <td width="50%" valign="top"><img src="docs/assets/share-master-extensions.png" alt="Synclattice 扩展中心" /><br /><sub>扩展中心：Skills、Prompt 和 MCP</sub></td>
+    <td width="50%" valign="top"><img src="docs/assets/share-master-sync.png" alt="Synclattice 配置同步" /><br /><sub>配置同步：本地目录、WebDAV 和同步历史</sub></td>
   </tr>
 </table>
 
@@ -43,20 +43,20 @@
 
 ## 一个工作区，持续完成工作
 
-Share Master 是面向 Windows 的多模型桌面客户端。你可以在同一个 Project 中保留完整上下文，按任务选择不同模型；切换会话时，正在运行的回答继续在后台完成。每个连接独立管理，Share Master 的会话、队列和任务统一保存在自己的数据目录中。
+Synclattice 是面向 Windows 的多模型桌面客户端。你可以在同一个 Project 中保留完整上下文，按任务选择不同模型；切换会话时，正在运行的回答继续在后台完成。每个连接独立管理，Synclattice 的会话、队列和任务统一保存在自己的数据目录中。
 
 ## 核心体验
 
 | | 能力 | 你可以做什么 |
 | --- | --- | --- |
-| **01** | **共享会话** | 在同一份 Share Master 会话中切换连接与模型，不必反复搬运上下文 |
+| **01** | **共享会话** | 在同一份 Synclattice 会话中切换连接与模型，不必反复搬运上下文 |
 | **02** | **并行工作** | 当前回答在后台继续运行，同时打开其他会话或独立窗口处理新任务 |
 | **03** | **消息控制** | 连续输入消息，选择排队发送或立即引导当前回答，并随时停止生成 |
 | **04** | **Project 管理** | 按项目组织会话，自动按最近活动排序，支持搜索、归档、移除与恢复 |
 | **05** | **多模型连接** | 管理官方账号、API、中转服务、模型列表、健康检查、故障转移与用量 |
 | **06** | **完整输入** | 拖放、选择或粘贴图片附件，通过 `/` 使用 Skills，并连接 Prompt 与 MCP |
 | **07** | **任务安排** | 创建一次、每小时、每天、工作日、每周或每月执行的自动任务 |
-| **08** | **本地协作** | 浏览本机 Codex 与 Claude Code 会话，并按需复制到 Share Master 工作区 |
+| **08** | **本地协作** | 浏览本机 Codex 与 Claude Code 会话，并按需复制到 Synclattice 工作区 |
 
 ## 按钮与工作流
 
@@ -66,7 +66,7 @@ Share Master 是面向 Windows 的多模型桌面客户端。你可以在同一�
 
 ## 多端协同目标
 
-Share Master 当前提供 Windows x64 版本。下一阶段的产品目标是让同一个账号、Project 和聊天记录可以在 Windows、macOS、Linux 与手机之间安全衔接，而不是简单同步正在写入的本地数据库。
+Synclattice 当前提供 Windows x64 版本。下一阶段的产品目标是让同一个账号、Project 和聊天记录可以在 Windows、macOS、Linux 与手机之间安全衔接，而不是简单同步正在写入的本地数据库。
 
 | 平台与基础能力 | 当前状态 | 优化目标 |
 | --- | --- | --- |
@@ -82,19 +82,19 @@ Share Master 当前提供 Windows x64 版本。下一阶段的产品目标是让
 
 | 发行包 | 使用方式 | 下载 |
 | --- | --- | --- |
-| **ZIP 便携版** | 解压后运行 `Share Master.exe`，适合免安装使用 | [下载最新便携版](https://github.com/MttJelly/share-master/releases/latest/download/Share-Master-portable-win-x64.zip) |
-| **MSI 安装版** | 标准 Windows 安装，包含桌面快捷方式和卸载入口 | [下载最新安装版](https://github.com/MttJelly/share-master/releases/latest/download/Share-Master-setup-win-x64.msi) |
+| **ZIP 便携版** | 新版解压后运行 `Synclattice.exe`，适合免安装使用 | [下载最新便携版](https://github.com/MttJelly/synclattice/releases/latest/download/Synclattice-portable-win-x64.zip) |
+| **MSI 安装版** | 标准 Windows 安装，包含桌面快捷方式和卸载入口 | [下载最新安装版](https://github.com/MttJelly/synclattice/releases/latest/download/Synclattice-setup-win-x64.msi) |
 
-每个 Release 同时提供带版本号的安装包、稳定下载文件名和 SHA-256 清单。历史版本与完整更新内容可在 [Releases](https://github.com/MttJelly/share-master/releases) 查看。
+每个 Release 同时提供带版本号的安装包、稳定下载文件名和 SHA-256 清单。历史版本与完整更新内容可在 [Releases](https://github.com/MttJelly/synclattice/releases) 查看。
 
 ## 开始使用
 
 1. 安装 MSI，或解压 ZIP 便携版。
-2. 打开 Share Master，在“连接方式”中选择现有账号或添加 API 服务。
+2. 打开 Synclattice，在“连接方式”中选择现有账号或添加 API 服务。
 3. 新建 Project 和会话，选择模型后开始聊天。
 4. 在模型回复期间继续输入，按需要排队、引导或切换到其他会话。
 
-API Key 和 Token 只需在对应连接中保存一次。之后可以直接选择该连接，Share Master 不会把密钥写入聊天正文、配置导出或发布包。
+API Key 和 Token 只需在对应连接中保存一次。之后可以直接选择该连接，Synclattice 不会把密钥写入聊天正文、配置导出或发布包。
 
 ## 工作区能力
 
@@ -123,13 +123,13 @@ API Key 和 Token 只需在对应连接中保存一次。之后可以直接选�
 
 ## 数据位置
 
-Share Master 默认将自己的配置与聊天数据保存在：
+Synclattice 默认将自己的配置与聊天数据保存在：
 
 ```text
 %APPDATA%\Share Master\data
 ```
 
-本机配置发现和本地记录浏览采用只读方式。Share Master 不会修改其他客户端的程序文件，也不会删除或覆盖其原始聊天记录。卸载 Share Master 不会自动删除上述数据目录，迁移或清理前请先备份所需会话。
+本机配置发现和本地记录浏览采用只读方式。Synclattice 不会修改其他客户端的程序文件，也不会删除或覆盖其原始聊天记录。卸载 Synclattice 不会自动删除上述数据目录，迁移或清理前请先备份所需会话。
 
 ## 文档
 

@@ -50,7 +50,7 @@ function normalizedSources(sourceDirectories, targetHome) {
     const sourceHome = path.resolve(String(value || "").trim());
     if (!value || unique.some((item) => item.toLocaleLowerCase() === sourceHome.toLocaleLowerCase())) continue;
     if (sourceHome === targetHome || isInside(sourceHome, targetHome) || isInside(targetHome, sourceHome)) {
-      throw new Error("聊天记录源目录和 Share Master 副本目录必须彼此独立。");
+      throw new Error("聊天记录源目录和 Synclattice 副本目录必须彼此独立。");
     }
     if (!fs.existsSync(sourceHome) || !fs.statSync(sourceHome).isDirectory()) continue;
     if (!CHAT_AREAS.some((area) => fs.existsSync(path.join(sourceHome, area)))) continue;

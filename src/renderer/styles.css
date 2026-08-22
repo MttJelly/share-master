@@ -1546,6 +1546,10 @@ html[data-theme="dark"] .import-safety-note { border-color: #315e50; background:
   border-right: 1px solid var(--line);
   background: #fff;
 }
+.provider-empty-state { min-height: 138px; display: grid; place-items: center; align-content: center; gap: 7px; padding: 24px; color: var(--muted); text-align: center; }
+.provider-empty-state svg { width: 24px; height: 24px; color: var(--accent); }
+.provider-empty-state strong { color: var(--ink); font-size: 14px; }
+.provider-empty-state small { max-width: 380px; font-size: 12px; line-height: 1.55; }
 #provider-overlay .account-panel {
   grid-column: 1;
   grid-row: 3;
@@ -1585,6 +1589,13 @@ html[data-theme="dark"] .import-safety-note { border-color: #315e50; background:
 }
 #provider-overlay .text-button svg { width: 16px; height: 16px; color: #708079; }
 #provider-overlay .text-button:hover svg { color: #176f5c; }
+#provider-overlay .dialog-action-help {
+  display: block;
+  margin: 2px 8px 6px 30px;
+  color: var(--subtle);
+  font-size: 11px;
+  line-height: 1.45;
+}
 #provider-overlay #add-connection-button {
   margin-bottom: 6px;
   border-color: #176f5c;
@@ -2080,6 +2091,8 @@ html[data-theme="dark"] .app-confirm-dialog.tone-neutral .app-confirm-eyebrow { 
   background: #eef7f3;
   box-shadow: inset 3px 0 var(--accent);
 }
+#provider-overlay .provider-option-row.unavailable { opacity: .58; }
+#provider-overlay .provider-option-row.unavailable .provider-option { cursor: not-allowed; }
 #provider-overlay .provider-option.is-selected strong { color: var(--accent-hover); }
 #provider-overlay .provider-option-row.is-selected .provider-trailing svg { color: var(--accent); }
 #provider-overlay .provider-option-row[aria-current="true"] .provider-trailing::after {
@@ -2147,7 +2160,7 @@ html[data-theme="dark"] #provider-overlay .provider-option-row.is-selected { bac
 html[data-theme="dark"] #provider-overlay .dialog-action-group { border-color: #303b36; }
 html[data-theme="dark"] #provider-overlay .dialog-action-group-title { color: #94a39c; }
 
-/* Share Master workspace system refresh. This final layer deliberately consolidates earlier
+/* Synclattice workspace system refresh. This final layer deliberately consolidates earlier
    incremental themes without changing any runtime-owned structure or state selector. */
 :root {
   color-scheme: light;

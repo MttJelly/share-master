@@ -6,6 +6,8 @@ const state = ShareMasterVueRuntime.shallowReactive({
   provider: null,
   providerType: null,
   providerEngine: null,
+  runtimeKind: null,
+  openaiRuntimeAvailable: true,
   modelProvider: null,
   modelCatalog: [],
   skills: [],
@@ -333,6 +335,9 @@ function renderAccountPanel() {
   elements.accountPanel.classList.toggle("hidden", !selectedProvider && !isOfficial && !isRelay);
   const loginButton = $("#official-login-button");
   loginButton.classList.toggle("hidden", isRelay);
+  const runtimeUnavailable = isOfficial && !state.openaiRuntimeAvailable;
+  loginButton.disabled = runtimeUnavailable;
+  loginButton.title = runtimeUnavailable ? "未检测到 Codex CLI 或官方 ChatGPT 应用" : "打开官方 ChatGPT 登录页面";
   if (isRelay) {
     if (state.relayBalanceLoading) {
       elements.accountPanel.innerHTML = `${context}<div class="account-empty"><strong>正在查询中转余额</strong><span>正在连接当前中转的余额接口...</span></div>`;
@@ -373,7 +378,10 @@ function renderAccountPanel() {
   loginButton.classList.remove("hidden");
   loginButton.innerHTML = `<span data-lucide="log-in"></span>${account ? "切换或重新登录" : "登录当前官方账号"}`;
   if (!account) {
-    elements.accountPanel.innerHTML = `${context}<div class="account-empty"><strong>尚未登录</strong><span>登录 ${escapeHtml(selectedLabel)} 后可查看账号、套餐和 Codex 额度。</span></div>`;
+    const message = runtimeUnavailable
+      ? "未检测到 Codex CLI 或官方 ChatGPT 应用。Synclattice 仍可使用其他 API、中转连接和本地记录。"
+      : `登录 ${escapeHtml(selectedLabel)} 后可查看账号、套餐和 Codex 额度。`;
+    elements.accountPanel.innerHTML = `${context}<div class="account-empty"><strong>${runtimeUnavailable ? "OpenAI 官方连接不可用" : "尚未登录"}</strong><span>${message}</span></div>`;
     refreshIcons();
     return;
   }
@@ -713,6 +721,13 @@ function connect(provider, closeOverlay = true, reconnecting = false) {
   }
   const generation = ++state.connectionGeneration;
   const requestedProvider = state.providers.find((item) => item.id === provider);
+  if (["official", "account"].includes(requestedProvider?.type) && !state.openaiRuntimeAvailable) {
+    const message = "未检测到 Synclattice 内置或外部 OpenAI 运行时。仍可使用其他 API、中转连接和本地记录。";
+    elements.providerError.textContent = message;
+    showDiagnostic(message, true);
+    renderAccountPanel();
+    return Promise.resolve(false);
+  }
   if (["official", "account"].includes(requestedProvider?.type)) {
     state.officialLoginProvider = provider;
   }
@@ -735,6 +750,7 @@ function connect(provider, closeOverlay = true, reconnecting = false) {
       state.connectingProvider = null;
       state.providerType = result.providerType;
       state.providerEngine = result.providerEngine;
+      state.runtimeKind = result.runtimeKind || null;
       state.modelProvider = result.modelProvider;
       state.threadResumed = false;
       state.relayBalance = null;
@@ -755,6 +771,11 @@ function connect(provider, closeOverlay = true, reconnecting = false) {
       elements.composerBrandIcon.alt = visual.label;
       if (closeOverlay) elements.overlay.classList.add("hidden");
       elements.providerError.textContent = "";
+      if (result.runtimeKind === "share-master-bundled") {
+        showDiagnostic("已使用 Synclattice 内置 OpenAI 运行时，不依赖外部 CLI 或 ChatGPT 应用。", false);
+      } else if (result.runtimeKind === "chatgpt-app") {
+        showDiagnostic("已使用 ChatGPT 应用内置运行时，无需单独安装 Codex CLI。", false);
+      }
       await Promise.all([loadThreads(), loadSessionModels(), loadSkills()]);
       if (result.modelWarning) {
         showDiagnostic(`中转站模型列表不可用，已退回配置模型：${result.modelWarning}`, true);
@@ -1063,8 +1084,8 @@ function renderManagedSkills(query = "") {
   for (const skill of matches) {
     const row = document.createElement("div");
     row.className = `extension-row${skill.enabled ? "" : " disabled"}`;
-    const source = String(skill.source || "Share Master 私有目录");
-    row.innerHTML = `<span class="extension-row-icon"><span data-lucide="wand-sparkles"></span></span><span class="extension-copy"><strong><code>/${escapeHtml(skill.name)}</code></strong><span title="${escapeHtml(`${skill.description || "Share Master Skill"}\n来源：${source}\n私有副本：${skill.path || ""}`)}">${escapeHtml(skill.description || "Share Master Skill")} · ${escapeHtml(source.split(/[\\/]/).filter(Boolean).slice(-2).join(" / "))}</span></span>`;
+    const source = String(skill.source || "Synclattice 私有目录");
+    row.innerHTML = `<span class="extension-row-icon"><span data-lucide="wand-sparkles"></span></span><span class="extension-copy"><strong><code>/${escapeHtml(skill.name)}</code></strong><span title="${escapeHtml(`${skill.description || "Synclattice Skill"}\n来源：${source}\n私有副本：${skill.path || ""}`)}">${escapeHtml(skill.description || "Synclattice Skill")} · ${escapeHtml(source.split(/[\\/]/).filter(Boolean).slice(-2).join(" / "))}</span></span>`;
     const toggle = document.createElement("label");
     toggle.className = "extension-toggle";
     toggle.innerHTML = `<span>${skill.enabled ? "已启用" : "已停用"}</span>`;
@@ -1101,7 +1122,7 @@ function renderManagedSkills(query = "") {
         const confirmed = await confirmAction({
           eyebrow: "扩展管理",
           title: `卸载 Skill“${skill.name}”？`,
-          description: "只删除 Share Master 私有安装副本。",
+          description: "只删除 Synclattice 私有安装副本。",
           detail: "其他位置的 Skill 源文件和原始配置不会被修改。",
           confirmLabel: "卸载 Skill",
         });
@@ -1643,7 +1664,7 @@ function renderThreadList() {
     const detail = searchSnippet
       ? searchSnippet
       : deletion
-      ? `${deletionMinutes} 分钟后从 Share Master 清除`
+      ? `${deletionMinutes} 分钟后从 Synclattice 清除`
       : run ? `正在思考${queueLength ? ` · ${queueLength} 条排队` : ""}`
       : queueLength ? `${queueLength} 条待发送 · 点击会话后继续`
       : thread._syncedFromCodex ? `已同步的 Codex 会话 · ${timeAgo(thread.recencyAt || thread.updatedAt)}`
@@ -1766,6 +1787,13 @@ function renderProviderOptions() {
   const providers = state.providers
     .map((provider, index) => ({ provider, index, group: providerGroup(provider) }))
     .sort((left, right) => left.group.rank - right.group.rank || left.index - right.index);
+  const hasConfiguredConnection = providers.some(({ provider }) => provider.id !== "official");
+  if (!hasConfiguredConnection) {
+    const empty = document.createElement("div");
+    empty.className = "provider-empty-state";
+    empty.innerHTML = '<span data-lucide="plug-zap"></span><strong>尚未添加其他连接</strong><small>新安装的 Synclattice 不会自动导入账号或 API Key。点击“登录默认官方账号”或“添加连接”开始使用。</small>';
+    container.appendChild(empty);
+  }
   let previousGroup = null;
   for (const { provider, group } of providers) {
     if (group.label !== previousGroup) {
@@ -1777,7 +1805,8 @@ function renderProviderOptions() {
     }
     const row = document.createElement("div");
     const selected = provider.id === state.provider || provider.id === state.connectingProvider;
-    row.className = `provider-option-row provider-${provider.preset || provider.brand || "default"}${selected ? " is-selected" : ""}`;
+    const unavailable = ["official", "account"].includes(provider.type) && !state.openaiRuntimeAvailable;
+    row.className = `provider-option-row provider-${provider.preset || provider.brand || "default"}${selected ? " is-selected" : ""}${unavailable ? " unavailable" : ""}`;
     row.dataset.providerRow = provider.id;
     row.dataset.providerGroup = group.label;
     row.setAttribute("aria-current", selected ? "true" : "false");
@@ -1824,6 +1853,8 @@ function renderProviderOptions() {
     });
     const option = document.createElement("button");
     option.className = `provider-option${selected ? " is-selected" : ""}`;
+    option.disabled = unavailable;
+    option.setAttribute("aria-disabled", unavailable ? "true" : "false");
     option.dataset.provider = provider.id;
     const visual = providerVisual(provider);
     const health = state.providerHealth[provider.id] || null;
@@ -1832,14 +1863,15 @@ function renderProviderOptions() {
     const baseDetail = provider.type === "account"
       ? "OpenAI · 独立官方登录，共享聊天记录"
       : provider.type === "relay"
-        ? `${provider.protocol === "chat_completions" ? "Chat Completions" : "Codex Responses"} · ${provider.model} · ${provider.baseUrl}`
+        ? `${provider.protocol === "chat_completions" ? "Chat Completions" : "Codex Responses"} · ${provider.model} · ${configuredKey || "需重新配置密钥"}`
         : provider.id === "niubi"
           ? `OpenAI · ${provider.model} · ${configuredKey || "首次连接时配置 API Key"}`
           : provider.id === "hexuan"
             ? `OpenAI · ${provider.model} · ${configuredKey || "使用现有 HEXUAN_API_KEY"}`
             : provider.id === "claude"
               ? `Claude · ${provider.model || "未选择模型"} · ${configuredKey || "需要配置 Token"}`
-              : "OpenAI · 使用 Codex 官方登录状态";
+              : unavailable ? "OpenAI · 未检测到 Synclattice 内置或外部运行时"
+                : "OpenAI · 使用 Codex 官方登录状态";
     const healthLabel = health?.openUntil > Date.now()
       ? `冷却中 · ${Math.max(1, Math.ceil((health.openUntil - Date.now()) / 1000))} 秒`
       : health?.status === "healthy" ? `正常 · ${Math.max(0, Number(health.latencyMs) || 0)} ms`
@@ -1848,8 +1880,11 @@ function renderProviderOptions() {
             : route?.enabled ? `自动切换 · ${route.fallbackProviderIds?.length || 0} 个备用` : null;
     const detail = [baseDetail, healthLabel].filter(Boolean).join(" · ");
     option.innerHTML = `<span class="provider-icon ${visual.className}" aria-label="${escapeHtml(visual.label)}">${visual.markup}</span><span><strong>${escapeHtml(provider.connectionLabel || provider.label)}</strong><small>${escapeHtml(detail)}</small></span>`;
+    option.title = unavailable ? "安装新版 Synclattice 内置运行时，或安装 Codex CLI 后使用 OpenAI 官方连接" : "连接";
     option.addEventListener("click", () => {
-      if (provider.id === "claude" && !provider.hasStoredKey) openClaudeDialog(provider);
+      if (unavailable) return;
+      if (provider.type === "relay" && !provider.hasStoredKey) openRelayDialog(provider);
+      else if (provider.id === "claude" && !provider.hasStoredKey) openClaudeDialog(provider);
       else connect(provider.id);
     });
     const actions = document.createElement("div");
@@ -1897,7 +1932,7 @@ async function removeProviderConnection(provider, button) {
   const confirmed = await confirmAction({
     eyebrow: "连接管理",
     title: `删除连接“${provider.connectionLabel || provider.label}”？`,
-    description: `将从 Share Master 删除该连接及其${credential}。`,
+    description: `将从 Synclattice 删除该连接及其${credential}。`,
     detail: "共享聊天记录和其他模型连接不会被修改。",
     confirmLabel: "删除连接",
   });
@@ -2349,26 +2384,35 @@ function renderItem(item, turnId = null, streaming = false) {
   }
 }
 
+function providerErrorMessage(value) {
+  const message = String(value || "").trim();
+  if (/model_not_found|no available channel|无可用渠道/i.test(message)) {
+    return `当前模型没有可用渠道。额度状态与模型渠道是独立的，请在供应商后台恢复该模型分组，或重新读取可用模型后再试。${message ? ` 原始信息：${message}` : ""}`;
+  }
+  return message;
+}
+
 function interruptionCopy(turn = {}) {
   const code = String(turn.error?.code || "").trim();
   if (code === "OUTPUT_TRUNCATED") {
     return {
       title: "回答达到长度上限",
-      detail: turn.error?.message || "模型达到输出长度上限，当前回答可能不完整。",
+      detail: providerErrorMessage(turn.error?.message || "模型达到输出长度上限，当前回答可能不完整。"),
       icon: "text-cursor-input",
     };
   }
   if (code === "CONTENT_FILTERED") {
     return {
       title: "回答被提前中止",
-      detail: turn.error?.message || "模型供应商因内容过滤提前结束了回答。",
+      detail: providerErrorMessage(turn.error?.message || "模型供应商因内容过滤提前结束了回答。"),
       icon: "shield-alert",
     };
   }
+  const detail = providerErrorMessage(turn.error?.message || "模型连接在生成完成前结束。已生成的内容已经保留。");
   return {
-    title: "回答中途断开",
-    detail: turn.error?.message || "模型连接在生成完成前结束。已生成的内容已经保留。",
-    icon: "wifi-off",
+    title: /model_not_found|no available channel|无可用渠道/i.test(detail) ? "模型渠道不可用" : "回答中途断开",
+    detail,
+    icon: /model_not_found|no available channel|无可用渠道/i.test(detail) ? "route-off" : "wifi-off",
   };
 }
 
@@ -2979,7 +3023,7 @@ function appendMessage(role, text, id = crypto.randomUUID(), phase = null, sourc
     node.dataset.messageId = id;
     node.dataset.messageRole = role;
     const providerLabel = sourceLabel || currentProviderDefinition()?.label
-      || (state.providerType === "claude" ? "Claude" : "Share Master");
+      || (state.providerType === "claude" ? "Claude" : "Synclattice");
     const avatar = role === "user" ? "你" : providerInitials(providerLabel);
     node.innerHTML = `<div class="message-avatar">${avatar}</div><div class="message-column"><div class="message-header">${role === "user" ? "你" : escapeHtml(providerLabel)}</div><div class="message-body"></div></div>`;
     target.appendChild(node);
@@ -3233,7 +3277,7 @@ function restoreRecoveredTurns(value) {
       error: {
         code: restarted ? "APP_RESTARTED" : "SERVER_DISCONNECTED",
         message: restarted
-          ? "Share Master 上次在回答完成前关闭。当前会话记录和待发送消息均已保留，可以继续生成或让队列继续发送。"
+          ? "Synclattice 上次在回答完成前关闭。当前会话记录和待发送消息均已保留，可以继续生成或让队列继续发送。"
           : "模型连接在回答完成前退出。当前会话记录和待发送消息均已保留，可以继续生成或让队列继续发送。",
       },
     });
@@ -3559,7 +3603,7 @@ async function startNextQueuedMessage(threadId) {
     }
     renderMessageQueuePanel(threadId);
     showDiagnostic(`排队消息发送失败：${error.message}`, true);
-    api.notify({ title: "Share Master", body: `排队消息发送失败：${error.message}` }).catch(() => {});
+    api.notify({ title: "Synclattice", body: `排队消息发送失败：${error.message}` }).catch(() => {});
   } finally {
     state.queueDispatchingThreads.delete(threadId);
     renderMessageQueuePanel(threadId);
@@ -3616,7 +3660,7 @@ function syncThinkingIndicator() {
     indicator.setAttribute("role", "status");
     indicator.setAttribute("aria-live", "polite");
     const providerLabel = currentProviderDefinition()?.label
-      || (state.providerType === "claude" ? "Claude" : "Share Master");
+      || (state.providerType === "claude" ? "Claude" : "Synclattice");
     indicator.innerHTML = `
       <span class="thinking-avatar">${escapeHtml(providerInitials(providerLabel))}</span>
       <span class="thinking-copy">
@@ -3774,7 +3818,7 @@ function notifyThreadCompletion(threadId, turn, run = null) {
   const body = status === "failed"
     ? `${title} 运行失败`
     : status === "interrupted" ? `${title} 已停止` : `${title} 已完成`;
-  api.notify({ title: "Share Master", body }).catch(() => {});
+  api.notify({ title: "Synclattice", body }).catch(() => {});
 }
 
 function completeThreadRun(threadId, turn) {
@@ -3794,7 +3838,7 @@ function completeThreadRun(threadId, turn) {
   if (threadId === state.activeThread?.id) {
     if (turn?.status === "failed") {
       appendTurnInterruption(turn, threadId);
-      showDiagnostic(turn.error?.message || "回答中途断开，已保留当前内容。", true);
+      showDiagnostic(providerErrorMessage(turn.error?.message || "回答中途断开，已保留当前内容。"), true);
     }
     if (turn?.status === "interrupted") showDiagnostic("本轮已停止。", false);
   }
@@ -4188,7 +4232,7 @@ function newChat(switchToActive = true) {
     elements.windowTitle.textContent = state.activeProject ? `${state.activeProject.label} · 新会话` : "新会话";
     elements.emptySubtitle.textContent = state.activeProject
       ? state.activeProject.label
-      : "Share Master";
+      : "Synclattice";
     elements.input.focus();
   }
   syncComposerState();
@@ -4270,7 +4314,7 @@ async function threadMenuAction(action) {
       if (!name) return;
       state.threadAliases = await api.renameThreadLocal({ threadId: thread.id, name });
       applyThreadName(thread.id, name);
-      showDiagnostic("会话名称已在 Share Master 中更新，原始记录未修改。", false);
+      showDiagnostic("会话名称已在 Synclattice 中更新，原始记录未修改。", false);
     } else if (action === "archive") {
       state.localArchivedThreadIds = new Set(await api.archiveThreadLocal(thread.id));
       if (state.activeThread?.id === thread.id) newChat();
@@ -4278,7 +4322,7 @@ async function threadMenuAction(action) {
       updateThreadViewControls();
       applyThreadFilter();
       renderProjects();
-      showDiagnostic("会话已归档到 Share Master。", false);
+      showDiagnostic("会话已归档到 Synclattice。", false);
       return;
     } else if (action === "unarchive") {
       state.localArchivedThreadIds = new Set(await api.unarchiveThreadLocal(thread.id));
@@ -4292,8 +4336,8 @@ async function threadMenuAction(action) {
     } else if (action === "remove") {
       const confirmed = await confirmAction({
         eyebrow: "会话管理",
-        title: "从 Share Master 中移除这个会话？",
-        description: "移除后可在一小时内恢复，到期后会从 Share Master 列表清除。",
+        title: "从 Synclattice 中移除这个会话？",
+        description: "移除后可在一小时内恢复，到期后会从 Synclattice 列表清除。",
         detail: "原始 ChatGPT、Codex 和 Claude 会话记录完全不变。",
         confirmLabel: "移除会话",
       });
@@ -4323,8 +4367,8 @@ async function threadMenuAction(action) {
     } else if (action === "delete-now") {
       const confirmed = await confirmAction({
         eyebrow: "立即删除",
-        title: "立即从 Share Master 中删除这个会话？",
-        description: "该操作无法在 Share Master 中撤销。",
+        title: "立即从 Synclattice 中删除这个会话？",
+        description: "该操作无法在 Synclattice 中撤销。",
         detail: "原始 ChatGPT、Codex 和 Claude 会话记录不会被删除或修改。",
         confirmLabel: "立即删除",
       });
@@ -4337,7 +4381,7 @@ async function threadMenuAction(action) {
       updateThreadViewControls();
       syncProjects();
       applyThreadFilter();
-      showDiagnostic("会话已从 Share Master 中永久移除，原始记录未修改。", false);
+      showDiagnostic("会话已从 Synclattice 中永久移除，原始记录未修改。", false);
       return;
     } else if (action === "clear-queue") {
       const count = (state.messageQueues.get(thread.id) || []).length;
@@ -4656,7 +4700,7 @@ function renderLocalHistoryPreview(conversation) {
   const copy = document.createElement("button");
   copy.type = "button";
   copy.className = "primary-command local-history-import-button";
-  copy.innerHTML = '<span data-lucide="copy-plus"></span><span>复制到 Share Master</span>';
+  copy.innerHTML = '<span data-lucide="copy-plus"></span><span>复制到 Synclattice</span>';
   copy.addEventListener("click", () => importLocalHistoryConversation(conversation, copy, status));
   actions.append(status, copy);
   header.append(headingCopy, actions);
@@ -4706,7 +4750,7 @@ async function importLocalHistoryConversation(conversation, button, status) {
   status.textContent = "正在创建私有副本…";
   try {
     const result = await api.importLocalHistory({ conversationId: conversation.id });
-    const prefix = result.duplicate ? "已存在 Share Master 副本。" : "已复制到 Share Master。";
+    const prefix = result.duplicate ? "已存在 Synclattice 副本。" : "已复制到 Synclattice。";
     status.textContent = result.truncated
       ? `${prefix} 当前副本只包含预览中可读取的消息。`
       : `${prefix} 原始记录保持不变。`;
@@ -5144,14 +5188,14 @@ function closeAppSettingsDialog() {
 const deepLinkImportLabels = {
   provider: { title: "导入模型供应商", description: "确认后继续填写 API Key，链接本身不会保存密钥。", icon: "network" },
   mcp: { title: "导入 MCP 服务", description: "仅导入连接结构；环境变量密钥需要随后在本机填写。", icon: "server-cog" },
-  prompt: { title: "导入 Prompt 模板", description: "模板会保存到 Share Master 私有扩展中心。", icon: "text-cursor-input" },
+  prompt: { title: "导入 Prompt 模板", description: "模板会保存到 Synclattice 私有扩展中心。", icon: "text-cursor-input" },
   skill: { title: "从 GitHub 安装 Skill", description: "确认后下载公开仓库，并执行路径与文件安全检查。", icon: "package-plus" },
 };
 
 function importPreviewRows(importType, config) {
   if (importType === "provider") return [["名称", config.label], ["Base URL", config.baseUrl], ["默认模型", config.model], ["协议", config.protocol]];
   if (importType === "prompt") return [["命令", `/${config.name}`], ["说明", config.description || "无"], ["模板内容", config.content]];
-  if (importType === "skill") return [["GitHub 仓库", config.source], ["安装位置", "Share Master 私有 Skill 库"]];
+  if (importType === "skill") return [["GitHub 仓库", config.source], ["安装位置", "Synclattice 私有 Skill 库"]];
   return [
     ["名称", config.name], ["传输方式", config.transport],
     [config.transport === "stdio" ? "启动命令" : "服务 URL", config.transport === "stdio" ? config.command : config.url],
@@ -5415,7 +5459,7 @@ async function removeScheduledTask(task, button) {
   const confirmed = await confirmAction({
     eyebrow: "已安排任务",
     title: `删除任务“${task.title}”？`,
-    description: "将删除 Share Master 中的任务配置，并停止之后的重复执行。",
+    description: "将删除 Synclattice 中的任务配置，并停止之后的重复执行。",
     detail: "已经生成的会话和聊天记录不会被删除。",
     confirmLabel: "删除任务",
   });
@@ -5585,9 +5629,9 @@ function renderProviderFallbackChain(candidates = []) {
 }
 
 function localProviderStatus(candidate) {
-  if (candidate.duplicate) return "已存在于 Share Master";
+  if (candidate.duplicate) return "已存在于 Synclattice";
   if (!candidate.hasCredential) return "未找到可导入的 API Key";
-  if (candidate.kind === "claude") return "将更新 Share Master 的 Claude Code 连接";
+  if (candidate.kind === "claude") return "将更新 Synclattice 的 Claude Code 连接";
   return "可安全导入";
 }
 
@@ -5705,7 +5749,7 @@ async function importSelectedLocalProviders() {
   if (!candidateIds.length) return;
   const button = elements.localProviderImportButton;
   button.disabled = true;
-  elements.localProviderStatus.textContent = "正在加密保存到 Share Master...";
+  elements.localProviderStatus.textContent = "正在加密保存到 Synclattice...";
   try {
     const response = await api.importLocalProviders(candidateIds);
     state.providers = response.providers || state.providers;
@@ -5801,6 +5845,7 @@ $("#schedule-task-button").addEventListener("click", () => {
   openTaskDialog();
 });
 $("#local-history-button").addEventListener("click", openLocalHistoryDialog);
+$("#provider-local-history-button").addEventListener("click", openLocalHistoryDialog);
 $("#local-history-close-button").addEventListener("click", closeLocalHistoryDialog);
 $("#local-history-refresh-button").addEventListener("click", loadLocalHistory);
 elements.localHistorySearch.addEventListener("input", () => {
@@ -6328,7 +6373,11 @@ $("#config-import-button").addEventListener("click", async () => {
   try {
     const result = await api.importConfiguration();
     if (result.canceled) return;
-    showDiagnostic(`已导入配置：新增 ${result.providersAdded} 个连接、更新 ${result.providersUpdated} 个连接、新增 ${result.projectsAdded} 个 Project、${result.promptsImported || 0} 个 Prompt、${result.mcpServersImported || 0} 个 MCP；API Key 和 MCP 密钥需要单独配置。`, false);
+    const credentialHint = result.requiresCredentials
+      ? "新电脑不会导入 API Key，请在连接编辑中重新填写并测试模型列表。"
+      : "API Key 和 MCP 密钥需要单独配置。";
+    const skippedMcp = result.mcpServersSkipped ? ` 已跳过 ${result.mcpServersSkipped} 个无效 MCP 配置。` : "";
+    showDiagnostic(`已导入配置：新增 ${result.providersAdded} 个连接、更新 ${result.providersUpdated} 个连接、新增 ${result.projectsAdded} 个 Project、${result.promptsImported || 0} 个 Prompt、${result.mcpServersImported || 0} 个 MCP。${credentialHint}${skippedMcp}`, Boolean(result.mcpServersSkipped));
   } catch (error) {
     showActionError(error);
   }
@@ -6764,6 +6813,7 @@ setInterval(() => {
   try {
     const bootstrap = await api.bootstrap();
     state.providers = bootstrap.providers;
+    state.openaiRuntimeAvailable = bootstrap.openaiRuntimeAvailable !== false;
     renderProviderPresetCatalog(bootstrap.providerPresets || []);
     state.savedProjects = bootstrap.projects || [];
     state.projectThreads = bootstrap.projectThreads || {};

@@ -28,7 +28,7 @@ function readJson(file, fallback) {
     return JSON.parse(fs.readFileSync(file, "utf8"));
   } catch (error) {
     if (error.code === "ENOENT") return fallback;
-    throw new Error(`无法读取 Share Master 配置 ${file}：${error.message}`);
+    throw new Error(`无法读取 Synclattice 配置 ${file}：${error.message}`);
   }
 }
 
@@ -589,7 +589,7 @@ function reasoningProfile(model) {
 
 function providerModelCatalog(id, model, availableModels = [model]) {
   const source = readJson(path.join(__dirname, "model-catalog.json"), { models: [] });
-  if (!source.models?.length) throw new Error("Share Master 模型目录不可用。");
+  if (!source.models?.length) throw new Error("Synclattice 模型目录不可用。");
   const catalog = structuredClone(source);
   const models = [...new Set([model, ...availableModels].map((item) => String(item || "").trim()).filter(Boolean))];
   catalog.models = models.map((slug, index) => {
@@ -627,7 +627,9 @@ class ProviderStore {
   constructor() {
     fs.mkdirSync(STORE_ROOT, { recursive: true });
     fs.mkdirSync(DEFAULT_CONVERSATION_HOME, { recursive: true });
-    if (!ISOLATED_STORE) seedOfficialCredentials();
+    // Development builds retain the legacy migration path; packaged installs
+    // must never copy credentials from an external Codex profile on first run.
+    if (!ISOLATED_STORE && process.env.SHARE_MASTER_PACKAGED !== "1") seedOfficialCredentials();
     const metadata = this.metadata();
     let changed = false;
     if (ISOLATED_STORE && metadata.conversationHome.toLowerCase() === CODEX_HOME.toLowerCase()) {
@@ -739,12 +741,24 @@ class ProviderStore {
 
   list() {
     const metadata = this.metadata();
-    const builtins = Object.values(BASE_PROVIDERS).map((item) => {
+    const secrets = readJson(SECRETS_FILE, {});
+    const configuredBuiltin = (id) => (id === "official"
+      ? Boolean(secrets[`builtin:${id}`]) || metadata.providerOrder.includes(id)
+        || (fs.existsSync(METADATA_FILE) && fs.existsSync(path.join(CODEX_HOME, "auth.json")))
+        || process.env.SHARE_MASTER_QA === "1"
+      : Boolean(secrets[`builtin:${id}`]) || process.env.SHARE_MASTER_QA === "1")
+      || metadata.providerOrder.includes(id)
+      || (id === "claude" && Boolean(metadata.providerSettings.claude));
+    const builtins = Object.values(BASE_PROVIDERS)
+      // A fresh install has no configured connections. The login action remains
+      // available in the dialog, while provider rows appear only after setup.
+      .filter((item) => configuredBuiltin(item.id))
+      .map((item) => {
       if (item.id !== "claude") return item;
       const provider = { ...item, ...(metadata.providerSettings.claude || {}) };
       provider.vendorLabel ||= claudeVendorLabel(provider.baseUrl);
       return provider;
-    });
+      });
     const providers = [
       ...builtins,
       ...metadata.relays.map((item) => ({
@@ -808,6 +822,15 @@ class ProviderStore {
     const provider = this.list().find((item) => item.id === id);
     if (!provider) throw new Error(`Unknown provider: ${id}`);
     return provider;
+  }
+
+  markOfficialConfigured() {
+    const metadata = this.metadata();
+    if (!metadata.providerOrder.includes("official")) {
+      metadata.providerOrder.unshift("official");
+      writeJson(METADATA_FILE, metadata);
+    }
+    return this.publicProvider("official");
   }
 
   listProjects() {
@@ -1245,7 +1268,7 @@ class ProviderStore {
 
   importConfiguration(bundle) {
     if (!bundle || bundle.schema !== "share-master-config" || Number(bundle.version) !== 1) {
-      throw new Error("不是有效的 Share Master 配置文件。");
+      throw new Error("不是有效的 Synclattice 配置文件。");
     }
     const metadata = this.metadata();
     let providersAdded = 0;
@@ -1254,6 +1277,7 @@ class ProviderStore {
     let routesImported = 0;
     let promptsImported = 0;
     let mcpServersImported = 0;
+    let mcpServersSkipped = 0;
     for (const input of Array.isArray(bundle.relays) ? bundle.relays : []) {
       const label = String(input?.label || "").trim();
       const model = String(input?.model || "").trim();
@@ -1370,8 +1394,11 @@ class ProviderStore {
     for (const input of Array.isArray(bundle.mcpServers) ? bundle.mcpServers : []) {
       const name = String(input?.name || "").trim();
       const transport = ["stdio", "http", "sse"].includes(input?.transport) ? input.transport : "stdio";
-      const command = String(input?.command || "").trim();
+      const command = typeof input?.command === "string" ? input.command.trim() : "";
       const url = String(input?.url || "").trim();
+      const rawArgs = Array.isArray(input?.args) ? input.args : [];
+      const argsValid = rawArgs.every((item) => typeof item === "string" && !item.includes("\u0000"));
+      const args = argsValid ? rawArgs.map((item) => item.trim()).filter(Boolean).slice(0, 50) : [];
       let validUrl = false;
       if (transport !== "stdio") {
         try {
@@ -1379,11 +1406,16 @@ class ProviderStore {
           validUrl = ["http:", "https:"].includes(parsed.protocol) && !parsed.username && !parsed.password;
         } catch {}
       }
-      if (!name || name.length > 100 || (transport === "stdio" ? !command : !validUrl)) continue;
+      if (!name || name.length > 100 || (transport === "stdio"
+        ? (!command || command.includes("\u0000") || !argsValid)
+        : !validUrl)) {
+        mcpServersSkipped += 1;
+        continue;
+      }
       const existing = metadata.mcpServers.find((item) => projectLabelKey(item.name) === projectLabelKey(name));
       const values = {
         name, transport, command: transport === "stdio" ? command : null,
-        args: transport === "stdio" ? (input.args || []).map((item) => String(item || "").trim()).filter(Boolean).slice(0, 50) : [],
+        args: transport === "stdio" ? args : [],
         url: transport === "stdio" ? null : url,
         envKeys: [...new Set((input.envKeys || []).map((key) => String(key || "").trim()).filter((key) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(key)))],
         enabled: input.enabled !== false,
@@ -1394,7 +1426,17 @@ class ProviderStore {
       mcpServersImported += 1;
     }
     writeJson(METADATA_FILE, metadata);
-    return { providersAdded, providersUpdated, projectsAdded, routesImported, promptsImported, mcpServersImported, credentialsImported: false };
+    return {
+      providersAdded,
+      providersUpdated,
+      projectsAdded,
+      routesImported,
+      promptsImported,
+      mcpServersImported,
+      mcpServersSkipped,
+      credentialsImported: false,
+      requiresCredentials: providersAdded + providersUpdated > 0,
+    };
   }
 
   createRotatingBackup(maxBackups = 10, minimumIntervalMs = 6 * 60 * 60 * 1000) {
@@ -1494,7 +1536,7 @@ class ProviderStore {
       const storeRoot = path.resolve(STORE_ROOT);
       const relative = path.relative(storeRoot, directory);
       if (!relative || (!relative.startsWith("..") && !path.isAbsolute(relative))) {
-        throw new Error("同步目录不能位于 Share Master 私有数据目录内。");
+        throw new Error("同步目录不能位于 Synclattice 私有数据目录内。");
       }
       fs.mkdirSync(directory, { recursive: true });
       if (!fs.statSync(directory).isDirectory()) throw new Error("同步位置不是目录。");
@@ -1836,6 +1878,9 @@ class ProviderStore {
     const env = input?.env && typeof input.env === "object" ? input.env : {};
     if (!name || name.length > 100) throw new Error("MCP 名称不能为空且不能超过 100 个字符。");
     if (transport === "stdio" && !command) throw new Error("stdio MCP 必须填写启动命令。");
+    if (transport === "stdio" && (command.includes("\u0000") || args.some((item) => item.includes("\u0000")))) {
+      throw new Error("MCP 启动命令和参数不能包含无效字符。");
+    }
     if (transport !== "stdio") {
       let parsed;
       try { parsed = new URL(url); } catch {}
@@ -1945,7 +1990,7 @@ class ProviderStore {
     if (source === target
       || (relativeTarget && !relativeTarget.startsWith("..") && !path.isAbsolute(relativeTarget))
       || (relativeSource && !relativeSource.startsWith("..") && !path.isAbsolute(relativeSource))) {
-      throw new Error("聊天记录源目录和 Share Master 副本目录必须彼此独立。");
+      throw new Error("聊天记录源目录和 Synclattice 副本目录必须彼此独立。");
     }
     const metadata = this.metadata();
     metadata.conversationMirrorSource = source;
@@ -2101,7 +2146,7 @@ class ProviderStore {
     const id = String(threadId || "").trim();
     if (!id) throw new Error("无效的会话 ID。");
     const metadata = this.metadata();
-    if (metadata.deletedThreads.includes(id)) throw new Error("会话已被永久移出 Share Master。");
+    if (metadata.deletedThreads.includes(id)) throw new Error("会话已被永久移出 Synclattice。");
     if (!metadata.localArchivedThreads.includes(id)) metadata.localArchivedThreads.push(id);
     metadata.hiddenThreads = metadata.hiddenThreads.filter((item) => item !== id);
     metadata.pendingDeletions = metadata.pendingDeletions.filter((item) => item.threadId !== id);
@@ -2122,7 +2167,7 @@ class ProviderStore {
     const id = String(threadId || "").trim();
     if (!id) throw new Error("无效的会话 ID。");
     const metadata = this.metadata();
-    if (metadata.deletedThreads.includes(id)) throw new Error("会话已被永久移出 Share Master。");
+    if (metadata.deletedThreads.includes(id)) throw new Error("会话已被永久移出 Synclattice。");
     if (!metadata.hiddenThreads.includes(id)) metadata.hiddenThreads.push(id);
     metadata.localArchivedThreads = metadata.localArchivedThreads.filter((item) => item !== id);
     writeJson(METADATA_FILE, metadata);

@@ -3,6 +3,10 @@ node_modules/
 dist/
 out/
 release/
+release-build-*/
+
+# Bundled at build time from an installed Codex runtime
+build/codex-runtime/
 
 # Share Master private runtime data
 share-master-data/

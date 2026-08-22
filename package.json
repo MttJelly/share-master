@@ -1,17 +1,17 @@
 {
-  "name": "share-master",
-  "productName": "Share Master",
-  "version": "0.1.15",
-  "author": "Share Master",
+  "name": "synclattice",
+  "productName": "Synclattice",
+  "version": "0.1.17",
+  "author": "Synclattice",
   "private": true,
-  "description": "Share Master: a multi-account, multi-provider desktop client with shared local conversations.",
+  "description": "Synclattice: a multi-account, multi-provider desktop client for shared conversation context.",
   "main": "src/main.js",
   "scripts": {
     "build:renderer": "node scripts/build-vue-render.js",
     "build:icon": "electron scripts/build-icon.js",
     "check:version": "node scripts/check-release-metadata.js",
     "check:release": "node scripts/check-release-metadata.js --git",
-    "prepack:win": "npm run build:icon && npm run build:renderer && npm run check:release && npm run check",
+    "prepack:win": "npm run build:icon && node scripts/prepare-codex-runtime.js && npm run build:renderer && npm run check:release && npm run check",
     "dist:win": "npm run prepack:win && electron-builder --win zip msi --x64 && node scripts/finalize-release.js",
     "dist:zip": "npm run prepack:win && electron-builder --win zip --x64 && node scripts/finalize-release.js",
     "dist:msi": "npm run prepack:win && electron-builder --win msi --x64 && node scripts/finalize-release.js",
@@ -50,8 +50,8 @@
     "electron-builder": "^26.15.3"
   },
   "build": {
-    "appId": "com.sharemaster.desktop",
-    "productName": "Share Master",
+    "appId": "com.synclattice.desktop",
+    "productName": "Synclattice",
     "asar": true,
     "npmRebuild": false,
     "directories": {
@@ -74,6 +74,10 @@
       {
         "from": "build/icon.ico",
         "to": "icon.ico"
+      },
+      {
+        "from": "build/codex-runtime",
+        "to": "codex-runtime"
       }
     ],
     "extraMetadata": {
@@ -81,14 +85,14 @@
     },
     "protocols": [
       {
-        "name": "Share Master",
+        "name": "Synclattice",
         "schemes": ["share-master"]
       }
     ],
     "win": {
       "target": ["zip", "msi"],
       "icon": "build/icon.ico",
-      "artifactName": "Share-Master-${version}-win-${arch}.${ext}"
+      "artifactName": "Synclattice-${version}-win-${arch}.${ext}"
     },
     "msi": {
       "oneClick": false,
@@ -96,7 +100,7 @@
       "runAfterFinish": true,
       "createDesktopShortcut": "always",
       "createStartMenuShortcut": true,
-      "shortcutName": "Share Master"
+      "shortcutName": "Synclattice"
     }
   }
 }

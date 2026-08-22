@@ -18,18 +18,26 @@ const {
   windowsTaskbarDetails,
 } = require("./windows-notification-identity");
 
-const WINDOWS_PACKAGED_APP_ID = "com.sharemaster.desktop";
+const WINDOWS_PACKAGED_APP_ID = "com.synclattice.desktop";
 const WINDOWS_APP_ID = app.isPackaged ? WINDOWS_PACKAGED_APP_ID : `${WINDOWS_PACKAGED_APP_ID}.dev`;
-const WINDOWS_TOAST_ACTIVATOR_CLSID = "{13C7CD4D-7B07-4CB4-887C-C8C9E230D863}";
-app.setName("Share Master");
+const WINDOWS_TOAST_ACTIVATOR_CLSID = "{E6B8F4D5-4A0D-4B9F-8E3B-3C0F5C3E6D21}";
+app.setName("Synclattice");
+// Keep the existing store stable across the product rename. Electron derives
+// userData from the display name unless it is pinned explicitly.
+if (app.isPackaged) app.setPath("userData", path.join(app.getPath("appData"), "Share Master"));
 app.setAppUserModelId(WINDOWS_APP_ID);
 if (process.platform === "win32") app.setToastActivatorCLSID(WINDOWS_TOAST_ACTIVATOR_CLSID);
 if (app.isPackaged) {
   process.env.SHARE_MASTER_PACKAGED = "1";
-  process.env.SHARE_MASTER_STORE_ROOT ||= path.join(app.getPath("userData"), "data");
+  // A packaged install owns its data directory. Do not let a stale developer
+  // environment variable point the released app at another installation.
+  process.env.SHARE_MASTER_STORE_ROOT = path.join(app.getPath("userData"), "data");
+  // Keep the bundled app-server state private to Synclattice. External Codex
+  // credentials and sessions are discovered only through explicit import/read-only flows.
+  process.env.CODEX_HOME = path.join(app.getPath("userData"), "data", "codex");
 }
 
-const { CodexServer, CODEX_HOME } = require("./codex-server");
+const { CodexServer, CODEX_EXE, CODEX_HOME } = require("./codex-server");
 const { ClaudeServer } = require("./claude-server");
 const { OpenAICompatibleServer } = require("./openai-compatible-server");
 const { fetchClaudeModels, fetchClaudeModelsSafely } = require("./claude-models");
@@ -54,6 +62,13 @@ const {
   requireAuthenticatedOfficialSnapshot,
 } = require("./openai-auth");
 const { normalizeRateLimits, normalizeAccountUsage } = require("./openai-account-usage");
+
+// OpenAI-compatible relays do not always expose reasoning metadata. Keep a conservative
+// common set selectable and let the provider decide whether the request is honored.
+const GENERIC_REASONING_EFFORTS = ["low", "medium", "high"].map((reasoningEffort) => ({
+  reasoningEffort,
+  description: "通用推理等级；是否生效取决于当前供应商和模型。",
+}));
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 const servers = new Map();
@@ -231,8 +246,8 @@ function registerApprovalRequest(server, message, mappedMessage, sender, send) {
   const spec = approvalNotificationSpec(mappedMessage);
   const notification = new Notification({
     id: `approval-${crypto.randomUUID()}`,
-    groupId: "share-master-approvals",
-    groupTitle: "Share Master 授权请求",
+    groupId: "threadlattice-approvals",
+    groupTitle: "Synclattice 授权请求",
     title: spec.title,
     body: spec.body,
     actions: spec.actions,
@@ -1002,7 +1017,7 @@ function refreshTrayMenu() {
   const runningCount = runningScheduledTasks.size;
   const enabledCount = tasks.filter((task) => task.enabled).length;
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: "显示 Share Master", click: () => showAppWindow() },
+    { label: "显示 Synclattice", click: () => showAppWindow() },
     { label: "新会话", click: () => navigateApp({ action: "new-chat" }) },
     {
       label: `连接 (${providers.length})`,
@@ -1017,7 +1032,7 @@ function refreshTrayMenu() {
     },
     { type: "separator" },
     {
-      label: "退出 Share Master",
+      label: "退出 Synclattice",
       click: () => {
         quitting = true;
         for (const window of BrowserWindow.getAllWindows()) window.destroy();
@@ -1033,7 +1048,7 @@ async function createTray() {
     ? nativeImage.createFromPath(DEVELOPMENT_ICON).resize({ width: 32, height: 32, quality: "best" })
     : await app.getFileIcon(process.execPath, { size: "small" });
   tray = new Tray(icon);
-  tray.setToolTip("Share Master");
+  tray.setToolTip("Synclattice");
   tray.on("click", () => showAppWindow());
   refreshTrayMenu();
 }
@@ -1212,7 +1227,7 @@ async function runMultiProviderWindowQa(firstWindow) {
 
 function serverFor(event) {
   const server = servers.get(event.sender.id);
-  if (!server?.ready) throw new Error("请先在 Share Master 中选择连接。");
+  if (!server?.ready) throw new Error("请先在 Synclattice 中选择连接。");
   return server;
 }
 
@@ -1226,7 +1241,7 @@ function sharedHistoryReaders() {
     sharedHistoryHome = home;
     sharedCompatibleHistory = new OpenAICompatibleServer({
       id: "share-master-history",
-      label: "Share Master History",
+      label: "Synclattice History",
       baseUrl: "https://history.invalid/v1",
       model: "history",
       apiKey: "history-reader",
@@ -1834,6 +1849,7 @@ async function steerLogicalTurn(server, payload = {}) {
 function publicStoreSnapshot() {
   const metadata = providerStore.metadata();
   return {
+    openaiRuntimeAvailable: Boolean(CODEX_EXE),
     providers: providerStore.list(),
     providerPresets: providerPresetCatalog(),
     projects: metadata.projects.map(({ id, label, root, createdAt }) => ({
@@ -2046,7 +2062,9 @@ function broadcastExtensionSnapshot(snapshot) {
 
 async function probeMcpServer(server) {
   const startedAt = Date.now();
+  if (!server || typeof server !== "object") throw new Error("MCP 配置无效。");
   if (server.transport !== "stdio") {
+    if (!String(server.url || "").trim()) throw new Error("MCP URL 不能为空。");
     const response = await net.fetch(server.url, {
       method: "GET",
       signal: AbortSignal.timeout(5000),
@@ -2055,13 +2073,26 @@ async function probeMcpServer(server) {
     await response.body?.cancel().catch(() => {});
     return { ok: true, latencyMs: Date.now() - startedAt, detail: `HTTP ${response.status}` };
   }
+  const command = typeof server.command === "string" ? server.command.trim() : "";
+  const args = Array.isArray(server.args) ? server.args : null;
+  if (!command) throw new Error("MCP 启动命令不能为空。");
+  if (command.includes("\u0000")) throw new Error("MCP 启动命令包含无效字符。");
+  if (!args || args.some((item) => typeof item !== "string" || item.includes("\u0000"))) {
+    throw new Error("MCP 参数必须是文本列表，且不能包含无效字符。");
+  }
   return new Promise((resolve, reject) => {
-    const child = spawn(server.command, server.args || [], {
+    let child;
+    try {
+      child = spawn(command, args, {
       cwd: providerStore.conversationHome(),
       env: { ...process.env, ...providerStore.mcpEnvironment(server.id) },
       windowsHide: true,
       stdio: ["ignore", "ignore", "pipe"],
-    });
+      });
+    } catch (error) {
+      reject(new Error(`无法启动 MCP：${error.code === "EINVAL" ? "启动命令或参数无效（Windows EINVAL）" : error.message}`));
+      return;
+    }
     let stderr = "";
     let settled = false;
     let timer = null;
@@ -2074,7 +2105,7 @@ async function probeMcpServer(server) {
       else resolve({ ok: true, latencyMs: Date.now() - startedAt, detail: "进程已成功启动" });
     };
     child.stderr.on("data", (chunk) => { stderr = `${stderr}${chunk}`.slice(-500); });
-    child.once("error", (error) => finish(new Error(`无法启动 MCP：${error.message}`)));
+    child.once("error", (error) => finish(new Error(`无法启动 MCP：${error.code === "EINVAL" ? "启动命令或参数无效（Windows EINVAL）" : error.message}`)));
     child.once("exit", (code) => {
       finish(new Error(`MCP 启动后过早退出（${code ?? "未知"}）：${stderr.trim() || "无错误输出"}`));
     });
@@ -2310,7 +2341,7 @@ app.whenReady().then(async () => {
   localHistoryReader.addCodexSource(providerStore.conversationMirrorSource());
   localProviderDiscovery = createLocalProviderDiscovery({
     homeDirectory: os.homedir(),
-    codexHomes: [CODEX_HOME],
+    codexHomes: [CODEX_HOME, path.join(os.homedir(), ".codex")],
     providerStore,
   });
   if (app.isPackaged) app.setAsDefaultProtocolClient("share-master");
@@ -2448,7 +2479,7 @@ app.whenReady().then(async () => {
     const root = path.resolve(installedSkillSourceRoot());
     const target = path.resolve(root, name);
     if (path.dirname(target) !== root || !fs.existsSync(path.join(target, "SKILL.md"))) {
-      throw new Error("只能卸载通过 Share Master 安装的 Skill。");
+      throw new Error("只能卸载通过 Synclattice 安装的 Skill。");
     }
     fs.rmSync(target, { recursive: true, force: true });
     const result = await refreshPrivateSkills();
@@ -2528,7 +2559,7 @@ app.whenReady().then(async () => {
   ipcMain.handle("dialog:sync-directory", async (event, currentPath) => {
     const owner = BrowserWindow.fromWebContents(event.sender);
     const result = await dialog.showOpenDialog(owner, {
-      title: "选择 Share Master 同步目录",
+      title: "选择 Synclattice 同步目录",
       defaultPath: currentPath || undefined,
       properties: ["openDirectory", "createDirectory"],
     });
@@ -2565,7 +2596,7 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle("app:notify", (event, payload = {}) => {
     const owner = BrowserWindow.fromWebContents(event.sender);
-    const title = String(payload.title || "Share Master").slice(0, 120);
+    const title = String(payload.title || "Synclattice").slice(0, 120);
     const body = String(payload.body || "").slice(0, 300);
     if (Notification.isSupported()) {
       const notification = new Notification({ title, body, silent: false });
@@ -2617,7 +2648,7 @@ app.whenReady().then(async () => {
     let provider = null;
     if (providerId) {
       provider = providerStore.resolve(providerId);
-      if (provider.type !== "relay") throw new Error("只能测试 Share Master 中添加的模型供应商。");
+      if (provider.type !== "relay") throw new Error("只能测试 Synclattice 中添加的模型供应商。");
     }
     const baseUrl = String(input.baseUrl || provider?.baseUrl || "").trim();
     const apiKey = String(input.apiKey || "").trim() || provider?.apiKey || null;
@@ -2695,7 +2726,7 @@ app.whenReady().then(async () => {
   ipcMain.handle("config:export", async (event) => {
     const owner = BrowserWindow.fromWebContents(event.sender);
     const result = await dialog.showSaveDialog(owner, {
-      title: "导出 Share Master 配置",
+      title: "导出 Synclattice 配置",
       defaultPath: `share-master-config-${new Date().toISOString().slice(0, 10)}.json`,
       filters: [{ name: "JSON", extensions: ["json"] }],
     });
@@ -2708,7 +2739,7 @@ app.whenReady().then(async () => {
   ipcMain.handle("config:import", async (event) => {
     const owner = BrowserWindow.fromWebContents(event.sender);
     const result = await dialog.showOpenDialog(owner, {
-      title: "导入 Share Master 配置",
+      title: "导入 Synclattice 配置",
       properties: ["openFile"],
       filters: [{ name: "JSON", extensions: ["json"] }],
     });
@@ -2737,7 +2768,7 @@ app.whenReady().then(async () => {
   ipcMain.handle("backup:restore", (_event, name) => {
     const restored = providerStore.restoreConfigurationBackup(name);
     for (const [webContentsId, server] of servers) {
-      failScheduledTasksForServer(server, "Share Master 配置已从备份恢复。");
+        failScheduledTasksForServer(server, "Synclattice 配置已从备份恢复。");
       server.stop();
       servers.delete(webContentsId);
       nextConnectionGeneration(webContentsId);
@@ -2884,7 +2915,10 @@ app.whenReady().then(async () => {
   ipcMain.handle("auth:official-login", async (_event, providerId = "official") => {
     const provider = providerStore.resolve(providerId);
     if (!["official", "account"].includes(provider.type)) throw new Error("该连接不是 Codex 官方账号。");
-    return loginOfficialAccount(provider);
+    const snapshot = await loginOfficialAccount(provider);
+    if (providerId === "official") providerStore.markOfficialConfigured();
+    broadcastStoreSnapshot();
+    return snapshot;
   });
 
   ipcMain.handle("url:open", async (_event, target) => {
@@ -3007,7 +3041,7 @@ app.whenReady().then(async () => {
           registerApprovalRequest(server, message, mappedServerMessage(server, message), sender, send);
           return;
         }
-        server.respondError(message.id, -32601, `Share Master does not support ${message.method}.`);
+        server.respondError(message.id, -32601, `Synclattice does not support ${message.method}.`);
         send("codex:diagnostic", `已安全取消不支持的 Codex 请求：${message.method}`);
       });
       server.on("diagnostic", (message) => {
@@ -3085,6 +3119,7 @@ app.whenReady().then(async () => {
         providerPreset: publicProvider.preset || null,
         providerType: provider.type,
         providerEngine: provider.engine || "codex",
+        runtimeKind: server.runtimeKind || null,
         modelProvider: provider.modelProvider,
         modelSource: provider.discoveredModels?.length ? "provider" : "configured",
         modelWarning,
@@ -3119,10 +3154,20 @@ app.whenReady().then(async () => {
         data: (response.data || []).map((model) => {
           const profile = reasoningProfile(model.model || model.id);
           if (profile) return { ...model, reasoningCapabilitiesVerified: true };
+          const declared = Array.isArray(model.supportedReasoningEfforts)
+            ? model.supportedReasoningEfforts
+            : [];
+          if (declared.length) {
+            return {
+              ...model,
+              defaultReasoningEffort: model.defaultReasoningEffort || "medium",
+              reasoningCapabilitiesVerified: model.reasoningCapabilitiesVerified !== false,
+            };
+          }
           return {
             ...model,
-            defaultReasoningEffort: null,
-            supportedReasoningEfforts: [],
+            defaultReasoningEffort: "medium",
+            supportedReasoningEfforts: GENERIC_REASONING_EFFORTS,
             reasoningCapabilitiesVerified: false,
           };
         }),
@@ -3262,7 +3307,7 @@ app.whenReady().then(async () => {
 app.on("window-all-closed", () => {
   for (const server of servers.values()) {
     clearApprovalRequests(server);
-    failScheduledTasksForServer(server, "Share Master 已关闭。");
+    failScheduledTasksForServer(server, "Synclattice 已关闭。");
     server.stop();
   }
   if ((quitting || process.env.CODEX_DECK_QA_SCREENSHOT || !tray || providerStore?.appSettings().closeToTray === false)

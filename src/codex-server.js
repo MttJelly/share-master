@@ -4,7 +4,13 @@ const fs = require("node:fs");
 const os = require("node:os");
 const readline = require("node:readline");
 const path = require("node:path");
-const { findExecutable, userExecutableCandidates } = require("./cli-discovery");
+const {
+  bundledCodexCandidates,
+  findExecutable,
+  isBundledCodexExecutable,
+  packagedCodexCandidates,
+  userExecutableCandidates,
+} = require("./cli-discovery");
 const { repairInterruptedToolCallsForThread } = require("./conversation-integrity");
 const { APP_VERSION } = require("./app-version");
 
@@ -16,14 +22,63 @@ const CODEX_HOME = process.env.CODEX_HOME
 const CODEX_EXE = findExecutable({
   override: process.env.SHARE_MASTER_CODEX_EXE,
   candidates: [
+    ...packagedCodexCandidates(),
     process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, "Programs", "OpenAI", "Codex", "bin", "codex.exe") : null,
     ...userExecutableCandidates("codex"),
+    ...bundledCodexCandidates(),
   ],
   commands: ["codex.exe", "codex"],
 });
 const BUILTIN_MODEL_CATALOG = path.join(__dirname, "model-catalog.json");
 const STARTUP_TIMEOUT_MS = 120000;
 const ANSI_ESCAPE_PATTERN = /[\u001B\u009B][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[-a-zA-Z\d/#&.:=?%@~_]+)*)?\u0007)|(?:(?:\d{1,4}(?:[;:]\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g;
+
+function codexRuntimeRoot() {
+  return process.env.LOCALAPPDATA
+    ? path.join(process.env.LOCALAPPDATA, "Share Master", "runtime", "codex")
+    : path.join(os.tmpdir(), "share-master-runtime", "codex");
+}
+
+async function executableForStart(source) {
+  if (!isBundledCodexExecutable(source)) return { executable: source, runtimeKind: "codex-cli" };
+  const normalized = path.normalize(String(source)).toLowerCase();
+  if (normalized.includes(`${path.sep}codex-runtime${path.sep}`)) {
+    return { executable: source, runtimeKind: "share-master-bundled" };
+  }
+  let stat;
+  try {
+    stat = await fs.promises.stat(source);
+  } catch (error) {
+    throw new Error(`无法读取 ChatGPT 应用内置 Codex 运行时：${error.message}`);
+  }
+  const cacheKey = `${stat.size}-${Math.floor(stat.mtimeMs)}`;
+  const targetDir = path.join(codexRuntimeRoot(), cacheKey);
+  const target = path.join(targetDir, "codex.exe");
+  try {
+    const cached = await fs.promises.stat(target);
+    if (cached.size === stat.size) return { executable: target, runtimeKind: "chatgpt-app" };
+  } catch {}
+  await fs.promises.mkdir(targetDir, { recursive: true });
+  const temporary = path.join(targetDir, `codex-${process.pid}-${Date.now()}.tmp`);
+  try {
+    await fs.promises.copyFile(source, temporary);
+    try {
+      await fs.promises.rename(temporary, target);
+    } catch (error) {
+      try {
+        const cached = await fs.promises.stat(target);
+        if (cached.size !== stat.size) throw error;
+        await fs.promises.rm(temporary, { force: true });
+      } catch {
+        throw error;
+      }
+    }
+  } catch (error) {
+    await fs.promises.rm(temporary, { force: true }).catch(() => {});
+    throw new Error(`无法准备 ChatGPT 应用内置 Codex 运行时：${error.message}`);
+  }
+  return { executable: target, runtimeKind: "chatgpt-app" };
+}
 
 function normalizeDiagnostic(value) {
   return String(value || "")
@@ -162,14 +217,19 @@ class CodexServer extends EventEmitter {
     this.ready = false;
     this.diagnostics = [];
     this.integrityCheckedThreads = new Set();
+    this.runtimeKind = "codex-cli";
+    this.executable = null;
   }
 
   async start() {
     if (this.process) return;
     if (!CODEX_EXE) {
-      throw new Error("未找到 Codex CLI。请先安装 Codex，并确保 codex 命令已加入 PATH。");
+      throw new Error("未找到可用的 OpenAI 运行时。请安装 ChatGPT 官方应用，或安装 Codex CLI 后重试。");
     }
-    this.process = spawn(CODEX_EXE, this.provider.args, {
+    const runtime = await executableForStart(CODEX_EXE);
+    this.executable = runtime.executable;
+    this.runtimeKind = runtime.runtimeKind;
+    this.process = spawn(runtime.executable, this.provider.args, {
       env: this.env,
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
@@ -189,7 +249,7 @@ class CodexServer extends EventEmitter {
     });
 
     await this.request("initialize", {
-      clientInfo: { name: "share_master", title: "Share Master", version: APP_VERSION },
+      clientInfo: { name: "synclattice", title: "Synclattice", version: APP_VERSION },
       capabilities: { experimentalApi: true },
     }, STARTUP_TIMEOUT_MS);
     this.notify("initialized", {});
@@ -410,6 +470,7 @@ module.exports = {
   BASE_PROVIDERS,
   CODEX_HOME,
   CODEX_EXE,
+  executableForStart,
   APPROVAL_MODES,
   approvalSettings,
   normalizeDiagnostic,

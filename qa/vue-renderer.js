@@ -136,7 +136,7 @@ async function run() {
   const extensionFixture = {
     skills: [
       { name: "nature-writing", description: "Draft and restructure technical writing", path: "F:\\private\\nature-writing\\SKILL.md", enabled: true, removable: true, source: "F:\\private\\installed\\nature-writing" },
-      { name: "figure-designer", description: "Design submission-grade figures", path: "F:\\private\\figure-designer\\SKILL.md", enabled: false, source: "Share Master 镜像库" },
+      { name: "figure-designer", description: "Design submission-grade figures", path: "F:\\private\\figure-designer\\SKILL.md", enabled: false, source: "Synclattice 镜像库" },
     ],
     prompts: [
       { id: "prompt_fixture", name: "summarize", description: "提炼当前内容", content: "请提炼当前内容的关键结论。", createdAt: Date.now(), updatedAt: Date.now() },
@@ -356,7 +356,7 @@ async function run() {
     nextCursor: null,
   }));
   ipcMain.handle("codex:models", () => ({
-    data: [{ id: "deepseek-chat", model: "deepseek-chat", displayName: "DeepSeek Chat", isDefault: true }],
+    data: [{ id: "deepseek-chat", model: "deepseek-chat", displayName: "DeepSeek Chat", isDefault: true, defaultReasoningEffort: "medium", supportedReasoningEfforts: ["low", "medium", "high"] }],
     nextCursor: null,
   }));
   ipcMain.handle("codex:skills", () => ({ data: [] }));
@@ -754,7 +754,7 @@ async function run() {
     state.provider = 'deepseek-fixture';
     state.providerType = 'relay';
     state.providerEngine = 'openai-compatible';
-    state.modelCatalog = [{ id: 'deepseek-chat', model: 'deepseek-chat', displayName: 'DeepSeek Chat', isDefault: true, supportedReasoningEfforts: [] }];
+    state.modelCatalog = [{ id: 'deepseek-chat', model: 'deepseek-chat', displayName: 'DeepSeek Chat', isDefault: true, defaultReasoningEffort: 'medium', supportedReasoningEfforts: ['low', 'medium', 'high'] }];
     const thread = {
       id: 'vue-conversation-fixture',
       name: '界面优化讨论',
@@ -836,6 +836,8 @@ async function run() {
       activityWidth: Math.round(activity?.getBoundingClientRect().width || 0),
       reasoningOutputWidth: Math.round(reasoningOutput?.getBoundingClientRect().width || 0),
       reasoningLineHeight: reasoningOutput ? parseFloat(getComputedStyle(reasoningOutput).lineHeight) : 0,
+      effortOptions: [...document.querySelector('#session-effort').options].map((option) => option.value),
+      effortEnabled: !document.querySelector('#session-effort').disabled,
       reasoningText: reasoningOutput?.textContent || '',
       thinkingVisible: Boolean(document.querySelector('.thinking-indicator')),
       thinkingText: document.querySelector('.thinking-indicator')?.textContent.replace(/\s+/g, ' ').trim() || '',
@@ -934,8 +936,8 @@ async function run() {
     window.confirm = () => { window.__qaNativeConfirmCalls += 1; return true; };
     window.__qaConfirmationPromise = confirmAction({
       eyebrow: '会话管理',
-      title: '从 Share Master 中移除这个会话？',
-      description: '移除后可在一小时内恢复，到期后会从 Share Master 列表清除。',
+      title: '从 Synclattice 中移除这个会话？',
+      description: '移除后可在一小时内恢复，到期后会从 Synclattice 列表清除。',
       detail: '原始 ChatGPT、Codex 和 Claude 会话记录完全不变。',
       confirmLabel: '移除会话',
     });
@@ -1661,6 +1663,8 @@ async function run() {
   assert.equal(compact.providerActionLayout.every((row) => row.actions === 1 && !row.overlaps), true);
   assert.equal(compact.fatal, null);
   assert.equal(conversation.messages, 2);
+  assert.deepEqual(conversation.effortOptions, ["low", "medium", "high"]);
+  assert.equal(conversation.effortEnabled, true);
   assert.equal(notificationApprovalSync.visibleBeforeResolution, true);
   assert.equal(notificationApprovalSync.activeBeforeResolution, "notification-approval-fixture");
   assert.equal(notificationApprovalSync.hiddenAfterResolution, true);
@@ -1823,8 +1827,8 @@ async function run() {
   assert.deepEqual({ visible: localHistory.visible, sources: localHistory.sources, conversations: localHistory.conversations, messages: localHistory.messages }, { visible: true, sources: 2, conversations: 2, messages: 3 });
   assert.equal(localHistory.title, "本地记录功能迭代");
   assert.match(localHistory.readOnlyNotice, /只读浏览原始会话/);
-  assert.match(localHistory.readOnlyNotice, /Share Master 私有记录/);
-  assert.match(localHistory.buttonLabel, /复制到 Share Master/);
+  assert.match(localHistory.readOnlyNotice, /Synclattice 私有记录/);
+  assert.match(localHistory.buttonLabel, /复制到 Synclattice/);
   assert.equal(localHistory.statusRole, "status");
   assert.equal(localHistory.overlayClosedAfterImport, true);
   assert.equal(localHistory.openedThreadId, "local-imported-history-fixture");

@@ -60,8 +60,10 @@ async function fetchRelayBalance(provider, apiKey, fetchImpl = globalThis.fetch)
     return {
       supported: true,
       name: data.name || provider.label,
-      // New API uses this flag for the key's own quota cap, not the account balance.
-      unlimited: tokenUnlimited && totalAvailable === null,
+      // New API marks keys without a hard quota using `unlimited_quota`. The
+      // internal accounting counters may still be negative after usage and
+      // must not be rendered as a negative customer balance.
+      unlimited: tokenUnlimited,
       tokenUnlimited,
       expiresAt: safeNumber(data.expires_at),
       quotaPerUnit,
@@ -69,7 +71,7 @@ async function fetchRelayBalance(provider, apiKey, fetchImpl = globalThis.fetch)
       totalAvailable,
       totalUsed,
       totalGranted,
-      balance: quotaPerUnit && totalAvailable !== null ? totalAvailable / quotaPerUnit : null,
+      balance: tokenUnlimited ? null : quotaPerUnit && totalAvailable !== null ? totalAvailable / quotaPerUnit : null,
       used: quotaPerUnit && totalUsed !== null ? totalUsed / quotaPerUnit : null,
       granted: quotaPerUnit && totalGranted !== null ? totalGranted / quotaPerUnit : null,
     };

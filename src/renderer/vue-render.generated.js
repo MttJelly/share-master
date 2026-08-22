@@ -11,7 +11,7 @@ export function render(_ctx, _cache) {
   const _component_app_confirmation_dialog = _resolveComponent("app-confirmation-dialog")
 
   return (_openBlock(), _createElementBlock(_Fragment, null, [
-    _cache[8] || (_cache[8] = _createStaticVNode("<header class=\"titlebar\"><div class=\"titlebar-brand\"><button id=\"sidebar-toggle\" class=\"icon-button\" type=\"button\" title=\"切换侧栏\" aria-label=\"切换侧栏\"><span data-lucide=\"panel-left\"></span></button><span class=\"wordmark\"><img class=\"wordmark-icon\" src=\"../../build/icon.svg\" alt=\"\" draggable=\"false\"><span>Share Master</span></span></div><div id=\"window-thread-title\" class=\"window-thread-title\">未选择会话</div><div class=\"titlebar-actions\"><button id=\"workspace-button\" class=\"toolbar-button\" type=\"button\" title=\"选择工作目录\"><span data-lucide=\"folder\"></span><span id=\"workspace-label\">选择工作目录</span></button><button id=\"theme-button\" class=\"icon-button\" type=\"button\" title=\"主题：跟随系统\" aria-label=\"切换主题\"><span data-lucide=\"monitor\"></span></button><button id=\"new-window-button\" class=\"icon-button\" type=\"button\" title=\"新建窗口\" aria-label=\"新建窗口\"><span data-lucide=\"panels-top-left\"></span></button></div></header>", 1)),
+    _cache[8] || (_cache[8] = _createStaticVNode("<header class=\"titlebar\"><div class=\"titlebar-brand\"><button id=\"sidebar-toggle\" class=\"icon-button\" type=\"button\" title=\"切换侧栏\" aria-label=\"切换侧栏\"><span data-lucide=\"panel-left\"></span></button><span class=\"wordmark\"><img class=\"wordmark-icon\" src=\"../../build/icon.svg\" alt=\"\" draggable=\"false\"><span>Synclattice</span></span></div><div id=\"window-thread-title\" class=\"window-thread-title\">未选择会话</div><div class=\"titlebar-actions\"><button id=\"workspace-button\" class=\"toolbar-button\" type=\"button\" title=\"选择工作目录\"><span data-lucide=\"folder\"></span><span id=\"workspace-label\">选择工作目录</span></button><button id=\"theme-button\" class=\"icon-button\" type=\"button\" title=\"主题：跟随系统\" aria-label=\"切换主题\"><span data-lucide=\"monitor\"></span></button><button id=\"new-window-button\" class=\"icon-button\" type=\"button\" title=\"新建窗口\" aria-label=\"新建窗口\"><span data-lucide=\"panels-top-left\"></span></button></div></header>", 1)),
     _cache[9] || (_cache[9] = _createElementVNode("aside", { class: "sidebar" }, [
       _createElementVNode("div", { class: "sidebar-top" }, [
         _createElementVNode("button", {
@@ -148,7 +148,7 @@ export function render(_ctx, _cache) {
         "aria-live": "polite"
       }, null, -1 /* CACHED */)),
       _createVNode(_component_attachment_drop_overlay),
-      _cache[7] || (_cache[7] = _createStaticVNode("<section id=\"empty-state\" class=\"empty-state\"><div class=\"empty-symbol\"><span data-lucide=\"terminal-square\"></span></div><h1 id=\"empty-title\">新会话</h1><p id=\"empty-subtitle\">Share Master</p></section><section id=\"chat-view\" class=\"chat-view hidden\" aria-live=\"polite\"></section>", 2)),
+      _cache[7] || (_cache[7] = _createStaticVNode("<section id=\"empty-state\" class=\"empty-state\"><div class=\"empty-symbol\"><span data-lucide=\"terminal-square\"></span></div><h1 id=\"empty-title\">新会话</h1><p id=\"empty-subtitle\">Synclattice</p></section><section id=\"chat-view\" class=\"chat-view hidden\" aria-live=\"polite\"></section>", 2)),
       _createElementVNode("footer", _hoisted_2, [
         _cache[5] || (_cache[5] = _createElementVNode("div", {
           id: "approval-banner",
@@ -312,6 +312,15 @@ export function render(_ctx, _cache) {
               _createTextVNode("发现本机配置")
             ]),
             _createElementVNode("button", {
+              id: "provider-local-history-button",
+              class: "text-button",
+              type: "button",
+              "aria-describedby": "provider-local-history-help"
+            }, [
+              _createElementVNode("span", { "data-lucide": "hard-drive" }),
+              _createTextVNode("自动扫描聊天记录")
+            ]),
+            _createElementVNode("button", {
               id: "official-login-button",
               class: "text-button",
               type: "button"
@@ -319,6 +328,10 @@ export function render(_ctx, _cache) {
               _createElementVNode("span", { "data-lucide": "log-in" }),
               _createTextVNode("登录默认官方账号")
             ]),
+            _createElementVNode("span", {
+              id: "provider-local-history-help",
+              class: "dialog-action-help"
+            }, "只读查找 Codex、Codex App 和 Claude Code 的本地会话。"),
             _createElementVNode("button", {
               id: "record-home-button",
               class: "text-button",
@@ -449,7 +462,7 @@ export function render(_ctx, _cache) {
           _createElementVNode("span", { "data-lucide": "shield-check" }),
           _createElementVNode("div", null, [
             _createElementVNode("strong", null, "原配置保持不变"),
-            _createElementVNode("small", null, "API Key 不会发送到界面；确认导入后，仅加密写入 Share Master 自己的安全存储。")
+            _createElementVNode("small", null, "API Key 不会发送到界面；确认导入后，仅加密写入 Synclattice 自己的安全存储。")
           ])
         ]),
         _createElementVNode("div", { class: "local-provider-toolbar" }, [
@@ -582,7 +595,7 @@ export function render(_ctx, _cache) {
             id: "provider-model-help",
             class: "form-note"
           }, [
-            _createTextVNode("Share Master 会从中转商的 "),
+            _createTextVNode("Synclattice 会从中转商的 "),
             _createElementVNode("code", null, "/models"),
             _createTextVNode(" 或 "),
             _createElementVNode("code", null, "/v1/models"),
@@ -809,7 +822,7 @@ export function render(_ctx, _cache) {
           _createElementVNode("p", {
             id: "claude-route-note",
             class: "form-note"
-          }, "Hexuan 的 sonnet/opus/haiku 可能映射到其他厂商模型，Share Master 会明确显示实际路由。"),
+          }, "Hexuan 的 sonnet/opus/haiku 可能映射到其他厂商模型，Synclattice 会明确显示实际路由。"),
           _createElementVNode("div", { class: "form-actions" }, [
             _createElementVNode("span", {
               id: "claude-error",
@@ -1070,7 +1083,7 @@ export function render(_ctx, _cache) {
           ]),
           _createElementVNode("div", null, [
             _createElementVNode("h2", { id: "local-history-title" }, "本地聊天记录"),
-            _createElementVNode("p", null, "只读浏览原始会话；需要继续时，可复制到 Share Master 私有记录。")
+            _createElementVNode("p", null, "只读浏览原始会话；需要继续时，可复制到 Synclattice 私有记录。")
           ]),
           _createElementVNode("button", {
             id: "local-history-close-button",
@@ -1128,7 +1141,7 @@ export function render(_ctx, _cache) {
             _createElementVNode("div", { class: "local-history-empty" }, [
               _createElementVNode("span", { "data-lucide": "messages-square" }),
               _createElementVNode("strong", null, "选择一条本地会话"),
-              _createElementVNode("span", null, "预览不会改写原始记录，复制操作会创建独立的 Share Master 副本。")
+              _createElementVNode("span", null, "预览不会改写原始记录，复制操作会创建独立的 Synclattice 副本。")
             ])
           ])
         ])
@@ -1271,7 +1284,7 @@ export function render(_ctx, _cache) {
           ]),
           _createElementVNode("div", null, [
             _createElementVNode("h2", { id: "sync-title" }, "配置同步"),
-            _createElementVNode("p", null, "同步 Share Master 配置，不包含 API Key、MCP 密钥或聊天正文。")
+            _createElementVNode("p", null, "同步 Synclattice 配置，不包含 API Key、MCP 密钥或聊天正文。")
           ]),
           _createElementVNode("button", {
             id: "sync-close-button",
@@ -1444,7 +1457,7 @@ export function render(_ctx, _cache) {
           ]),
           _createElementVNode("div", null, [
             _createElementVNode("h2", { id: "extensions-title" }, "扩展中心"),
-            _createElementVNode("p", null, "Share Master 私有 Skills、Prompt 模板与 MCP 连接。")
+            _createElementVNode("p", null, "Synclattice 私有 Skills、Prompt 模板与 MCP 连接。")
           ]),
           _createElementVNode("button", {
             id: "extensions-close-button",
@@ -1678,7 +1691,7 @@ export function render(_ctx, _cache) {
               _createElementVNode("div", { class: "extensions-editor-heading" }, [
                 _createElementVNode("div", null, [
                   _createElementVNode("strong", { id: "mcp-editor-title" }, "添加 MCP"),
-                  _createElementVNode("span", null, "配置仅保存在 Share Master")
+                  _createElementVNode("span", null, "配置仅保存在 Synclattice")
                 ]),
                 _createElementVNode("button", {
                   id: "mcp-delete-button",
@@ -1808,7 +1821,7 @@ export function render(_ctx, _cache) {
           ]),
           _createElementVNode("div", null, [
             _createElementVNode("h2", { id: "skill-install-title" }, "安装 Skill"),
-            _createElementVNode("p", null, "导入到 Share Master 私有 Skill 源。")
+            _createElementVNode("p", null, "导入到 Synclattice 私有 Skill 源。")
           ]),
           _createElementVNode("button", {
             id: "skill-install-close-button",
@@ -1894,7 +1907,7 @@ export function render(_ctx, _cache) {
           ]),
           _createElementVNode("div", null, [
             _createElementVNode("h2", { id: "app-settings-title" }, "应用设置"),
-            _createElementVNode("p", null, "Share Master 的启动与窗口行为。")
+            _createElementVNode("p", null, "Synclattice 的启动与窗口行为。")
           ]),
           _createElementVNode("button", {
             id: "app-settings-close-button",
@@ -1916,7 +1929,7 @@ export function render(_ctx, _cache) {
             ]),
             _createElementVNode("span", null, [
               _createElementVNode("strong", null, "Windows 登录时启动"),
-              _createElementVNode("small", null, "通过 Share Master 启动脚本打开私有数据目录")
+              _createElementVNode("small", null, "通过 Synclattice 启动脚本打开私有数据目录")
             ]),
             _createElementVNode("input", {
               name: "launchAtLogin",
@@ -2003,7 +2016,7 @@ export function render(_ctx, _cache) {
           ]),
           _createElementVNode("div", null, [
             _createElementVNode("h2", { id: "import-preview-title" }, "检查导入内容"),
-            _createElementVNode("p", { id: "import-preview-description" }, "确认后才会写入 Share Master 私有配置。")
+            _createElementVNode("p", { id: "import-preview-description" }, "确认后才会写入 Synclattice 私有配置。")
           ]),
           _createElementVNode("button", {
             id: "import-preview-close-button",
@@ -2221,7 +2234,7 @@ export function render(_ctx, _cache) {
           ]),
           _createElementVNode("div", null, [
             _createElementVNode("h2", { id: "rename-title" }, "重命名会话"),
-            _createElementVNode("p", null, "名称只保存在 Share Master，不修改原始会话记录。")
+            _createElementVNode("p", null, "名称只保存在 Synclattice，不修改原始会话记录。")
           ]),
           _createElementVNode("button", {
             id: "rename-close-button",
@@ -2279,7 +2292,7 @@ export function render(_ctx, _cache) {
           ]),
           _createElementVNode("div", null, [
             _createElementVNode("h2", { id: "task-title" }, "安排任务"),
-            _createElementVNode("p", null, "到期后由已连接的 Share Master 自动创建并运行新会话。")
+            _createElementVNode("p", null, "到期后由已连接的 Synclattice 自动创建并运行新会话。")
           ]),
           _createElementVNode("button", {
             id: "task-close-button",

@@ -6,7 +6,7 @@ async function invokeRendererIpc(channel, ...args) {
   const result = await ipcRenderer.invoke(channel, ...args);
   const payload = result?.__shareMasterIpcError;
   if (!payload) return result;
-  const error = new Error(payload.message || "Share Master 请求失败。");
+  const error = new Error(payload.message || "Synclattice 请求失败。");
   if (payload.code) error.code = payload.code;
   if (payload.status !== null && payload.status !== undefined) error.status = payload.status;
   if (payload.requestId) error.requestId = payload.requestId;

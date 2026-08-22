@@ -9,6 +9,10 @@ const {
   normalizeDiagnostic,
 } = require("../src/codex-server");
 const {
+  bundledCodexCandidates,
+  isBundledCodexExecutable,
+} = require("../src/cli-discovery");
+const {
   INTERRUPTED_TOOL_OUTPUT,
   interruptedToolCalls,
   repairInterruptedToolCallsForThread,
@@ -82,7 +86,7 @@ function testApprovalNotifications() {
     params: { command: "tool.exe --api-key must-not-appear" },
   };
   const commandSpec = approvalNotificationSpec(command);
-  assert.equal(commandSpec.title, "Share Master 请求授权");
+  assert.equal(commandSpec.title, "Synclattice 请求授权");
   assert.equal(commandSpec.actions.length, 3);
   assert.equal(commandSpec.body.includes("must-not-appear"), false);
   assert.deepEqual(commandSpec.actions.map((action) => action.text), ["拒绝", "允许一次", "本会话允许"]);
@@ -193,14 +197,14 @@ function testWindowsNotificationIdentity() {
         return true;
       },
       readShortcutLink() {
-        return { target, appUserModelId: "com.sharemaster.desktop" };
+        return { target, appUserModelId: "com.synclattice.desktop" };
       },
     };
     const result = ensureWindowsNotificationIdentity({
       platform: "win32",
       appData: root,
-      appUserModelId: "com.sharemaster.desktop",
-      toastActivatorClsid: "{13C7CD4D-7B07-4CB4-887C-C8C9E230D863}",
+      appUserModelId: "com.synclattice.desktop",
+      toastActivatorClsid: "{E6B8F4D5-4A0D-4B9F-8E3B-3C0F5C3E6D21}",
       target,
       args: "--test",
       cwd: root,
@@ -211,21 +215,21 @@ function testWindowsNotificationIdentity() {
     assert.equal(result.removedLegacy, true);
     assert.equal(fs.existsSync(legacyPath), false);
     assert.equal(writes.length, 1);
-    assert.equal(path.basename(writes[0].shortcutPath), "Share Master.lnk");
+    assert.equal(path.basename(writes[0].shortcutPath), "Synclattice.lnk");
     assert.equal(writes[0].operation, "create");
-    assert.equal(writes[0].details.description, "Share Master");
-    assert.equal(writes[0].details.appUserModelId, "com.sharemaster.desktop");
-    assert.equal(writes[0].details.toastActivatorClsid, "{13C7CD4D-7B07-4CB4-887C-C8C9E230D863}");
+    assert.equal(writes[0].details.description, "Synclattice");
+    assert.equal(writes[0].details.appUserModelId, "com.synclattice.desktop");
+    assert.equal(writes[0].details.toastActivatorClsid, "{E6B8F4D5-4A0D-4B9F-8E3B-3C0F5C3E6D21}");
     fs.writeFileSync(legacyPath, "unrelated", "utf8");
     shellApi.readShortcutLink = () => ({
       target: path.join(root, "another-electron-app.exe"),
-      appUserModelId: "com.sharemaster.desktop",
+      appUserModelId: "com.synclattice.desktop",
     });
     const preserved = ensureWindowsNotificationIdentity({
       platform: "win32",
       appData: root,
-      appUserModelId: "com.sharemaster.desktop",
-      toastActivatorClsid: "{13C7CD4D-7B07-4CB4-887C-C8C9E230D863}",
+      appUserModelId: "com.synclattice.desktop",
+      toastActivatorClsid: "{E6B8F4D5-4A0D-4B9F-8E3B-3C0F5C3E6D21}",
       target,
       shellApi,
     });
@@ -242,15 +246,15 @@ function testWindowsNotificationIdentity() {
       isPackaged: false,
       userData: "C:\\Share Master Data",
       applicationRoot: "F:\\codepro",
-      appUserModelId: "com.sharemaster.desktop",
+      appUserModelId: "com.synclattice.desktop",
       target: "F:\\codepro\\electron.exe",
       icon: "F:\\codepro\\build\\icon.ico",
     }), {
-      appId: "com.sharemaster.desktop",
+      appId: "com.synclattice.desktop",
       appIconPath: "F:\\codepro\\build\\icon.ico",
       appIconIndex: 0,
       relaunchCommand: '"F:\\codepro\\electron.exe" --user-data-dir="C:\\Share Master Data" "F:\\codepro"',
-      relaunchDisplayName: "Share Master",
+      relaunchDisplayName: "Synclattice",
     });
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -266,6 +270,13 @@ function testOfficialCliArguments() {
     "-c", "features.remote_plugin=false",
     "app-server",
   ]);
+}
+
+function testBundledCodexRuntimeDiscovery() {
+  if (process.platform !== "win32") return;
+  assert.equal(isBundledCodexExecutable("C:\\Program Files\\WindowsApps\\OpenAI.Codex_1.0.0.0_x64__test\\app\\resources\\codex.exe"), true);
+  assert.equal(isBundledCodexExecutable("C:\\Users\\PC\\AppData\\Local\\Programs\\OpenAI\\Codex\\bin\\codex.exe"), false);
+  assert.ok(bundledCodexCandidates().every((candidate) => isBundledCodexExecutable(candidate)));
 }
 
 function testDiagnosticNormalization() {
@@ -288,7 +299,7 @@ function testRawCodexDiagnosticsStayInternal() {
 
 function testApplicationVersioning() {
   assert.equal(APP_VERSION, require("../package.json").version);
-  assert.equal(USER_AGENT, `Share-Master/${APP_VERSION}`);
+  assert.equal(USER_AGENT, `Synclattice/${APP_VERSION}`);
   assert.equal(compareVersions("0.1.2", "0.1.1"), 1);
   assert.equal(compareVersions("v0.1.2", "0.1.2"), 0);
   assert.equal(compareVersions("0.1.1", "0.1.2"), -1);
@@ -325,6 +336,7 @@ function testIsolatedStoreDefaults() {
   assert.equal(DEFAULT_CONVERSATION_HOME, path.join(providerStoreTestRoot, "conversations"));
   assert.equal(store.conversationHome(), DEFAULT_CONVERSATION_HOME);
   assert.equal(fs.existsSync(DEFAULT_CONVERSATION_HOME), true);
+  assert.deepEqual(store.list(), []);
   const claude = new ClaudeServer({
     claudeConfigDir: path.join(DEFAULT_CONVERSATION_HOME, "claude"),
     model: "fable",
@@ -337,6 +349,8 @@ function testIsolatedStoreDefaults() {
     fs.rmSync(outside, { recursive: true, force: true });
   }
 }
+
+
 
 async function testConversationMirror() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "share-master-mirror-unit-"));
@@ -1031,11 +1045,15 @@ function testConfigurationImportExportAndBackup() {
       failureThreshold: 3,
       cooldownMs: 45000,
     }],
+    mcpServers: [{ name: "Broken MCP", transport: "stdio", command: "", args: ["--invalid"] }],
   };
   const imported = store.importConfiguration(bundle);
   assert.equal(imported.providersAdded, 2);
+  assert.equal(imported.requiresCredentials, true);
   assert.equal(imported.projectsAdded, 1);
   assert.equal(imported.routesImported, 1);
+  assert.equal(imported.mcpServersImported, 0);
+  assert.equal(imported.mcpServersSkipped, 1);
   const exported = store.exportConfiguration();
   assert.equal(exported.containsCredentials, false);
   assert.equal(JSON.stringify(exported).includes("apiKey"), false);
@@ -1334,12 +1352,13 @@ async function testOpenAICompatibleStreaming() {
         if (message.method === "turn/completed") resolve(message);
       });
     });
-    await server.startTurn(created.thread.id, "测试消息", "F:\\codepro", "client-message", {});
+    await server.startTurn(created.thread.id, "测试消息", "F:\\codepro", "client-message", { effort: "high" });
     const completion = await completed;
     assert.equal(completion.params.turn.status, "completed");
     assert.equal(completion.params.turn.usage.total_tokens, 19);
     assert.equal(requests[0].url, "https://api.deepseek.com/v1/chat/completions");
     assert.equal(requests[0].options.headers.Authorization, "Bearer encrypted-store-value");
+    assert.equal(requests[0].body.reasoning_effort, "high");
     assert.deepEqual(requests[0].body.messages, [{ role: "user", content: "测试消息" }]);
     const read = await server.readThread(created.thread.id);
     assert.equal(read.thread.turns[0].items.find((item) => item.type === "agentMessage").text, "你好");
@@ -1833,8 +1852,8 @@ async function testNewApiBalance() {
         }), { status: 200, headers: { "content-type": "application/json" } }),
   );
   assert.equal(unlimitedKeyResult.tokenUnlimited, true);
-  assert.equal(unlimitedKeyResult.unlimited, false);
-  assert.equal(unlimitedKeyResult.balance, -7.193232);
+  assert.equal(unlimitedKeyResult.unlimited, true);
+  assert.equal(unlimitedKeyResult.balance, null);
   assert.equal(calls[0].authorization, "Bearer secret");
   assert.equal(calls.some((call) => call.url === "https://relay.example/api/usage/token/"), true);
 }
@@ -2280,6 +2299,7 @@ Promise.resolve()
   .then(testOfficialAuthenticationGate)
   .then(testOfficialAccountUsageNormalization)
   .then(testOfficialCliArguments)
+  .then(testBundledCodexRuntimeDiscovery)
   .then(testDiagnosticNormalization)
   .then(testRawCodexDiagnosticsStayInternal)
   .then(testApplicationVersioning)
@@ -2337,7 +2357,7 @@ Promise.resolve()
   .then(testOpenAICompatibleInterrupt)
   .then(testOpenAICompatibleSharedCodexHistory)
   .then(testImportedLocalConversation)
-  .then(() => console.log(JSON.stringify({ ok: true, tests: 59 })))
+  .then(() => console.log(JSON.stringify({ ok: true, tests: 60 })))
   .catch((error) => {
     console.error(error.stack || error.message);
     process.exitCode = 1;

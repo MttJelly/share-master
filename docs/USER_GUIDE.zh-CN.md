@@ -1,25 +1,25 @@
-# Share Master 中文使用指南
+# Synclattice 中文使用指南
 
 [返回 README](../README.md) | [English](USER_GUIDE.en.md)
 
-Share Master 是一款 Windows 多模型桌面客户端。它把 Codex、Claude Code、DeepSeek、Qwen 和 OpenAI 兼容模型连接到同一个工作区，并将 Share Master 自己的会话统一保存在独立数据目录中。
+Synclattice 是一款 Windows 多模型桌面客户端。它把 Codex、Claude Code、DeepSeek、Qwen 和 OpenAI 兼容模型连接到同一个工作区，并将 Synclattice 自己的会话统一保存在独立数据目录中。
 
 > [!IMPORTANT]
-> Share Master 不会修改 ChatGPT App、Codex 或 Claude Code 的程序文件。发现配置和浏览本地会话时均以只读方式访问原始数据。
+> Synclattice 不会修改 ChatGPT App、Codex 或 Claude Code 的程序文件。发现配置和浏览本地会话时均以只读方式访问原始数据。
 
 ## 1. 安装与首次启动
 
 ### ZIP 便携版
 
-1. 从 [Releases](https://github.com/MttJelly/share-master/releases) 下载 ZIP 便携版。
+1. 从 [Releases](https://github.com/MttJelly/synclattice/releases) 下载 ZIP 便携版。
 2. 将 ZIP 完整解压到普通文件夹，不要直接在压缩包内运行。
-3. 双击 `Share Master.exe`。
+3. 当前稳定包双击 `Synclattice.exe`；下一版新安装包将使用 `Synclattice.exe`。
 
 ### MSI 安装版
 
 1. 下载 MSI 安装包并双击运行。
 2. 按安装向导完成安装。
-3. 从桌面快捷方式或开始菜单启动 Share Master。
+3. 从桌面快捷方式或开始菜单启动 Synclattice。
 
 首次启动会显示“选择连接方式”。完成一个模型连接后即可创建会话。
 
@@ -30,7 +30,7 @@ Share Master 是一款 Windows 多模型桌面客户端。它把 Codex、Claude 
 - Codex：在 PowerShell 中运行 `codex --version` 应能正常返回版本号。
 - Claude Code：在 PowerShell 中运行 `claude --version` 应能正常返回版本号。
 
-如果命令不存在，请先按对应厂商的官方说明安装 CLI，然后重新启动 Share Master。Share Master 只调用已安装的 CLI，不会替换或修改它。
+正式安装包自带 OpenAI 连接所需的运行时，不依赖独立的 `codex` 命令或 ChatGPT/Codex 应用。开发版在没有内置运行时时，才会尝试使用本机 Codex CLI 或官方应用运行时；两者都不存在时，Synclattice 仍可启动并使用其他 API、中转连接和本地记录。Synclattice 不会替换或修改官方应用或 CLI。
 
 ## 3. 添加官方账号
 
@@ -47,7 +47,7 @@ Share Master 是一款 Windows 多模型桌面客户端。它把 Codex、Claude 
 3. 本地标签可以留空，点击“打开 ChatGPT 登录”。
 4. 在浏览器打开的 OpenAI 官方页面完成登录；这里不输入 ChatGPT 邮箱或密码。
 
-本地标签只用于区分多个账号；每个独立账号有自己的认证文件，但仍使用 Share Master 的共享会话记录。未完成官方认证时不能进入聊天。
+本地标签只用于区分多个账号；每个独立账号有自己的认证文件，但仍使用 Synclattice 的共享会话记录。未完成官方认证时不能进入聊天。
 
 ## 4. 添加 DeepSeek、Qwen 或兼容 API
 
@@ -58,7 +58,7 @@ Share Master 是一款 Windows 多模型桌面客户端。它把 Codex、Claude 
 5. 点击“测试连接并读取模型”，从返回结果中选择模型。
 6. 保存连接。
 
-API Key 会通过 Windows 安全存储加密，并只写入 Share Master 的私有数据目录。不要把 Key 写入 README、截图、Issue 或提交到 Git。
+API Key 会通过 Windows 安全存储加密，并只写入 Synclattice 的私有数据目录。不要把 Key 写入 README、截图、Issue 或提交到 Git。
 
 > [!NOTE]
 > Chat Completions 连接支持流式回复、中断和共享本地会话，但不提供 Codex 的本地工具或 Skills。实际能力由供应商和模型决定。
@@ -79,7 +79,7 @@ API Key 会通过 Windows 安全存储加密，并只写入 Share Master 的私�
 - 点击“新会话”开始聊天。
 - 消息发出后，会话底部显示“正在连接模型”或“正在思考”状态；回复结束、失败或停止后自动消失。
 - 会话正在生成回复时，可以切换到其他会话；原会话继续在后台运行。
-- 后台任务完成后，Share Master 可发送 Windows 通知。若收不到通知，请检查 Windows 通知权限。
+- 后台任务完成后，Synclattice 可发送 Windows 通知。若收不到通知，请检查 Windows 通知权限。
 - 会话列表支持搜索；会话菜单支持重命名、归档和移除。
 
 ### 连续发送、引导与排队
@@ -91,7 +91,7 @@ API Key 会通过 Windows 安全存储加密，并只写入 Share Master 的私�
 - “停止”立即请求终止当前回复。
 - 会话菜单中的“清空待发送”可清除尚未执行的队列消息。
 
-如果模型流式连接提前关闭、达到输出长度上限或被供应商过滤，Share Master 会保留已经生成的内容，并显示“回答中途断开”卡片。点击“继续生成”后才会发送续写指令；软件不会自动重跑可能修改文件的任务。
+如果模型流式连接提前关闭、达到输出长度上限或被供应商过滤，Synclattice 会保留已经生成的内容，并显示“回答中途断开”卡片。点击“继续生成”后才会发送续写指令；软件不会自动重跑可能修改文件的任务。
 
 队列按会话分别保存。切换会话不会清空队列，也不会停止其他会话的运行。
 
@@ -99,7 +99,7 @@ API Key 会通过 Windows 安全存储加密，并只写入 Share Master 的私�
 
 - “归档”用于整理会话，不删除记录。
 - “移除会话”后，会话进入“已移除”，可在一小时内恢复。
-- 在“已移除”中选择“立即删除”会跳过等待期并永久删除 Share Master 对应记录。
+- 在“已移除”中选择“立即删除”会跳过等待期并永久删除 Synclattice 对应记录。
 
 永久删除不可撤销，操作前请确认已完成所需备份。
 
@@ -110,7 +110,7 @@ API Key 会通过 Windows 安全存储加密，并只写入 Share Master 的私�
 3. 可选择本地目录，也可以创建不绑定目录的 Project。
 4. 进入 Project 后创建的新会话会自动归入该 Project。
 
-Project 会根据其会话最近活动时间更新顺序。删除 Project 只移除 Share Master 中的项目分组和关联，不会删除所绑定的本地目录。
+Project 会根据其会话最近活动时间更新顺序。删除 Project 只移除 Synclattice 中的项目分组和关联，不会删除所绑定的本地目录。
 
 标题栏的“新建窗口”可打开额外窗口。各窗口可以查看不同会话，后台生成不会因切换窗口而停止。
 
@@ -125,7 +125,7 @@ Project 会根据其会话最近活动时间更新顺序。删除 Project 只移
 
 在“已安排”页签中可以查看、搜索、编辑、启用、停用、立即运行或删除任务，并查看运行记录。任务到期时会自动新建会话并执行。
 
-要让关闭窗口后任务继续运行，请在“应用设置”中启用“关闭窗口后留在托盘”，并确保 Share Master 仍在运行。电脑关机或 Share Master 完全退出时，任务无法执行。
+要让关闭窗口后任务继续运行，请在“应用设置”中启用“关闭窗口后留在托盘”，并确保 Synclattice 仍在运行。电脑关机或 Synclattice 完全退出时，任务无法执行。
 
 ## 9. 图片附件
 
@@ -142,22 +142,22 @@ Project 会根据其会话最近活动时间更新顺序。删除 Project 只移
 3. 查看只读扫描到的 Codex、Claude Code 和相关环境变量配置。
 4. 勾选需要的配置，确认后导入。
 
-扫描不会修改原文件。只有确认导入后，选定配置才会写入 Share Master；密钥会进入 Share Master 自己的加密安全存储，不会显示在扫描结果中。
+扫描不会修改原文件。只有确认导入后，选定配置才会写入 Synclattice；密钥会进入 Synclattice 自己的加密安全存储，不会显示在扫描结果中。
 
 ## 11. 浏览本地 Codex 与 Claude 会话
 
 1. 点击“聊天记录”旁的硬盘按钮。
 2. 选择 Codex 或 Claude 来源。
 3. 搜索并选择会话，在右侧只读预览。
-4. 需要继续使用时，主动选择复制/导入到 Share Master。
+4. 需要继续使用时，主动选择复制/导入到 Synclattice。
 
-仅浏览不会导入、删除或改写原始记录。复制后的会话属于 Share Master，后续更改不会反向写入原客户端。
+仅浏览不会导入、删除或改写原始记录。复制后的会话属于 Synclattice，后续更改不会反向写入原客户端。
 
 ## 12. Skills、Prompt 与 MCP
 
 打开“选择连接方式”中的“扩展中心”：
 
-- Skills：可从文件夹、ZIP 或 GitHub 来源安装到 Share Master 私有 Skill 目录，也可刷新、启用、停用或移除。
+- Skills：可从文件夹、ZIP 或 GitHub 来源安装到 Synclattice 私有 Skill 目录，也可刷新、启用、停用或移除。
 - Prompts：新建命令名称、说明和模板内容。保存后在输入框键入 `/` 即可搜索并插入。
 - MCP：支持 `stdio`、Streamable HTTP 和 SSE；可配置命令、参数、URL 与加密环境变量，并在启用前检测连接。
 
@@ -167,13 +167,13 @@ Skills 和 MCP 是否能被实际调用取决于当前连接的能力。导入�
 
 打开“用量与成本”可查看本机请求统计，并为不同供应商和模型设置输入、缓存输入与输出价格。成本由本地 token 统计和你填写的价格估算，不等同于供应商账单。
 
-Share Master 的用量日志不记录消息正文或凭据。
+Synclattice 的用量日志不记录消息正文或凭据。
 
 ## 14. 导入、导出、备份与同步
 
 ### 配置导入与导出
 
-“导入”和“导出”用于迁移 Share Master 配置。导入前会显示预览；来自链接的 API Key、Token、密码和凭据字段会被拒绝。
+“导入”和“导出”用于迁移 Synclattice 配置。导入前会显示预览；来自链接的 API Key、Token、密码和凭据字段会被拒绝。
 
 ### 本地备份
 
@@ -186,7 +186,9 @@ Share Master 的用量日志不记录消息正文或凭据。
 3. 配置目录或 WebDAV URL 与账号。
 4. 根据需要执行立即同步、推送或拉取，并检查冲突提示。
 
-同步面向 Share Master 配置，不包含 API Key、MCP 密钥或聊天正文。首次使用新设备时仍需在该设备单独配置凭据。
+同步面向 Synclattice 配置，不包含 API Key、MCP 密钥或聊天正文。首次使用新设备时仍需在该设备单独配置凭据。
+
+导入到新电脑后，连接列表会保留供应商地址和上次发现的模型名称，但不会带入 API Key。点击缺少密钥的中转连接会直接打开编辑页：在本机填写 API Key，点击“测试连接”，Synclattice 会重新读取 `/models`（或 `/v1/models`）并用最新结果更新模型下拉框。模型列表读取成功后，聊天输入区的“推理强度”会显示低、中、高通用选项；是否实际支持由供应商和模型决定，发送时会按选择附加 `reasoning_effort`。
 
 ## 15. 应用设置与数据位置
 
@@ -199,12 +201,12 @@ Share Master 的用量日志不记录消息正文或凭据。
 默认私有数据目录为：
 
 ```text
-%APPDATA%\Share Master\data
+%APPDATA%\Synclattice\data
 ```
 
-在“选择连接方式”中打开“记录位置”，可查看或切换 Share Master 的聊天记录目录。切换不会移动或删除原目录中的记录；执行目录同步前请先确认来源和目标。
+在“选择连接方式”中打开“记录位置”，可查看或切换 Synclattice 的聊天记录目录。切换不会移动或删除原目录中的记录；执行目录同步前请先确认来源和目标。
 
-卸载 Share Master 不会自动删除 `%APPDATA%\Share Master`。彻底清理前，请先备份需要保留的会话。
+卸载 Synclattice 不会自动删除 `%APPDATA%\Synclattice`。彻底清理前，请先备份需要保留的会话。
 
 ## 16. 常见问题
 
@@ -215,7 +217,7 @@ Share Master 的用量日志不记录消息正文或凭据。
 3. 对 API 连接重新执行“测试连接并读取模型”。
 4. 确认已选择有效模型，API Key 未失效且账户仍有额度。
 5. Codex/Claude 连接请在 PowerShell 中确认对应 CLI 命令可用。
-6. 完全退出 Share Master 后重新启动；若启用了托盘模式，也要从托盘菜单退出。
+6. 完全退出 Synclattice 后重新启动；若启用了托盘模式，也要从托盘菜单退出。
 
 ### 会话切换后仍在生成
 
@@ -223,7 +225,7 @@ Share Master 的用量日志不记录消息正文或凭据。
 
 ### 已安排任务没有执行
 
-确认任务已启用、时间和本地时区正确、指定连接可用，并且到期时 Share Master 没有完全退出。
+确认任务已启用、时间和本地时区正确、指定连接可用，并且到期时 Synclattice 没有完全退出。
 
 ### 图片没有被模型识别
 
@@ -235,10 +237,10 @@ Share Master 的用量日志不记录消息正文或凭据。
 
 ## 17. 隐私边界
 
-- Share Master 的私有聊天、账号配置和缓存与原始客户端相互独立。
+- Synclattice 的私有聊天、账号配置和缓存与原始客户端相互独立。
 - 本地配置发现与本地会话浏览不会修改源文件。
-- Share Master 不会删除或覆盖 ChatGPT App、Codex 或 Claude Code 的原始聊天记录。
+- Synclattice 不会删除或覆盖 ChatGPT App、Codex 或 Claude Code 的原始聊天记录。
 - 消息和附件会发送给你当前选择的模型供应商；请同时遵守该供应商的隐私政策。
 - 发布包、配置导出和同步数据不应包含 API Key、Token、登录凭据或原始客户端聊天记录。
 
-遇到可复现的问题时，可在 GitHub Issue 中提供 Share Master 版本、Windows 版本、连接类型、操作步骤和脱敏后的错误信息。请勿上传 API Key、Token、私人对话或包含个人路径的完整日志。
+遇到可复现的问题时，可在 GitHub Issue 中提供 Synclattice 版本、Windows 版本、连接类型、操作步骤和脱敏后的错误信息。请勿上传 API Key、Token、私人对话或包含个人路径的完整日志。

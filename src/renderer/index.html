@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: file: https:;" />
-    <title>Share Master</title>
+    <title>Synclattice</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
@@ -13,7 +13,7 @@
       <header class="titlebar">
         <div class="titlebar-brand">
           <button id="sidebar-toggle" class="icon-button" type="button" title="切换侧栏" aria-label="切换侧栏"><span data-lucide="panel-left"></span></button>
-          <span class="wordmark"><img class="wordmark-icon" src="../../build/icon.svg" alt="" draggable="false" /><span>Share Master</span></span>
+          <span class="wordmark"><img class="wordmark-icon" src="../../build/icon.svg" alt="" draggable="false" /><span>Synclattice</span></span>
         </div>
         <div id="window-thread-title" class="window-thread-title">未选择会话</div>
         <div class="titlebar-actions">
@@ -66,7 +66,7 @@
         <section id="empty-state" class="empty-state">
           <div class="empty-symbol"><span data-lucide="terminal-square"></span></div>
           <h1 id="empty-title">新会话</h1>
-          <p id="empty-subtitle">Share Master</p>
+          <p id="empty-subtitle">Synclattice</p>
         </section>
         <section id="chat-view" class="chat-view hidden" aria-live="polite"></section>
 
@@ -148,7 +148,9 @@
             <h3 id="connection-actions-title" class="dialog-action-group-title">连接管理</h3>
             <button id="add-connection-button" class="text-button" type="button"><span data-lucide="plus"></span>添加连接</button>
             <button id="local-provider-discovery-button" class="text-button" type="button"><span data-lucide="scan-search"></span>发现本机配置</button>
+            <button id="provider-local-history-button" class="text-button" type="button" aria-describedby="provider-local-history-help"><span data-lucide="hard-drive"></span>自动扫描聊天记录</button>
             <button id="official-login-button" class="text-button" type="button"><span data-lucide="log-in"></span>登录默认官方账号</button>
+            <span id="provider-local-history-help" class="dialog-action-help">只读查找 Codex、Codex App 和 Claude Code 的本地会话。</span>
             <button id="record-home-button" class="text-button" type="button"><span data-lucide="database"></span>记录位置</button>
             <button id="health-button" class="text-button" type="button"><span data-lucide="activity"></span>连接监控</button>
           </div>
@@ -179,7 +181,7 @@
         </div>
         <div class="local-provider-privacy">
           <span data-lucide="shield-check"></span>
-          <div><strong>原配置保持不变</strong><small>API Key 不会发送到界面；确认导入后，仅加密写入 Share Master 自己的安全存储。</small></div>
+          <div><strong>原配置保持不变</strong><small>API Key 不会发送到界面；确认导入后，仅加密写入 Synclattice 自己的安全存储。</small></div>
         </div>
         <div class="local-provider-toolbar">
           <span id="local-provider-summary">尚未扫描</span>
@@ -210,7 +212,7 @@
           <label><span>显示名称</span><input name="label" required placeholder="例如：实验室模型 API" /></label>
           <label><span>Base URL</span><input name="baseUrl" type="url" required placeholder="https://example.com/v1" /></label>
           <label><span>可用模型（来自中转商）</span><select id="provider-model-select" name="model" required disabled aria-describedby="provider-model-help connection-error"><option value="">请先测试连接并读取模型</option></select></label>
-          <p id="provider-model-help" class="form-note">Share Master 会从中转商的 <code>/models</code> 或 <code>/v1/models</code> 接口读取可用模型。只有读取成功后，才能选择模型并保存连接。</p>
+          <p id="provider-model-help" class="form-note">Synclattice 会从中转商的 <code>/models</code> 或 <code>/v1/models</code> 接口读取可用模型。只有读取成功后，才能选择模型并保存连接。</p>
           <label><span>API 协议</span><select name="protocol"><option value="chat_completions">OpenAI Chat Completions</option><option value="responses">OpenAI Responses（Codex 代理）</option></select></label>
           <label><span>API Key</span><input name="apiKey" type="password" required autocomplete="new-password" placeholder="仅加密保存在本机" /></label>
           <div class="model-load-row provider-model-load-row">
@@ -251,7 +253,7 @@
             <span id="claude-model-status" class="provider-error"></span>
           </div>
           <label><span>模型</span><select id="claude-model" name="model" required><option value="">请先读取模型列表</option></select></label>
-          <p id="claude-route-note" class="form-note">Hexuan 的 sonnet/opus/haiku 可能映射到其他厂商模型，Share Master 会明确显示实际路由。</p>
+          <p id="claude-route-note" class="form-note">Hexuan 的 sonnet/opus/haiku 可能映射到其他厂商模型，Synclattice 会明确显示实际路由。</p>
           <div class="form-actions"><span id="claude-error" class="provider-error"></span><button class="primary-command" type="submit"><span data-lucide="plug-zap"></span>保存并连接</button></div>
         </form>
       </section>
@@ -316,7 +318,7 @@
       <section class="provider-dialog local-history-dialog" role="dialog" aria-modal="true" aria-labelledby="local-history-title">
         <div class="dialog-heading">
           <span class="dialog-logo local-history-logo"><span data-lucide="hard-drive"></span></span>
-          <div><h2 id="local-history-title">本地聊天记录</h2><p>只读浏览原始会话；需要继续时，可复制到 Share Master 私有记录。</p></div>
+          <div><h2 id="local-history-title">本地聊天记录</h2><p>只读浏览原始会话；需要继续时，可复制到 Synclattice 私有记录。</p></div>
           <button id="local-history-close-button" class="icon-button dialog-close" type="button" title="关闭" aria-label="关闭"><span data-lucide="x"></span></button>
         </div>
         <div class="local-history-toolbar">
@@ -330,7 +332,7 @@
             <div id="local-history-list" class="local-history-list"></div>
           </section>
           <article id="local-history-preview" class="local-history-preview" aria-live="polite">
-            <div class="local-history-empty"><span data-lucide="messages-square"></span><strong>选择一条本地会话</strong><span>预览不会改写原始记录，复制操作会创建独立的 Share Master 副本。</span></div>
+            <div class="local-history-empty"><span data-lucide="messages-square"></span><strong>选择一条本地会话</strong><span>预览不会改写原始记录，复制操作会创建独立的 Synclattice 副本。</span></div>
           </article>
         </div>
       </section>
@@ -373,7 +375,7 @@
       <section class="provider-dialog sync-dialog" role="dialog" aria-modal="true" aria-labelledby="sync-title">
         <div class="dialog-heading">
           <span class="dialog-logo sync-logo"><span data-lucide="cloud-cog"></span></span>
-          <div><h2 id="sync-title">配置同步</h2><p>同步 Share Master 配置，不包含 API Key、MCP 密钥或聊天正文。</p></div>
+          <div><h2 id="sync-title">配置同步</h2><p>同步 Synclattice 配置，不包含 API Key、MCP 密钥或聊天正文。</p></div>
           <button id="sync-close-button" class="icon-button dialog-close" type="button" title="关闭" aria-label="关闭"><span data-lucide="x"></span></button>
         </div>
         <div class="sync-backend-tabs" role="tablist" aria-label="同步方式">
@@ -409,7 +411,7 @@
       <section class="provider-dialog extensions-dialog" role="dialog" aria-modal="true" aria-labelledby="extensions-title">
         <div class="dialog-heading">
           <span class="dialog-logo extensions-logo"><span data-lucide="blocks"></span></span>
-          <div><h2 id="extensions-title">扩展中心</h2><p>Share Master 私有 Skills、Prompt 模板与 MCP 连接。</p></div>
+          <div><h2 id="extensions-title">扩展中心</h2><p>Synclattice 私有 Skills、Prompt 模板与 MCP 连接。</p></div>
           <button id="extensions-close-button" class="icon-button dialog-close" type="button" title="关闭" aria-label="关闭"><span data-lucide="x"></span></button>
         </div>
         <div class="extensions-tabs" role="tablist">
@@ -449,7 +451,7 @@
             </div>
             <form id="mcp-form" class="extensions-editor">
               <input name="id" type="hidden" />
-              <div class="extensions-editor-heading"><div><strong id="mcp-editor-title">添加 MCP</strong><span>配置仅保存在 Share Master</span></div><button id="mcp-delete-button" class="icon-button danger-icon hidden" type="button" title="删除 MCP" aria-label="删除 MCP"><span data-lucide="trash-2"></span></button></div>
+              <div class="extensions-editor-heading"><div><strong id="mcp-editor-title">添加 MCP</strong><span>配置仅保存在 Synclattice</span></div><button id="mcp-delete-button" class="icon-button danger-icon hidden" type="button" title="删除 MCP" aria-label="删除 MCP"><span data-lucide="trash-2"></span></button></div>
               <div class="extensions-form-grid">
                 <label><span>名称</span><input name="name" required maxlength="100" placeholder="filesystem" /></label>
                 <label><span>传输方式</span><select id="mcp-transport" name="transport"><option value="stdio">stdio</option><option value="http">Streamable HTTP</option><option value="sse">SSE</option></select></label>
@@ -471,7 +473,7 @@
       <section class="provider-dialog skill-install-dialog" role="dialog" aria-modal="true" aria-labelledby="skill-install-title">
         <div class="dialog-heading">
           <span class="dialog-logo skill-install-logo"><span data-lucide="package-plus"></span></span>
-          <div><h2 id="skill-install-title">安装 Skill</h2><p>导入到 Share Master 私有 Skill 源。</p></div>
+          <div><h2 id="skill-install-title">安装 Skill</h2><p>导入到 Synclattice 私有 Skill 源。</p></div>
           <button id="skill-install-close-button" class="icon-button dialog-close" type="button" title="关闭" aria-label="关闭"><span data-lucide="x"></span></button>
         </div>
         <form id="skill-install-form" class="skill-install-form">
@@ -491,13 +493,13 @@
       <section class="provider-dialog app-settings-dialog" role="dialog" aria-modal="true" aria-labelledby="app-settings-title">
         <div class="dialog-heading">
           <span class="dialog-logo app-settings-logo"><span data-lucide="settings-2"></span></span>
-          <div><h2 id="app-settings-title">应用设置</h2><p>Share Master 的启动与窗口行为。</p></div>
+          <div><h2 id="app-settings-title">应用设置</h2><p>Synclattice 的启动与窗口行为。</p></div>
           <button id="app-settings-close-button" class="icon-button dialog-close" type="button" title="关闭" aria-label="关闭"><span data-lucide="x"></span></button>
         </div>
         <form id="app-settings-form" class="app-settings-form">
           <label class="settings-toggle-row">
             <span class="settings-toggle-icon"><span data-lucide="power"></span></span>
-            <span><strong>Windows 登录时启动</strong><small>通过 Share Master 启动脚本打开私有数据目录</small></span>
+            <span><strong>Windows 登录时启动</strong><small>通过 Synclattice 启动脚本打开私有数据目录</small></span>
             <input name="launchAtLogin" type="checkbox" />
           </label>
           <label class="settings-toggle-row">
@@ -523,7 +525,7 @@
       <section class="provider-dialog import-preview-dialog" role="dialog" aria-modal="true" aria-labelledby="import-preview-title">
         <div class="dialog-heading">
           <span class="dialog-logo import-preview-logo"><span data-lucide="scan-eye"></span></span>
-          <div><h2 id="import-preview-title">检查导入内容</h2><p id="import-preview-description">确认后才会写入 Share Master 私有配置。</p></div>
+          <div><h2 id="import-preview-title">检查导入内容</h2><p id="import-preview-description">确认后才会写入 Synclattice 私有配置。</p></div>
           <button id="import-preview-close-button" class="icon-button dialog-close" type="button" title="取消" aria-label="取消"><span data-lucide="x"></span></button>
         </div>
         <div id="import-preview-details" class="import-preview-details"></div>
@@ -575,7 +577,7 @@
       <section class="provider-dialog rename-dialog" role="dialog" aria-modal="true" aria-labelledby="rename-title">
         <div class="dialog-heading">
           <span class="dialog-logo"><span data-lucide="pencil"></span></span>
-          <div><h2 id="rename-title">重命名会话</h2><p>名称只保存在 Share Master，不修改原始会话记录。</p></div>
+          <div><h2 id="rename-title">重命名会话</h2><p>名称只保存在 Synclattice，不修改原始会话记录。</p></div>
           <button id="rename-close-button" class="icon-button dialog-close" type="button" title="关闭" aria-label="关闭"><span data-lucide="x"></span></button>
         </div>
         <form id="rename-form" class="connection-form">
@@ -589,7 +591,7 @@
       <section class="provider-dialog credential-dialog task-dialog" role="dialog" aria-modal="true" aria-labelledby="task-title">
         <div class="dialog-heading">
           <span class="dialog-logo"><span data-lucide="calendar-clock"></span></span>
-          <div><h2 id="task-title">安排任务</h2><p>到期后由已连接的 Share Master 自动创建并运行新会话。</p></div>
+          <div><h2 id="task-title">安排任务</h2><p>到期后由已连接的 Synclattice 自动创建并运行新会话。</p></div>
           <button id="task-close-button" class="icon-button dialog-close" type="button" title="关闭" aria-label="关闭"><span data-lucide="x"></span></button>
         </div>
         <form id="task-form" class="connection-form">

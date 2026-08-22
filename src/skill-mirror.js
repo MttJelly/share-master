@@ -41,7 +41,7 @@ async function directoriesMatch(source, target) {
 
 async function syncSkillRoots(sourceDirectories, targetDirectory) {
   const targetRoot = path.resolve(String(targetDirectory || ""));
-  if (!targetDirectory) throw new Error("Share Master skill target is required.");
+  if (!targetDirectory) throw new Error("Synclattice skill target is required.");
   await fsp.mkdir(targetRoot, { recursive: true });
   const result = { copied: 0, skipped: 0, skippedSources: 0, names: [], sources: {} };
   const selectedSkills = new Map();
@@ -97,9 +97,9 @@ function skillDescription(file) {
       .replace(/^---[\s\S]*?---\s*/m, "")
       .split(/\r?\n/)
       .map((line) => line.replace(/^#+\s*/, "").trim())
-      .find(Boolean) || "Share Master Skill";
+      .find(Boolean) || "Synclattice Skill";
   } catch {
-    return "Share Master Skill";
+    return "Synclattice Skill";
   }
 }
 
@@ -155,7 +155,7 @@ async function validateSkillTree(directory) {
 
 async function installSkillSource(sourceDirectory, installedSourceRoot, sourceLabel = "本地导入") {
   const targetRoot = path.resolve(String(installedSourceRoot || ""));
-  if (!installedSourceRoot) throw new Error("Share Master Skill 安装目录无效。");
+  if (!installedSourceRoot) throw new Error("Synclattice Skill 安装目录无效。");
   await fsp.mkdir(targetRoot, { recursive: true });
   const directories = await discoverSkillDirectories(sourceDirectory);
   if (!directories.length) throw new Error("没有找到 SKILL.md（最多扫描 4 层目录）。");
@@ -184,7 +184,7 @@ async function syncManagedSkills(sourceDirectories, libraryDirectory, activeDire
   const libraryRoot = path.resolve(String(libraryDirectory || ""));
   const activeRoot = path.resolve(String(activeDirectory || ""));
   if (!libraryDirectory || !activeDirectory || libraryRoot === activeRoot) {
-    throw new Error("Share Master skill library and active directory must be different.");
+    throw new Error("Synclattice skill library and active directory must be different.");
   }
   let previousSources = {};
   try {
@@ -258,7 +258,7 @@ async function listManagedSkills(libraryDirectory, disabledNames = []) {
       description: skillDescription(skillFile),
       path: skillFile,
       enabled: !disabled.has(entry.name.toLocaleLowerCase("en-US")),
-      source: sources[entry.name] || "Share Master 私有目录",
+      source: sources[entry.name] || "Synclattice 私有目录",
     });
   }
   return skills.sort((left, right) => left.name.localeCompare(right.name, "en-US"));

@@ -166,14 +166,14 @@ const vueApp = createApp({
         const controller = document.createElement("script");
         controller.src = "app.js";
         controller.addEventListener("load", resolve, { once: true });
-        controller.addEventListener("error", () => reject(new Error("无法加载 Share Master 业务控制器。")), { once: true });
+        controller.addEventListener("error", () => reject(new Error("无法加载 Synclattice 业务控制器。")), { once: true });
         document.body.appendChild(controller);
       });
       root.classList.remove("vue-pending");
       root.classList.add("vue-ready");
     } catch (error) {
       root.classList.remove("vue-pending");
-      root.innerHTML = `<main class="renderer-fatal" role="alert"><strong>Share Master 界面初始化失败</strong><span></span></main>`;
+        root.innerHTML = `<main class="renderer-fatal" role="alert"><strong>Synclattice 界面初始化失败</strong><span></span></main>`;
       root.querySelector("span").textContent = error?.message || String(error);
       console.error(error);
     }

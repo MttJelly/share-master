@@ -37,6 +37,35 @@ function wingetMatches(packagePrefix, executable) {
   }
 }
 
+function bundledCodexCandidates() {
+  if (process.platform !== "win32") return [];
+  const root = path.join(process.env.ProgramFiles || "C:\\Program Files", "WindowsApps");
+  try {
+    return fs.readdirSync(root, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && /^OpenAI\.Codex_/i.test(entry.name))
+      .sort((left, right) => right.name.localeCompare(left.name, undefined, { numeric: true }))
+      .map((entry) => existingFile(path.join(root, entry.name, "app", "resources", "codex.exe")))
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function packagedCodexCandidates() {
+  const resources = typeof process.resourcesPath === "string" ? process.resourcesPath : "";
+  return resources ? [existingFile(path.join(resources, "codex-runtime", "codex.exe"))].filter(Boolean) : [];
+}
+
+function isBundledCodexExecutable(value) {
+  if (process.platform !== "win32" || !value) return false;
+  const normalized = path.normalize(String(value)).toLowerCase();
+  const windowsAppRuntime = normalized.includes(`${path.sep}windowsapps${path.sep}openai.codex_`)
+    && normalized.endsWith(`${path.sep}app${path.sep}resources${path.sep}codex.exe`);
+  const packagedRuntime = normalized.includes(`${path.sep}codex-runtime${path.sep}`)
+    && normalized.endsWith(`${path.sep}codex.exe`);
+  return windowsAppRuntime || packagedRuntime;
+}
+
 function findExecutable({ override, candidates = [], commands = [], winget = null }) {
   const matches = [
     existingFile(override),
@@ -56,4 +85,10 @@ function userExecutableCandidates(name) {
   ].filter(Boolean);
 }
 
-module.exports = { findExecutable, userExecutableCandidates };
+module.exports = {
+  bundledCodexCandidates,
+  findExecutable,
+  isBundledCodexExecutable,
+  packagedCodexCandidates,
+  userExecutableCandidates,
+};

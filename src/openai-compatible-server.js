@@ -372,6 +372,14 @@ function responseError(status, statusText, text) {
   const detail = payload?.error?.message || payload?.message || text || statusText;
   const error = new Error(`模型接口返回 ${status}：${detail}`);
   error.status = status;
+  const providerCode = String(payload?.error?.code || payload?.code || "").trim().toLowerCase();
+  const normalizedDetail = String(detail).toLowerCase();
+  if (providerCode === "model_not_found"
+    || normalizedDetail.includes("no available channel")
+    || normalizedDetail.includes("无可用渠道")) {
+    error.code = "MODEL_UNAVAILABLE";
+    error.modelUnavailable = true;
+  }
   return error;
 }
 
@@ -622,7 +630,12 @@ class OpenAICompatibleServer extends EventEmitter {
     };
     const assistantItem = { id: crypto.randomUUID(), type: "agentMessage", text: "", phase: "final_answer" };
     const reasoningItem = { id: crypto.randomUUID(), type: "reasoning", content: [], summary: [] };
-    const turn = { id: turnId, status: "inProgress", items: [userItem] };
+    const turn = {
+      id: turnId,
+      status: "inProgress",
+      items: [userItem],
+      effort: String(options.effort || "").trim() || null,
+    };
     thread.turns.push(turn);
     thread.cwd = cwd || thread.cwd;
     thread.model = options.model || thread.model || this.provider.model;
@@ -643,6 +656,7 @@ class OpenAICompatibleServer extends EventEmitter {
         threadSettings: {
           model: thread.model,
           modelProvider: this.provider.id,
+          effort: turn.effort,
           approvalPolicy: "never",
           approvalsReviewer: "user",
           sandboxPolicy: { type: "readOnly" },
@@ -740,6 +754,7 @@ class OpenAICompatibleServer extends EventEmitter {
         model,
         messages: messagesForThread(thread, imageInputs),
         stream: true,
+        ...(turn.effort ? { reasoning_effort: turn.effort } : {}),
       }),
       signal: controller.signal,
     });
