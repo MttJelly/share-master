@@ -35,7 +35,7 @@ const ANSI_ESCAPE_PATTERN = /[\u001B\u009B][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[-
 
 function codexRuntimeRoot() {
   return process.env.LOCALAPPDATA
-    ? path.join(process.env.LOCALAPPDATA, "Share Master", "runtime", "codex")
+    ? path.join(process.env.LOCALAPPDATA, "Synclattice", "runtime", "codex")
     : path.join(os.tmpdir(), "share-master-runtime", "codex");
 }
 
@@ -43,7 +43,7 @@ async function executableForStart(source) {
   if (!isBundledCodexExecutable(source)) return { executable: source, runtimeKind: "codex-cli" };
   const normalized = path.normalize(String(source)).toLowerCase();
   if (normalized.includes(`${path.sep}codex-runtime${path.sep}`)) {
-    return { executable: source, runtimeKind: "share-master-bundled" };
+    return { executable: source, runtimeKind: "synclattice-bundled" };
   }
   let stat;
   try {

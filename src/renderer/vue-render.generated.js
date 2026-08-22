@@ -1352,7 +1352,7 @@ export function render(_ctx, _cache) {
                 name: "url",
                 type: "url",
                 required: "",
-                placeholder: "https://dav.example.com/share-master/"
+                placeholder: "https://dav.example.com/synclattice/"
               })
             ]),
             _createElementVNode("label", null, [

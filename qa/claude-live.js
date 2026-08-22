@@ -5,7 +5,7 @@ const { ClaudeServer } = require("../src/claude-server");
 const { fetchClaudeModels } = require("../src/claude-models");
 const { ProviderStore } = require("../src/provider-store");
 
-app.setName("Share Master");
+app.setName("Synclattice");
 
 async function run() {
   await app.whenReady();

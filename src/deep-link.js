@@ -99,12 +99,12 @@ function parseImportLink(url) {
   };
 }
 
-function parseShareMasterLink(input) {
+function parseSynclatticeLink(input) {
   const raw = String(input || "").trim();
   if (!raw || raw.length > 16384) return null;
   let url;
   try { url = new URL(raw); } catch { return null; }
-  if (url.protocol !== "share-master:" || !VALID_HOSTS.has(url.hostname) || url.username || url.password) return null;
+  if (url.protocol !== "synclattice:" || !VALID_HOSTS.has(url.hostname) || url.username || url.password) return null;
   const action = url.hostname;
   if (action === "import") return parseImportLink(url);
   if (action === "extensions") {
@@ -121,9 +121,9 @@ function parseShareMasterLink(input) {
   };
 }
 
-function shareMasterLinkFromArgs(args = []) {
+function synclatticeLinkFromArgs(args = []) {
   return (args || []).map((value) => String(value || ""))
-    .find((value) => value.startsWith("share-master://")) || null;
+    .find((value) => value.startsWith("synclattice://")) || null;
 }
 
-module.exports = { parseShareMasterLink, shareMasterLinkFromArgs };
+module.exports = { parseSynclatticeLink, synclatticeLinkFromArgs };

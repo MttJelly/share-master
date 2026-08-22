@@ -2,6 +2,14 @@
 
 本文件记录 Synclattice 每个版本的用户可见变化。版本号遵循语义化版本；每次向 GitHub 推送产品更新前，必须先更新版本号和本文件。
 
+## [0.1.18] - 2026-08-22
+
+### 优化
+
+- 清理旧品牌残留，应用入口、深链、截图资源、文档和测试统一使用 Synclattice。
+- 新增 `Start Synclattice.cmd`，旧品牌启动脚本不再保留。
+- 更新 WebDAV、主题存储和导出文件的品牌命名。
+
 ## [0.1.17] - 2026-08-22
 
 ### 优化
@@ -233,13 +241,13 @@
 - 修复思考摘要宽度和长文本换行异常。
 - 修复恢复会话时 `Custom tool call output is missing` 导致连接失败的问题。
 
-[0.1.1]: https://github.com/MttJelly/share-master/compare/v0.1.0...v0.1.1
-[0.1.2]: https://github.com/MttJelly/share-master/compare/v0.1.1...v0.1.2
-[0.1.3]: https://github.com/MttJelly/share-master/compare/v0.1.2...v0.1.3
-[0.1.4]: https://github.com/MttJelly/share-master/compare/v0.1.3...v0.1.4
-[0.1.5]: https://github.com/MttJelly/share-master/compare/v0.1.4...v0.1.5
-[0.1.6]: https://github.com/MttJelly/share-master/compare/v0.1.5...v0.1.6
-[0.1.7]: https://github.com/MttJelly/share-master/compare/v0.1.6...v0.1.7
-[0.1.8]: https://github.com/MttJelly/share-master/compare/v0.1.7...v0.1.8
-[0.1.9]: https://github.com/MttJelly/share-master/compare/v0.1.8...v0.1.9
-[0.1.10]: https://github.com/MttJelly/share-master/compare/v0.1.9...v0.1.10
+[0.1.1]: https://github.com/MttJelly/synclattice/compare/v0.1.0...v0.1.1
+[0.1.2]: https://github.com/MttJelly/synclattice/compare/v0.1.1...v0.1.2
+[0.1.3]: https://github.com/MttJelly/synclattice/compare/v0.1.2...v0.1.3
+[0.1.4]: https://github.com/MttJelly/synclattice/compare/v0.1.3...v0.1.4
+[0.1.5]: https://github.com/MttJelly/synclattice/compare/v0.1.4...v0.1.5
+[0.1.6]: https://github.com/MttJelly/synclattice/compare/v0.1.5...v0.1.6
+[0.1.7]: https://github.com/MttJelly/synclattice/compare/v0.1.6...v0.1.7
+[0.1.8]: https://github.com/MttJelly/synclattice/compare/v0.1.7...v0.1.8
+[0.1.9]: https://github.com/MttJelly/synclattice/compare/v0.1.8...v0.1.9
+[0.1.10]: https://github.com/MttJelly/synclattice/compare/v0.1.9...v0.1.10

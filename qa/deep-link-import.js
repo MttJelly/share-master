@@ -8,7 +8,7 @@ const root = path.resolve(__dirname, "..");
 const store = path.join(__dirname, ".deep-link-store");
 const profile = path.join(__dirname, ".deep-link-profile");
 const screenshot = path.join(__dirname, "multi-window-artifacts", "deep-link-import.png");
-const link = "share-master://import?type=provider&label=Deep%20Link%20QA&baseUrl=https%3A%2F%2Fapi.example.test%2Fv1&model=qa-model&preset=custom";
+const link = "synclattice://import?type=provider&label=Deep%20Link%20QA&baseUrl=https%3A%2F%2Fapi.example.test%2Fv1&model=qa-model&preset=custom";
 
 fs.rmSync(store, { recursive: true, force: true });
 fs.rmSync(profile, { recursive: true, force: true });

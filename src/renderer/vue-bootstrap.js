@@ -4,8 +4,8 @@ import { render } from "./vue-render.generated.js";
 const root = document.querySelector("#app");
 root.replaceChildren();
 
-const savedTheme = ["system", "light", "dark"].includes(localStorage.getItem("share-master-theme"))
-  ? localStorage.getItem("share-master-theme")
+const savedTheme = ["system", "light", "dark"].includes(localStorage.getItem("synclattice-theme"))
+  ? localStorage.getItem("synclattice-theme")
   : "system";
 const resolvedTheme = savedTheme === "system"
   ? matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"
@@ -28,15 +28,15 @@ const confirmationUi = reactive({
   cancelLabel: "取消",
   tone: "danger",
 });
-window.ShareMasterVueRuntime = { shallowReactive, attachmentUi, confirmationUi };
+window.SynclatticeVueRuntime = { shallowReactive, attachmentUi, confirmationUi };
 
 const AttachmentTray = {
   name: "AttachmentTray",
   setup() {
-    const remove = (index) => window.dispatchEvent(new CustomEvent("share-master:remove-attachment", {
+    const remove = (index) => window.dispatchEvent(new CustomEvent("synclattice:remove-attachment", {
       detail: { index },
     }));
-    const copy = (item) => window.dispatchEvent(new CustomEvent("share-master:copy-attachment", {
+    const copy = (item) => window.dispatchEvent(new CustomEvent("synclattice:copy-attachment", {
       detail: { path: item.path },
     }));
     return () => h("div", {
@@ -91,7 +91,7 @@ const AttachmentDropOverlay = {
 const AppConfirmationDialog = {
   name: "AppConfirmationDialog",
   setup() {
-    const decide = (confirmed) => window.dispatchEvent(new CustomEvent("share-master:confirmation-decision", {
+    const decide = (confirmed) => window.dispatchEvent(new CustomEvent("synclattice:confirmation-decision", {
       detail: { confirmed },
     }));
     const onKeydown = (event) => {
@@ -157,7 +157,7 @@ const AppConfirmationDialog = {
 };
 
 const vueApp = createApp({
-  name: "ShareMasterApp",
+  name: "SynclatticeApp",
   components: { AttachmentTray, AttachmentDropOverlay, AppConfirmationDialog },
   render,
   async mounted() {

@@ -1,8 +1,8 @@
-/* global lucide, marked, DOMPurify, ShareMasterVueRuntime */
+/* global lucide, marked, DOMPurify, SynclatticeVueRuntime */
 
 const api = window.codexDeck;
-const confirmationUi = ShareMasterVueRuntime.confirmationUi;
-const state = ShareMasterVueRuntime.shallowReactive({
+const confirmationUi = SynclatticeVueRuntime.confirmationUi;
+const state = SynclatticeVueRuntime.shallowReactive({
   provider: null,
   providerType: null,
   providerEngine: null,
@@ -14,8 +14,8 @@ const state = ShareMasterVueRuntime.shallowReactive({
   managedSkills: [],
   promptTemplates: [],
   mcpServers: [],
-  theme: ["system", "light", "dark"].includes(localStorage.getItem("share-master-theme"))
-    ? localStorage.getItem("share-master-theme")
+  theme: ["system", "light", "dark"].includes(localStorage.getItem("synclattice-theme"))
+    ? localStorage.getItem("synclattice-theme")
     : "system",
   extensionTab: "skills",
   editingPromptId: null,
@@ -240,7 +240,7 @@ function applyTheme(theme, persist = true) {
   document.documentElement.dataset.theme = resolved;
   document.documentElement.style.colorScheme = resolved;
   window.codexDeck.setWindowTheme(resolved);
-  if (persist) localStorage.setItem("share-master-theme", preference);
+  if (persist) localStorage.setItem("synclattice-theme", preference);
   const labels = { system: "跟随系统", light: "浅色", dark: "深色" };
   const icons = { system: "monitor", light: "sun", dark: "moon" };
   const button = $("#theme-button");
@@ -771,7 +771,7 @@ function connect(provider, closeOverlay = true, reconnecting = false) {
       elements.composerBrandIcon.alt = visual.label;
       if (closeOverlay) elements.overlay.classList.add("hidden");
       elements.providerError.textContent = "";
-      if (result.runtimeKind === "share-master-bundled") {
+      if (result.runtimeKind === "synclattice-bundled") {
         showDiagnostic("已使用 Synclattice 内置 OpenAI 运行时，不依赖外部 CLI 或 ChatGPT 应用。", false);
       } else if (result.runtimeKind === "chatgpt-app") {
         showDiagnostic("已使用 ChatGPT 应用内置运行时，无需单独安装 Codex CLI。", false);
@@ -2504,7 +2504,7 @@ function safeImageSource(value, isLocal = false) {
 }
 
 function renderAttachments() {
-  ShareMasterVueRuntime.attachmentUi.items = state.pendingAttachments.map((filePath) => ({
+  SynclatticeVueRuntime.attachmentUi.items = state.pendingAttachments.map((filePath) => ({
     path: filePath,
     name: String(filePath).split(/[\\/]/).filter(Boolean).at(-1) || "图片附件",
     url: localImageUrl(filePath),
@@ -2531,7 +2531,7 @@ function hasDraggedFiles(event) {
 }
 
 function setAttachmentDragActive(active) {
-  ShareMasterVueRuntime.attachmentUi.dragActive = Boolean(active);
+  SynclatticeVueRuntime.attachmentUi.dragActive = Boolean(active);
 }
 
 function resetAttachmentDrag() {
@@ -2559,7 +2559,7 @@ function addDroppedAttachments(paths) {
   return { added: images.length, unsupported };
 }
 
-window.addEventListener("share-master:remove-attachment", (event) => {
+window.addEventListener("synclattice:remove-attachment", (event) => {
   const index = Number(event.detail?.index);
   if (!Number.isInteger(index) || index < 0 || index >= state.pendingAttachments.length) return;
   state.pendingAttachments.splice(index, 1);
@@ -2567,7 +2567,7 @@ window.addEventListener("share-master:remove-attachment", (event) => {
   syncComposerState();
 });
 
-window.addEventListener("share-master:copy-attachment", async (event) => {
+window.addEventListener("synclattice:copy-attachment", async (event) => {
   const filePath = String(event.detail?.path || "");
   if (!filePath) return;
   try {
@@ -6549,7 +6549,7 @@ $("#record-home-form").addEventListener("submit", async (event) => {
 $("#close-provider-button").addEventListener("click", () => {
   if (state.connected) elements.overlay.classList.add("hidden");
 });
-window.addEventListener("share-master:confirmation-decision", (event) => {
+window.addEventListener("synclattice:confirmation-decision", (event) => {
   closeActionConfirmation(Boolean(event.detail?.confirmed));
 });
 document.addEventListener("keydown", (event) => {

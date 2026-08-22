@@ -147,8 +147,8 @@ async function run() {
   };
   const syncFixture = {
     backend: "webdav",
-    directory: "F:\\Share Master Sync",
-    webdavUrl: "https://dav.example.test/share-master/",
+    directory: "F:\\Synclattice Sync",
+    webdavUrl: "https://dav.example.test/synclattice/",
     hasWebdavCredentials: true,
     autoSync: true,
     lastSyncedAt: Date.now() - 60000,
@@ -449,7 +449,7 @@ async function run() {
     status: "available",
     currentVersion: APP_VERSION,
     latestVersion: "0.2.0",
-    releaseUrl: "https://github.com/MttJelly/share-master/releases/tag/v0.2.0",
+    releaseUrl: "https://github.com/MttJelly/synclattice/releases/tag/v0.2.0",
     message: `发现新版本 v0.2.0，当前为 v${APP_VERSION}。`,
   }));
   ipcMain.handle("local-history:sources", () => ([
@@ -490,7 +490,7 @@ async function run() {
       preview: "读取本地聊天记录",
       cwd: "F:\\codepro",
       model: "gpt-fixture",
-      modelProvider: "share-master-import",
+      modelProvider: "synclattice-import",
       createdAt: Math.floor(Date.now() / 1000) - 60,
       updatedAt: Math.floor(Date.now() / 1000),
       recencyAt: Math.floor(Date.now() / 1000),
@@ -1257,7 +1257,7 @@ async function run() {
     const tray = {
       count: document.querySelectorAll('#attachment-list .attachment-item').length,
       filename: document.querySelector('.attachment-copy strong')?.textContent || '',
-      reactiveCount: ShareMasterVueRuntime.attachmentUi.items.length,
+      reactiveCount: SynclatticeVueRuntime.attachmentUi.items.length,
       ignoredMessage: document.querySelector('#status-toast').textContent,
     };
     const imageMessage = appendUserMessage({
@@ -1288,7 +1288,7 @@ async function run() {
     await new Promise((resolve) => setTimeout(resolve, 50));
     return {
       countAfterRemove: document.querySelectorAll('#attachment-list .attachment-item').length,
-      reactiveCountAfterRemove: ShareMasterVueRuntime.attachmentUi.items.length,
+      reactiveCountAfterRemove: SynclatticeVueRuntime.attachmentUi.items.length,
     };
   })()`));
   await window.webContents.executeJavaScript("(async () => { await openLocalHistoryDialog(); await openLocalHistoryConversation(state.localHistoryConversations[0]); })()");
@@ -1856,7 +1856,7 @@ async function run() {
   assert.equal(backup.bodyOverflow, false);
   assert.deepEqual(
     { visible: sync.visible, rows: sync.rows, directory: sync.directory, webdavVisible: sync.webdavVisible, webdavUrl: sync.webdavUrl, pullLabel: sync.pullLabel },
-    { visible: true, rows: 2, directory: "F:\\Share Master Sync", webdavVisible: true, webdavUrl: "https://dav.example.test/share-master/", pullLabel: "使用 WebDAV" },
+    { visible: true, rows: 2, directory: "F:\\Synclattice Sync", webdavVisible: true, webdavUrl: "https://dav.example.test/synclattice/", pullLabel: "使用 WebDAV" },
   );
   assert.equal(sync.bodyOverflow, false);
   assert.equal(sync.dialogOverflow, false);

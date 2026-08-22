@@ -292,7 +292,7 @@ function importedLocalThread(conversation, now = Date.now()) {
     id,
     name: String(conversation.title || "未命名会话").trim().slice(0, 160),
     preview: String(firstUserText || conversation.title || "本地会话副本").split(/\r?\n/)[0].slice(0, 160),
-    modelProvider: "share-master-import",
+    modelProvider: "synclattice-import",
     model: String(conversation.model || "").trim() || null,
     cwd: String(conversation.cwd || "").trim() || null,
     createdAt: Math.floor((Number(conversation.createdAt) || Number(conversation.updatedAt) || Number(now)) / 1000),

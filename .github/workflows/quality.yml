@@ -12,7 +12,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 20
     env:
-      SHARE_MASTER_BASE_REVISION: ${{ github.event.before }}
+      SYNCLATTICE_BASE_REVISION: ${{ github.event.before }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -38,7 +38,7 @@ jobs:
               -or $normalized.StartsWith('scripts/') `
               -or $normalized -eq 'package.json' `
               -or $normalized -eq 'package-lock.json' `
-              -or $normalized -eq 'Start Share Master.cmd'
+              -or $normalized -eq 'Start Synclattice.cmd'
             $isQuality = $isProduct -or $normalized.StartsWith('qa/')
             if ($isProduct) { $productChanged = $true }
             if ($isQuality) { $qualityChanged = $true }

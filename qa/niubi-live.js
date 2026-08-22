@@ -6,7 +6,7 @@ const { ProviderStore } = require("../src/provider-store");
 const { fetchRelayBalance } = require("../src/relay-balance");
 const { USER_AGENT } = require("../src/app-version");
 
-app.setName("Share Master");
+app.setName("Synclattice");
 
 function responseError(payload, fallback = "request rejected") {
   if (typeof payload?.error === "string") return payload.error;

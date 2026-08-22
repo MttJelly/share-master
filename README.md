@@ -30,12 +30,12 @@
 
 <table>
   <tr>
-    <td width="50%" valign="top"><img src="docs/assets/share-master-connections-dark.png" alt="Synclattice 连接中心" /><br /><sub>连接中心：账号、API、同步和用量</sub></td>
-    <td width="50%" valign="top"><img src="docs/assets/share-master-conversation-dark.png" alt="Synclattice 聊天工作区" /><br /><sub>聊天工作区：思考摘要、回复、中断和继续生成</sub></td>
+    <td width="50%" valign="top"><img src="docs/assets/synclattice-connections-dark.png" alt="Synclattice 连接中心" /><br /><sub>连接中心：账号、API、同步和用量</sub></td>
+    <td width="50%" valign="top"><img src="docs/assets/synclattice-conversation-dark.png" alt="Synclattice 聊天工作区" /><br /><sub>聊天工作区：思考摘要、回复、中断和继续生成</sub></td>
   </tr>
   <tr>
-    <td width="50%" valign="top"><img src="docs/assets/share-master-extensions.png" alt="Synclattice 扩展中心" /><br /><sub>扩展中心：Skills、Prompt 和 MCP</sub></td>
-    <td width="50%" valign="top"><img src="docs/assets/share-master-sync.png" alt="Synclattice 配置同步" /><br /><sub>配置同步：本地目录、WebDAV 和同步历史</sub></td>
+    <td width="50%" valign="top"><img src="docs/assets/synclattice-extensions.png" alt="Synclattice 扩展中心" /><br /><sub>扩展中心：Skills、Prompt 和 MCP</sub></td>
+    <td width="50%" valign="top"><img src="docs/assets/synclattice-sync.png" alt="Synclattice 配置同步" /><br /><sub>配置同步：本地目录、WebDAV 和同步历史</sub></td>
   </tr>
 </table>
 
@@ -126,7 +126,7 @@ API Key 和 Token 只需在对应连接中保存一次。之后可以直接选�
 Synclattice 默认将自己的配置与聊天数据保存在：
 
 ```text
-%APPDATA%\Share Master\data
+%APPDATA%\Synclattice\data
 ```
 
 本机配置发现和本地记录浏览采用只读方式。Synclattice 不会修改其他客户端的程序文件，也不会删除或覆盖其原始聊天记录。卸载 Synclattice 不会自动删除上述数据目录，迁移或清理前请先备份所需会话。
@@ -153,7 +153,7 @@ npm start
 使用仓库内的隔离数据目录运行：
 
 ```powershell
-& '.\Start Share Master.cmd'
+& '.\Start Synclattice.cmd'
 ```
 
 构建 Windows ZIP 和 MSI：

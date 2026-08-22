@@ -22,9 +22,25 @@ const WINDOWS_PACKAGED_APP_ID = "com.synclattice.desktop";
 const WINDOWS_APP_ID = app.isPackaged ? WINDOWS_PACKAGED_APP_ID : `${WINDOWS_PACKAGED_APP_ID}.dev`;
 const WINDOWS_TOAST_ACTIVATOR_CLSID = "{E6B8F4D5-4A0D-4B9F-8E3B-3C0F5C3E6D21}";
 app.setName("Synclattice");
+// New launchers use the Synclattice-prefixed environment names. Keep the
+// legacy aliases only as an internal compatibility bridge for existing data.
+if (process.env.SYNCLATTICE_STORE_ROOT) process.env.SHARE_MASTER_STORE_ROOT = process.env.SYNCLATTICE_STORE_ROOT;
+if (process.env.SYNCLATTICE_SKILL_SOURCES) process.env.SHARE_MASTER_SKILL_SOURCES = process.env.SYNCLATTICE_SKILL_SOURCES;
 // Keep the existing store stable across the product rename. Electron derives
 // userData from the display name unless it is pinned explicitly.
-if (app.isPackaged) app.setPath("userData", path.join(app.getPath("appData"), "Share Master"));
+if (app.isPackaged) {
+  const appDataRoot = app.getPath("appData");
+  const synclatticeUserData = path.join(appDataRoot, "Synclattice");
+  const legacyUserData = path.join(appDataRoot, "Share Master");
+  if (!fs.existsSync(synclatticeUserData) && fs.existsSync(legacyUserData)) {
+    try {
+      fs.cpSync(legacyUserData, synclatticeUserData, { recursive: true, errorOnExist: false });
+    } catch (error) {
+      console.warn(`[migration] unable to copy legacy data: ${error.message}`);
+    }
+  }
+  app.setPath("userData", fs.existsSync(synclatticeUserData) ? synclatticeUserData : legacyUserData);
+}
 app.setAppUserModelId(WINDOWS_APP_ID);
 if (process.platform === "win32") app.setToastActivatorCLSID(WINDOWS_TOAST_ACTIVATOR_CLSID);
 if (app.isPackaged) {
@@ -49,7 +65,7 @@ const { syncConversationMirrors } = require("./conversation-mirror");
 const { createLocalHistoryReader } = require("./local-conversation-history");
 const { createLocalProviderDiscovery } = require("./local-provider-discovery");
 const { installSkillSource, listManagedSkills, syncManagedSkills } = require("./skill-mirror");
-const { parseShareMasterLink, shareMasterLinkFromArgs } = require("./deep-link");
+const { parseSynclatticeLink, synclatticeLinkFromArgs } = require("./deep-link");
 const {
   buildContinuationPrompt,
   mergeLogicalThread,
@@ -285,7 +301,7 @@ function loginItemOptions(openAtLogin = undefined) {
       args: [],
     };
   }
-  const launcher = path.join(path.resolve(__dirname, ".."), "Start Share Master.cmd");
+  const launcher = path.join(path.resolve(__dirname, ".."), "Start Synclattice.cmd");
   return {
     ...(typeof openAtLogin === "boolean" ? { openAtLogin } : {}),
     path: process.env.ComSpec || "C:\\Windows\\System32\\cmd.exe",
@@ -970,7 +986,7 @@ function navigateApp(payload) {
 }
 
 function openDeepLink(rawLink) {
-  const link = parseShareMasterLink(rawLink);
+  const link = parseSynclatticeLink(rawLink);
   if (!link) return false;
   if (!providerStore) {
     pendingDeepLinks.push(rawLink);
@@ -1240,7 +1256,7 @@ function sharedHistoryReaders() {
   if (sharedHistoryHome !== home || !sharedCompatibleHistory || !sharedClaudeHistory) {
     sharedHistoryHome = home;
     sharedCompatibleHistory = new OpenAICompatibleServer({
-      id: "share-master-history",
+      id: "synclattice-history",
       label: "Synclattice History",
       baseUrl: "https://history.invalid/v1",
       model: "history",
@@ -2301,7 +2317,7 @@ if (!hasSingleInstanceLock) app.quit();
 
 app.on("second-instance", (_event, argv) => {
   if (!hasSingleInstanceLock) return;
-  const link = shareMasterLinkFromArgs(argv);
+  const link = synclatticeLinkFromArgs(argv);
   app.whenReady().then(() => (link ? openDeepLink(link) : showAppWindow()));
 });
 
@@ -2344,7 +2360,7 @@ app.whenReady().then(async () => {
     codexHomes: [CODEX_HOME, path.join(os.homedir(), ".codex")],
     providerStore,
   });
-  if (app.isPackaged) app.setAsDefaultProtocolClient("share-master");
+  if (app.isPackaged) app.setAsDefaultProtocolClient("synclattice");
   await createTray();
   try {
     providerStore.createRotatingBackup();
@@ -2447,7 +2463,7 @@ app.whenReady().then(async () => {
     const importType = String(input.importType || "").trim();
     const rawConfig = input.config && typeof input.config === "object" ? input.config : {};
     const encoded = Buffer.from(JSON.stringify({ type: importType, ...rawConfig }), "utf8").toString("base64url");
-    const normalized = parseShareMasterLink(`share-master://import?data=${encoded}`);
+    const normalized = parseSynclatticeLink(`synclattice://import?data=${encoded}`);
     if (!normalized || normalized.action !== "import") throw new Error("导入配置无效或包含敏感字段。");
     if (normalized.importType === "provider") return { importType, config: normalized.config, requiresApiKey: true };
     if (normalized.importType === "prompt") {
@@ -2727,7 +2743,7 @@ app.whenReady().then(async () => {
     const owner = BrowserWindow.fromWebContents(event.sender);
     const result = await dialog.showSaveDialog(owner, {
       title: "导出 Synclattice 配置",
-      defaultPath: `share-master-config-${new Date().toISOString().slice(0, 10)}.json`,
+      defaultPath: `synclattice-config-${new Date().toISOString().slice(0, 10)}.json`,
       filters: [{ name: "JSON", extensions: ["json"] }],
     });
     if (result.canceled || !result.filePath) return { canceled: true };
@@ -3283,7 +3299,7 @@ app.whenReady().then(async () => {
     return { resolved, alreadyResolved: !resolved };
   });
 
-  const initialDeepLink = shareMasterLinkFromArgs(process.argv);
+  const initialDeepLink = synclatticeLinkFromArgs(process.argv);
   const initialWindow = initialDeepLink ? null : createWindow(
     process.env.SHARE_MASTER_OPEN_PROVIDER || process.env.CODEX_DECK_QA_PROVIDER || null,
     process.env.SHARE_MASTER_OPEN_PROJECT || process.env.CODEX_DECK_QA_PROJECT || null,

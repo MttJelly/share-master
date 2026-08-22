@@ -1,7 +1,7 @@
 {
   "name": "synclattice",
   "productName": "Synclattice",
-  "version": "0.1.17",
+  "version": "0.1.18",
   "author": "Synclattice",
   "private": true,
   "description": "Synclattice: a multi-account, multi-provider desktop client for shared conversation context.",
@@ -86,11 +86,16 @@
     "protocols": [
       {
         "name": "Synclattice",
-        "schemes": ["share-master"]
+        "schemes": [
+          "synclattice"
+        ]
       }
     ],
     "win": {
-      "target": ["zip", "msi"],
+      "target": [
+        "zip",
+        "msi"
+      ],
       "icon": "build/icon.ico",
       "artifactName": "Synclattice-${version}-win-${arch}.${ext}"
     },

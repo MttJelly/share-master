@@ -4,7 +4,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
-app.setName("Share Master Relay QA");
+app.setName("Synclattice Relay QA");
 process.env.SHARE_MASTER_STORE_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), "share-master-relay-"));
 const testRecordHome = path.join(process.env.SHARE_MASTER_STORE_ROOT, "records");
 fs.mkdirSync(testRecordHome);

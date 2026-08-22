@@ -41,7 +41,7 @@ const { fetchOpenAIModels, modelsEndpoint, modelsEndpointCandidates } = require(
 const { executeScheduledTask, finalizeScheduledTask } = require("../src/scheduled-task-runner");
 const { syncConversationMirror, syncConversationMirrors } = require("../src/conversation-mirror");
 const { installSkillSource, listManagedSkills, syncManagedSkills, syncSkillRoots } = require("../src/skill-mirror");
-const { parseShareMasterLink, shareMasterLinkFromArgs } = require("../src/deep-link");
+const { parseSynclatticeLink, synclatticeLinkFromArgs } = require("../src/deep-link");
 const { createLocalHistoryReader } = require("../src/local-conversation-history");
 const { createLocalProviderDiscovery, parseCodexConfig } = require("../src/local-provider-discovery");
 const { APP_VERSION, USER_AGENT, compareVersions, updateFromRelease } = require("../src/app-version");
@@ -238,13 +238,13 @@ function testWindowsNotificationIdentity() {
     assert.equal(fs.existsSync(legacyPath), true);
     assert.equal(notificationShortcutArguments({
       isPackaged: false,
-      userData: "C:\\Share Master Data",
+      userData: "C:\\Synclattice Data",
       applicationRoot: "F:\\codepro",
-    }), '--user-data-dir="C:\\Share Master Data" "F:\\codepro"');
+    }), '--user-data-dir="C:\\Synclattice Data" "F:\\codepro"');
     assert.equal(notificationShortcutArguments({ isPackaged: true }), "");
     assert.deepEqual(windowsTaskbarDetails({
       isPackaged: false,
-      userData: "C:\\Share Master Data",
+      userData: "C:\\Synclattice Data",
       applicationRoot: "F:\\codepro",
       appUserModelId: "com.synclattice.desktop",
       target: "F:\\codepro\\electron.exe",
@@ -253,7 +253,7 @@ function testWindowsNotificationIdentity() {
       appId: "com.synclattice.desktop",
       appIconPath: "F:\\codepro\\build\\icon.ico",
       appIconIndex: 0,
-      relaunchCommand: '"F:\\codepro\\electron.exe" --user-data-dir="C:\\Share Master Data" "F:\\codepro"',
+      relaunchCommand: '"F:\\codepro\\electron.exe" --user-data-dir="C:\\Synclattice Data" "F:\\codepro"',
       relaunchDisplayName: "Synclattice",
     });
   } finally {
@@ -303,7 +303,7 @@ function testApplicationVersioning() {
   assert.equal(compareVersions("0.1.2", "0.1.1"), 1);
   assert.equal(compareVersions("v0.1.2", "0.1.2"), 0);
   assert.equal(compareVersions("0.1.1", "0.1.2"), -1);
-  const release = { tag_name: "v0.2.0", html_url: "https://github.com/MttJelly/share-master/releases/tag/v0.2.0" };
+  const release = { tag_name: "v0.2.0", html_url: "https://github.com/MttJelly/synclattice/releases/tag/v0.2.0" };
   assert.deepEqual(updateFromRelease("0.1.2", release), {
     status: "available",
     currentVersion: "0.1.2",
@@ -612,19 +612,19 @@ function testPrivateExtensionsStore() {
 }
 
 function testDeepLinks() {
-  assert.deepEqual(parseShareMasterLink("share-master://extensions?tab=mcp"), { action: "extensions", tab: "mcp" });
-  assert.deepEqual(parseShareMasterLink("share-master://scheduled"), { action: "scheduled" });
-  assert.deepEqual(parseShareMasterLink("share-master://new?provider=relay_123&projectId=project_456"), {
+  assert.deepEqual(parseSynclatticeLink("synclattice://extensions?tab=mcp"), { action: "extensions", tab: "mcp" });
+  assert.deepEqual(parseSynclatticeLink("synclattice://scheduled"), { action: "scheduled" });
+  assert.deepEqual(parseSynclatticeLink("synclattice://new?provider=relay_123&projectId=project_456"), {
     action: "new", provider: "relay_123", thread: null, projectId: "project_456", workspace: null,
   });
-  assert.deepEqual(parseShareMasterLink("share-master://open?thread=thread_123&workspace=F%3A%5Ccodepro"), {
+  assert.deepEqual(parseSynclatticeLink("synclattice://open?thread=thread_123&workspace=F%3A%5Ccodepro"), {
     action: "open", provider: null, thread: "thread_123", projectId: null, workspace: "F:\\codepro",
   });
-  assert.equal(parseShareMasterLink("https://example.com/open"), null);
-  assert.equal(parseShareMasterLink("share-master://unknown"), null);
-  assert.equal(parseShareMasterLink(`share-master://open?thread=${"x".repeat(300)}`)?.thread, null);
-  assert.equal(shareMasterLinkFromArgs(["electron.exe", ".", "share-master://scheduled"]), "share-master://scheduled");
-  assert.deepEqual(parseShareMasterLink("share-master://import?type=provider&label=Lab%20API&baseUrl=https%3A%2F%2Fapi.example.test%2Fv1&model=lab-model&preset=custom"), {
+  assert.equal(parseSynclatticeLink("https://example.com/open"), null);
+  assert.equal(parseSynclatticeLink("synclattice://unknown"), null);
+  assert.equal(parseSynclatticeLink(`synclattice://open?thread=${"x".repeat(300)}`)?.thread, null);
+  assert.equal(synclatticeLinkFromArgs(["electron.exe", ".", "synclattice://scheduled"]), "synclattice://scheduled");
+  assert.deepEqual(parseSynclatticeLink("synclattice://import?type=provider&label=Lab%20API&baseUrl=https%3A%2F%2Fapi.example.test%2Fv1&model=lab-model&preset=custom"), {
     action: "import",
     importType: "provider",
     config: {
@@ -635,14 +635,14 @@ function testDeepLinks() {
   const promptData = Buffer.from(JSON.stringify({
     type: "prompt", name: "review", description: "Review changes", content: "Review this:\n{{content}}",
   })).toString("base64url");
-  assert.equal(parseShareMasterLink(`share-master://import?data=${promptData}`).config.content.includes("\n"), true);
+  assert.equal(parseSynclatticeLink(`synclattice://import?data=${promptData}`).config.content.includes("\n"), true);
   const mcpData = Buffer.from(JSON.stringify({
     type: "mcp", name: "Local MCP", transport: "stdio", command: "node", args: ["server.js"], envKeys: ["ACCESS_TOKEN"],
   })).toString("base64url");
-  assert.deepEqual(parseShareMasterLink(`share-master://import?data=${mcpData}`).config.envKeys, ["ACCESS_TOKEN"]);
-  assert.equal(parseShareMasterLink("share-master://import?type=skill&source=https%3A%2F%2Fgithub.com%2Fexample%2Fskills").config.source, "https://github.com/example/skills");
-  assert.equal(parseShareMasterLink("share-master://import?type=provider&label=Unsafe&baseUrl=https%3A%2F%2Fexample.test%2Fv1&model=x&apiKey=secret"), null);
-  assert.equal(parseShareMasterLink("share-master://import?type=skill&source=https%3A%2F%2Fexample.com%2Fskills"), null);
+  assert.deepEqual(parseSynclatticeLink(`synclattice://import?data=${mcpData}`).config.envKeys, ["ACCESS_TOKEN"]);
+  assert.equal(parseSynclatticeLink("synclattice://import?type=skill&source=https%3A%2F%2Fgithub.com%2Fexample%2Fskills").config.source, "https://github.com/example/skills");
+  assert.equal(parseSynclatticeLink("synclattice://import?type=provider&label=Unsafe&baseUrl=https%3A%2F%2Fexample.test%2Fv1&model=x&apiKey=secret"), null);
+  assert.equal(parseSynclatticeLink("synclattice://import?type=skill&source=https%3A%2F%2Fexample.com%2Fskills"), null);
 }
 
 function testProviderPresetCatalog() {
@@ -1784,7 +1784,7 @@ async function testImportedLocalConversation() {
       items: [{
         id: `${converted.id}-continued-item`,
         type: "agentMessage",
-        text: "Share Master 中后续产生的内容",
+        text: "Synclattice 中后续产生的内容",
         phase: "final_answer",
       }],
     });
@@ -1796,7 +1796,7 @@ async function testImportedLocalConversation() {
     assert.equal(duplicate.imported, false);
     assert.equal(duplicate.duplicate, true);
     assert.equal(duplicate.thread.turns.length, 2);
-    assert.equal(duplicate.thread.turns[1].items[0].text, "Share Master 中后续产生的内容");
+    assert.equal(duplicate.thread.turns[1].items[0].text, "Synclattice 中后续产生的内容");
     assert.equal(JSON.stringify(duplicate.thread).includes("源文件后来新增的内容"), false);
     assert.throws(() => importedLocalThread({ id: "empty", messages: [] }), /没有可复制的消息/);
     server.stop();
