@@ -107,5 +107,8 @@
       "createStartMenuShortcut": true,
       "shortcutName": "Synclattice"
     }
+  },
+  "overrides": {
+    "nanoid": "3.3.18"
   }
 }
